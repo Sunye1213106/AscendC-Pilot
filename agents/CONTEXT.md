@@ -23,7 +23,7 @@
 
 **两轴 review** — Spec 验收需求完成度；Standards 验收仓规范。不是 `plan.md`，也不是 cases。易与「写测试计划」混。
 
-**Planning Context** — `/tg-plan` 第一窗 `plan_scope` 的 session 捕获（外加用户意图 / handoff）。不是磁盘 `targets.yaml`，也不是正式 `plan.md`，也不是审查结论。
+**Planning Context** — `/tg-plan` 第一窗 `plan_scope` 的回答（像 uo-query：说清要测什么）。不是磁盘文件，不是正式 `plan.md`，不是审查结论。Primary 读到即可。
 
 **Target** — 可确定性判定 HIT/MISS 的实现状态。不是用户原话、diff 行或 CSV 列。
 

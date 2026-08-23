@@ -306,9 +306,11 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
         "table_kind: mixed\nentry: run.py\ncase_arg: --case\ncolumns: [D, CaseName]\n"
         "call: {kind: pta, api: npu_fusion, site: runner.py:10}\n"
         "mapping:\n"
-        "  - column: D\n    role: api_arg\n    script_read: get_case\n    uo_id: DTemplateNum\n"
+        "  - column: D\n    control: {status: active}\n    relation: direct\n"
+        "    confidence: confirmed\n    uo: {id: DTemplateNum, candidate: ''}\n"
         "    encoding: 字面量\n"
-        "  - column: CaseName\n    role: script_meta\n    script_read: get_case\n"
+        "  - column: CaseName\n    control: {status: metadata}\n    relation: candidate\n"
+        "    confidence: unresolved\n    uo: {id: '', candidate: ''}\n"
         "domains:\n  D:\n    profile: {max: 1}\n    operator: {declared: [0, 1], product: [0, 1]}\n"
         "    compare: match\n"
         "findings: [b1]\n",
@@ -322,10 +324,10 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
     doc = load_init(tg_root(synthetic_root, arch="arch0"))
     assert doc.get("table_kind") in {"csv", "xls", "xlsx"}
     assert isinstance(doc.get("mapping"), dict)
-    assert doc["mapping"]["D"]["uo_id"] == "DTemplateNum"
-    assert doc["mapping"]["D"]["role"] == "api_arg"
-    assert doc["mapping"]["CaseName"]["role"] == "script_meta"
-    assert not str(doc["mapping"]["CaseName"].get("uo_id") or "").strip()
+    assert doc["mapping"]["D"]["uo"]["id"] == "DTemplateNum"
+    assert doc["mapping"]["D"]["control"]["status"] == "active"
+    assert doc["mapping"]["CaseName"]["control"]["status"] == "metadata"
+    assert not str((doc["mapping"]["CaseName"].get("uo") or {}).get("id") or "").strip()
     assert isinstance(doc.get("domains"), dict)
     assert doc["domains"]["D"]["compare"] == "match"
     assert doc.get("call", {}).get("kind") == "pta"
@@ -367,10 +369,16 @@ def test_bind_promote_merges_empty_uo_id_and_validate_init_confirms(
         "schema: tg-bind-part/v1\nkind: script_repo\ntable_kind: csv\n"
         "entry: run.py\ncase_arg: --case\n"
         "call: {kind: pta, api: npu_fusion}\n"
-        "columns: [{name: prefix}]\n"
-        "mapping:\n  prefix:\n    role: api_arg\n    uo_id: ''\n    encoding: prefix list\n"
-        "domains:\n  prefix:\n    profile: {empty_rate: 1.0}\n    operator: ''\n"
-        "    compare: match\n"
+        "columns: [{name: B}, {name: prefix}]\n"
+        "mapping:\n"
+        "  B:\n    control: {status: active}\n    relation: direct\n"
+        "    confidence: confirmed\n    uo: {id: b, candidate: ''}\n"
+        "    encoding: batch\n"
+        "  prefix:\n    control: {status: unwired}\n    relation: direct\n"
+        "    confidence: unresolved\n    uo: {id: '', candidate: ''}\n"
+        "    encoding: prefix list\n"
+        "domains:\n  B: {profile: {max: 8}, operator: b, compare: match}\n"
+        "  prefix: {profile: {empty_rate: 1.0}, operator: '', compare: mismatch}\n"
     )
     harness_text = (
         "schema: tg-harness-part/v1\ngolden: {status: match}\ncompare: {how: script}\n"
@@ -411,8 +419,8 @@ def test_bind_promote_merges_empty_uo_id_and_validate_init_confirms(
     tg = tg_root(synthetic_root, arch="arch0")
     assert (tg / "init.yaml").is_file()
     doc = load_init(tg)
-    assert doc["mapping"]["prefix"]["role"] == "api_arg"
-    assert str(doc["mapping"]["prefix"].get("uo_id") or "") == ""
+    assert doc["mapping"]["prefix"]["control"]["status"] == "unwired"
+    assert str((doc["mapping"]["prefix"].get("uo") or {}).get("id") or "") == ""
 
     val = run_validate_init(synthetic_root, ctx)
     assert val.get("ok") is True, val
@@ -441,7 +449,15 @@ def test_checker_clean_bind_part_promotes_and_validates(synthetic_root: Path) ->
         "case_arg": "--case",
         "call": {"kind": "pta", "api": "npu_fusion"},
         "columns": [{"name": "B"}],
-        "mapping": {"B": {"role": "api_arg", "uo_id": "b", "encoding": "batch"}},
+        "mapping": {
+            "B": {
+                "control": {"status": "active"},
+                "relation": "direct",
+                "confidence": "confirmed",
+                "uo": {"id": "b", "candidate": ""},
+                "encoding": "batch",
+            }
+        },
         "domains": {"B": {"profile": {"max": 8}, "operator": "b", "compare": "match"}},
     }
     harness_doc = {

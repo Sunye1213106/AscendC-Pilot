@@ -50,7 +50,15 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 * 刚完成 `/uo-init`，或 `.uo` 与当前源码一致：不要再跑 `/uo-update`。
 * 禁止把 `/uo-update` 紧挨着排在刚完成的 `/uo-init` 后面。
 
-不要为理解 PR diff 去跑 `/uo-update`。变更文件用 clone 回执；语义用 `uo-query`。不要通读全量 git diff。
+不要为理解 PR diff 去跑 `/uo-update`。clone 回执只是候选事实，不是 SSOT。后续 workflow 还要用这次改动时，Primary 显式 `pilot_cli pin-facts --project <算子绝对路径>`，写入算子 `.ascendc-pilot/control/change_contract.yaml`。`/tg-plan` 只读这份 pin。禁止 `git diff HEAD` 当 PR 信号。
+
+```text
+IF 下一步还要用 clone/git 事实 THEN pin-facts(change_contract)
+IF goal.kind == pr_regression AND change_contract.changed_files 为空
+THEN FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin，不是 human_required）
+generic TilingKey fallback 仅 goal.kind == implementation_coverage
+enumerate: legal_keys 仅用户显式要求
+```
 
 需要测试契约时再 `/tg-init`。
 
@@ -68,13 +76,13 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 
 `auto` 返回的 `(operator, architecture)` 直接用于后续 `pilot_run`。`status` / `uo-query --status-only` 也必须带上该算子路径，不要对着打开目录根判断 `.uo`。
 
-`Planning Context` 就是 `/tg-plan` 的 `plan_scope` session 捕获（外加用户意图 / handoff）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
+`Planning Context` 就是 `/tg-plan` 的 `plan_scope` 回答（像 uo-query：说清要测什么，不写文件）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
 
 ## 按用户目标选择流程
 
 用户只要求 Code Review 时，只执行 `/ce-review`。
 
-用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；Target model 由 `plan_scope` 以 return_value 交回，不要在中间再派自由查询。
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；`plan_scope` 像 uo-query 把要测的东西说清楚，Primary 读回答即可，不要在中间再派自由查询。
 
 用户只要求语义查询时：
 
@@ -111,7 +119,7 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 
 调查只获取下一步真正需要的事实。
 
-`/tg-init` 完成后直接 `/tg-plan`。Target / candidate Dimension 由 `plan_scope` 根据对话与 `tg/init.yaml` 交回（未指定则 TilingKey 维）。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash。bind 列由引擎按每路 ≤20 切开；Primary 原样派 Host 给出的 1 路 harness + N 路 bind，不要自己再拆或加路。
+`/tg-init` 完成后直接 `/tg-plan`。`plan_scope` 根据对话与 `tg/init.yaml` 说清要测什么（未指定则只能测 Host 已接受的 dispatch）。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash。bind 列由引擎按每路 ≤20 切开；Primary 原样派 Host 给出的 1 路 harness + N 路 bind，不要自己再拆或加路。
 
 用户只要求语义查询、不要生成用例时，仍用 `pilot_cli uo-query`，不进入 `/tg-plan`。
 

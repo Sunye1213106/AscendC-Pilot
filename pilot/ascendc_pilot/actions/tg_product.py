@@ -256,6 +256,38 @@ def _captured_text(project_root: Path, ctx: dict[str, Any], action_id: str) -> s
     return ""
 
 
+_PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
+_YAML_FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def _has_plan_prose(text: str) -> bool:
+    blob = str(text or "")
+    return all(re.search(rf"^##\s*{re.escape(h)}\s*$", blob, re.MULTILINE) for h in _PLAN_PROSE_HEADINGS)
+
+
+def _prose_without_fence(text: str) -> str:
+    return _YAML_FENCE_RE.sub("", str(text or "")).strip()
+
+
+def _assemble_plan_md(prose: str, mapping: dict[str, Any]) -> str:
+    body = yaml.safe_dump(mapping, allow_unicode=True, sort_keys=False).rstrip() + "\n"
+    return f"{prose.rstrip()}\n\n```yaml\n{body}```\n"
+
+
+def _plan_fail(error: str, *, ask: str, **extra: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "ok": False,
+        "engine": "plan_promote",
+        "error": error,
+        "reason_code": error,
+        "ask": ask,
+        "retryable": True,
+        "failure_class": "format_transport",
+    }
+    out.update(extra)
+    return out
+
+
 def _parse_captured_mapping(text: str, doc: dict[str, Any] | None = None) -> dict[str, Any]:
     if isinstance(doc, dict) and doc:
         return dict(doc)
@@ -278,16 +310,6 @@ def _parse_captured_mapping(text: str, doc: dict[str, Any] | None = None) -> dic
 
 def _replay_dir(project_root: Path, ctx: dict[str, Any] | None = None) -> Path:
     return _tg(project_root, ctx) / "replay"
-
-
-def _scope_has_target(captured: dict[str, Any]) -> bool:
-    doc = captured.get("doc") if isinstance(captured.get("doc"), dict) else {}
-    targets = doc.get("targets")
-    if isinstance(targets, list) and targets:
-        return True
-    parsed = _parse_captured_mapping(str(captured.get("text") or ""), doc if isinstance(doc, dict) else None)
-    targets = parsed.get("targets")
-    return isinstance(targets, list) and bool(targets)
 
 
 def _evidence_proofs(project_root: Path, mapping: dict[str, Any]) -> list[dict[str, Any]]:
@@ -698,68 +720,27 @@ def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Ident prefetch only. Never around. Safe when there is no PR diff."""
+    """Prefetch from the Primary pin only. Never git diff HEAD."""
     arch = str(ctx.get("architecture") or "").strip()
-    from ascendc_pilot.paths import agent_root
+    from ascendc_pilot.change_contract import changed_files_of, load_change_contract
 
-    agent = agent_root(project_root, arch or None)
-    idents: list[str] = []
-    has_diff = False
+    contract = load_change_contract(project_root) or {}
+    files = changed_files_of(contract)
+    has_diff = bool(files)
     note = ""
-    change_set = agent / "uo" / "diff" / "change_set.yaml"
-    if change_set.is_file():
-        data = _load_yaml(change_set)
-        for key in ("identifiers", "added_identifiers", "added"):
-            raw = data.get(key) if isinstance(data, dict) else None
-            if isinstance(raw, list):
-                for item in raw:
-                    name = str(item.get("name") if isinstance(item, dict) else item or "").strip()
-                    if name and name not in idents:
-                        idents.append(name)
-                if idents:
-                    has_diff = True
-                    break
     if not has_diff:
-        try:
-            from code_engineering.change.capture import extract_added_identifiers, _run_git
-
-            diff_text = _run_git(project_root, "diff", "--unified=0", "HEAD", allow_diff=True)
-            if str(diff_text or "").strip():
-                has_diff = True
-                idents = extract_added_identifiers(diff_text, limit=12)
-        except Exception as exc:  # noqa: BLE001
-            note = str(exc)[:200]
-    if not has_diff:
-        note = note or "无 PR diff；用途来自用户意图 / CE plan / L0"
-    cards: list[dict[str, Any]] = []
-    if idents:
-        try:
-            from uo_init.uo_query import open_query
-
-            with open_query(project_root, architecture=arch) as q:
-                for name in idents[:8]:
-                    out = q.agent_query(pattern=name)
-                    if str(out.get("shape") or "") != "name":
-                        continue
-                    card = (out.get("cards") or [{}])[0]
-                    cards.append(
-                        {
-                            "pattern": name,
-                            "kind": card.get("kind"),
-                            "name": card.get("name"),
-                            "file": card.get("file"),
-                            "line": card.get("line"),
-                        }
-                    )
-        except Exception as exc:  # noqa: BLE001
-            note = f"{note} ident prefetch skipped: {exc}".strip()
+        note = "无已 pin 的 change_contract.changed_files；不得把 git diff HEAD 当 PR 信号"
+    allow_legal_keys = str(contract.get("enumerate") or "").strip() == "legal_keys"
     intents = products.collect_intent_sources(project_root, architecture=arch)
     return {
         "schema": "tg-plan-scope-packet/v1",
         "has_diff": has_diff,
         "note": note,
-        "identifiers": idents[:12],
-        "ident_cards": cards,
+        "changed_files": files,
+        "change_contract": contract,
+        "allow_legal_keys": allow_legal_keys,
+        "identifiers": [],
+        "ident_cards": [],
         "intent_sources": intents,
         "skip_around": True,
     }
@@ -775,6 +756,11 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         doc = require_init_confirmed(project_root, str(tg_ctx.get("op_name") or Path(project_root).name))
     except InitGateError as exc:
         return {"ok": False, "engine": "plan_precheck", "error": str(exc), "ask": exc.ask, "payload": exc.payload}
+    from ascendc_pilot.change_contract import pr_change_gate
+
+    gate = pr_change_gate(project_root)
+    if gate:
+        return gate
     declared = _legal_key_count(project_root, ctx)
     intents = products.collect_intent_sources(project_root, architecture=str(tg_ctx.get("architecture") or ""))
     packet = _compact_plan_scope_packet(project_root, ctx)
@@ -803,25 +789,47 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    captured = _captured(project_root, ctx, "plan_scope")
-    if not _scope_has_target(captured):
-        return {
-            "ok": False,
-            "engine": "plan_promote",
-            "error": "PLAN_SCOPE_REQUIRED",
-            "ask": "scope",
-            "message_zh": "缺少 plan_scope session 捕获；回 scope 列出 Target，不要在 fuse 里补语义调查。",
-        }
-    text = _captured_text(project_root, ctx, "plan_fuse")
-    if not text.strip():
-        return {"ok": False, "engine": "plan_promote", "error": "empty plan capture"}
+    fuse_cap = _captured(project_root, ctx, "plan_fuse")
+    fuse_text = _captured_text(project_root, ctx, "plan_fuse")
+    fuse_doc = fuse_cap.get("doc") if isinstance(fuse_cap.get("doc"), dict) else None
+    mapping = _parse_captured_mapping(fuse_text, fuse_doc)
+    if not mapping:
+        return _plan_fail(
+            "PLAN_FUSE_REQUIRED",
+            ask="fuse",
+            message_zh="缺少 plan_fuse YAML；回 fuse 交覆盖模型，不要让 promote 编一份。",
+            rework_action_ids=["plan_fuse"],
+        )
+
+    prose = str(ctx.get("plan_prose") or "").strip()
+    if not _has_plan_prose(prose):
+        prose_cap = _captured(project_root, ctx, "plan_prose")
+        prose = str(prose_cap.get("text") or "").strip()
+    if not _has_plan_prose(prose) and _has_plan_prose(fuse_text):
+        prose = _prose_without_fence(fuse_text)
+    if not _has_plan_prose(prose):
+        return _plan_fail(
+            "PLAN_PROSE_REQUIRED",
+            ask="primary",
+            message_zh="缺少 Primary 写的 plan.md 三节散文；promote 不从 YAML 合成标题。",
+        )
+
+    if _has_plan_prose(fuse_text) and _YAML_FENCE_RE.search(fuse_text):
+        text = fuse_text
+    else:
+        text = _assemble_plan_md(prose, mapping)
     path = products.plan_path(_tg(project_root, ctx))
     isolation.assert_tg_write_path(path)
     path.write_text(text, encoding="utf-8")
     try:
         fence = products.parse_plan_fence(text)
     except products.ProductError as exc:
-        return {"ok": False, "engine": "plan_promote", "error": str(exc)}
+        return _plan_fail(
+            "ENGINE_CONTRACT_VIOLATION",
+            ask="promote",
+            message_zh=str(exc),
+            rework_action_ids=["plan_promote"],
+        )
     return {
         "ok": True,
         "engine": "plan_promote",
@@ -838,7 +846,11 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         text, fence = products.load_plan(tg)
     except products.ProductError as exc:
         return {"ok": False, "engine": "plan_validate", "error": str(exc), "ask": exc.ask}
-    errors = products.validate_plan_fence(fence, init_columns=products.column_names(init_doc))
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=products.column_names(init_doc),
+        init_mapping=products.mapping_as_dict(init_doc.get("mapping")),
+    )
     errors.extend(products.validate_plan_prose(text))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
         errors.append("tilingkey_full_coverage / T=D is not a plan mode")

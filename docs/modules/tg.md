@@ -54,7 +54,8 @@ kb_check [D] → repo_scan [D] → bind_init [S 1 harness + N bind，每路 ≤2
                                           ──gate: init_confirmed, uo_digest
 
 /tg-plan
-plan_precheck [D] → plan_scope [S return_value] → plan_fuse [S return_value] → plan_promote [D]
+plan_precheck [D] → plan_scope [S 像 uo-query，不写文件] → plan_fuse [S YAML]
+    → Primary 散文 → plan_promote [D 拼 plan.md]
     → plan_validate [D] → plan_approve [H]
                                           ──gate: plan_approved
 

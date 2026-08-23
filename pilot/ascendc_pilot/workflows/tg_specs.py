@@ -199,7 +199,7 @@ def _build(
         "retry_budget": 3,
         "states": [
             _st("gate", "校验 init.yaml"),
-            _st("scope", "识别 Target / Guard / candidate Dimension"),
+            _st("scope", "弄清要测什么（像 uo-query，不写文件）"),
             _st("fuse", "写出覆盖模型与判定谓词"),
             _st("validate", "校验 plan.md YAML"),
             _st("approve", "批准规划"),
@@ -239,7 +239,7 @@ def _build(
             ),
             _act(
                 "plan_scope",
-                label_zh="识别 Target / Guard / candidate Dimension",
+                label_zh="弄清要测什么（像 uo-query，不写文件）",
                 phases=["scope"],
                 workflow_id="tg-plan",
                 agent_id="tg-analyst",

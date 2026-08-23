@@ -58,7 +58,8 @@ def test_emit_prefilled_parts_lock_columns_and_identity(tmp_path: Path) -> None:
     assert bind["artifact_identity"]["run_id"] == "RUN_1"
     assert bind["columns"] == [{"name": "Dtype"}, {"name": "B"}]
     assert set(bind["mapping"]) == {"Dtype", "B"}
-    assert bind["mapping"]["Dtype"]["role"] == ""
+    assert "role" not in bind["mapping"]["Dtype"]
+    assert bind["mapping"]["Dtype"]["control"]["status"] == ""
     assert bind["call"]["kind"] == ""
     assert bind["llm_edit"] is False
     assert harness["llm_edit"] is False
@@ -91,9 +92,10 @@ def test_restore_engine_owned_keeps_semantic_colon_and_identity(tmp_path: Path) 
     bind_path = parts / "bind.yaml"
     doc = yaml.safe_load(bind_path.read_text(encoding="utf-8"))
     doc["run_id"] = "LLM_FORGED"
-    doc["mapping"]["Forged"] = {"role": "api_arg"}
+    doc["mapping"]["Forged"] = {"control": {"status": "active"}}
     doc["mapping"]["Dtype"]["encoding"] = "TND: sum(s1)"
-    doc["mapping"]["Dtype"]["role"] = "api_arg"
+    doc["mapping"]["Dtype"]["control"] = {"status": "active"}
+    doc["mapping"]["Dtype"]["relation"] = "direct"
     doc["call"]["kind"] = "pta"
     bind_path.write_text(yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8")
     restored = BP.restore_and_dump_parts(parts)
@@ -101,7 +103,8 @@ def test_restore_engine_owned_keeps_semantic_colon_and_identity(tmp_path: Path) 
     assert bind["run_id"] == "RUN_1"
     assert "Forged" not in bind["mapping"]
     assert bind["mapping"]["Dtype"]["encoding"] == "TND: sum(s1)"
-    assert bind["mapping"]["Dtype"]["role"] == "api_arg"
+    assert bind["mapping"]["Dtype"]["control"]["status"] == "active"
+    assert "role" not in bind["mapping"]["Dtype"]
     assert bind["call"]["kind"] == "pta"
     assert restored["ok"] is True
     assert bind["llm_edit"] is True
@@ -150,11 +153,29 @@ def test_apply_bind_fill_merges_llm_cells_keeps_profile(tmp_path: Path) -> None:
     BP.emit_bind_parts(parts, scan=scan, identity={"run_id": "RUN_1"})
     fill = {
         "call": {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"},
-        "call_args": [{"name": "batch", "source_column": "B"}],
+        "call_args": [{"name": "batch", "sources": [{"column": "B", "relation": "direct"}]}],
         "mapping": {
-            "B": {"role": "api_arg", "uo_id": "b", "encoding": "int", "evidence": "a.py:1"},
-            "Dtype": {"role": "api_arg", "uo_id": "", "encoding": "enum", "evidence": "a.py:2"},
-            "Forged": {"role": "api_arg", "uo_id": "nope"},
+            "B": {
+                "control": {"status": "active"},
+                "relation": "direct",
+                "confidence": "confirmed",
+                "uo": {"id": "b", "candidate": ""},
+                "encoding": "int",
+                "evidence": "a.py:1",
+            },
+            "Dtype": {
+                "control": {"status": "active"},
+                "relation": "tensor_dtype",
+                "confidence": "unresolved",
+                "uo": {"id": "", "candidate": ""},
+                "encoding": "enum",
+                "evidence": "a.py:2",
+            },
+            "Forged": {
+                "control": {"status": "active"},
+                "relation": "direct",
+                "uo": {"id": "nope"},
+            },
         },
         "domains": {
             "B": {"operator": "b", "compare": "match", "profile": {"hack": True}},
@@ -168,9 +189,9 @@ def test_apply_bind_fill_merges_llm_cells_keeps_profile(tmp_path: Path) -> None:
     bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
     assert bind["run_id"] == "RUN_1"
     assert bind["call"] == {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"}
-    assert bind["call_args"] == [{"name": "batch", "source_column": "B"}]
-    assert bind["mapping"]["B"]["uo_id"] == "b"
-    assert bind["mapping"]["Dtype"]["role"] == "api_arg"
+    assert bind["call_args"] == [{"name": "batch", "sources": [{"column": "B", "relation": "direct"}]}]
+    assert bind["mapping"]["B"]["uo"]["id"] == "b"
+    assert bind["mapping"]["Dtype"]["control"]["status"] == "active"
     assert "Forged" not in bind["mapping"]
     assert bind["domains"]["B"]["operator"] == "b"
     assert bind["domains"]["B"]["compare"] == "match"
@@ -235,13 +256,16 @@ def test_merge_bind_chunks_unions_mapping_and_call_args(tmp_path: Path) -> None:
     assert (parts / "bind1.yaml").is_file()
     c0 = yaml.safe_load((parts / "bind0.yaml").read_text(encoding="utf-8"))
     c0["call"] = {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"}
-    c0["call_args"] = [{"name": "x", "source_column": "C0"}]
-    c0["mapping"]["C0"]["role"] = "api_arg"
-    c0["mapping"]["C0"]["uo_id"] = "c0"
+    c0["call_args"] = [{"name": "x", "sources": [{"column": "C0", "relation": "direct"}]}]
+    c0["mapping"]["C0"]["control"] = {"status": "active"}
+    c0["mapping"]["C0"]["relation"] = "direct"
+    c0["mapping"]["C0"]["confidence"] = "confirmed"
+    c0["mapping"]["C0"]["uo"] = {"id": "c0", "candidate": ""}
     (parts / "bind0.yaml").write_text(yaml.safe_dump(c0, allow_unicode=True), encoding="utf-8")
     c1 = yaml.safe_load((parts / "bind1.yaml").read_text(encoding="utf-8"))
-    c1["call_args"] = [{"name": "y", "source_column": "C20"}]
-    c1["mapping"]["C20"]["role"] = "feature"
+    c1["call_args"] = [{"name": "y", "sources": [{"column": "C20", "relation": "direct"}]}]
+    c1["mapping"]["C20"]["control"] = {"status": "metadata"}
+    c1["mapping"]["C20"]["relation"] = "candidate"
     (parts / "bind1.yaml").write_text(yaml.safe_dump(c1, allow_unicode=True), encoding="utf-8")
     merged = BP.merge_bind_chunks(parts)
     assert merged["ok"] is True and merged["chunks"] == 2
@@ -249,8 +273,8 @@ def test_merge_bind_chunks_unions_mapping_and_call_args(tmp_path: Path) -> None:
     assert bind["call"]["kind"] == "pta"
     names_args = {row["name"] for row in bind["call_args"]}
     assert names_args == {"x", "y"}
-    assert bind["mapping"]["C0"]["uo_id"] == "c0"
-    assert bind["mapping"]["C20"]["role"] == "feature"
+    assert bind["mapping"]["C0"]["uo"]["id"] == "c0"
+    assert bind["mapping"]["C20"]["control"]["status"] == "metadata"
     restored = BP.restore_and_dump_parts(parts)
     assert restored["ok"] is True
     bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))

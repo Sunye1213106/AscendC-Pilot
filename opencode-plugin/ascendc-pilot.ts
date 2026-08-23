@@ -1699,6 +1699,7 @@ function childSpawnEnv(project?: string): NodeJS.ProcessEnv {
 
 const PILOT_CLI_ALLOWED_HEADS = new Set([
   "uo-query",
+  "pin-facts",
   "status",
   "inspect",
   "inspect-failure",
@@ -1826,7 +1827,7 @@ function createPilotCliTool(): {
         type: "string",
         description:
           "二进制后的 CLI argv（例：`uo-query --project <算子绝对路径> s1Inner`）。" +
-          "不要传 --help / -h。不要传 start / run-action auto（用 pilot_run）。允许：uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn --project <算子绝对路径> --text <本轮原文>（不要猜 --message）, retry-after-environment-fix.",
+          "不要传 --help / -h。不要传 start / run-action auto（用 pilot_run）。允许：uo-query, pin-facts, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn --project <算子绝对路径> --text <本轮原文>（不要猜 --message）, retry-after-environment-fix.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1868,7 +1869,7 @@ function createPilotCliTool(): {
           title: `pilot_cli ${argv[0]}`,
           output:
             "[ascendc-pilot] start / run-action 必须用 Host 工具 `pilot_run(workflow, project, architecture)`。\n" +
-            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / interpret-user-turn / retry-after-environment-fix。",
+            "`pilot_cli` 可做 uo-query / pin-facts / status / inspect / inspect-failure / ro-search / next / scan-architectures / interpret-user-turn / retry-after-environment-fix。",
           metadata: { ok: false, error: "USE_PILOT_RUN" },
         }
       }
@@ -1878,7 +1879,7 @@ function createPilotCliTool(): {
           title: `pilot_cli ${head}`,
           output:
             `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询形态见 code-access 不变量。\n` +
-            "允许：uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn / retry-after-environment-fix。\n" +
+            "允许：uo-query / pin-facts / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn / retry-after-environment-fix。\n" +
             "工作流用 Host `pilot_run`。不要 `uo impact` / `search` / `locate` / `explain-*`。",
           metadata: { ok: false, error: "USE_UO_QUERY" },
         }

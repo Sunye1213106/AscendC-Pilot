@@ -21,10 +21,16 @@ engine_owned:
 llm_owned:
   - call
   - call_args
-  - mapping.role
-  - mapping.uo_id
+  - mapping.control
+  - mapping.relation
+  - mapping.confidence
+  - mapping.runtime
+  - mapping.uo
   - mapping.encoding
   - mapping.evidence
+  - domains.applicability
+  - domains.value
+  - domains.projection
   - domains.operator
   - domains.compare
   - findings
@@ -33,11 +39,25 @@ enums:
     - pta
     - aclnn
     - mixed
-  mapping.role:
-    - api_arg
-    - feature
-    - script_meta
-    - result_sink
+  mapping.control.status:
+    - active
+    - fallback
+    - shadowed
+    - unwired
+    - result
+    - metadata
+  mapping.relation:
+    - direct
+    - derived
+    - tensor_shape
+    - tensor_dtype
+    - presence
+    - projection
+    - candidate
+  mapping.confidence:
+    - confirmed
+    - partial
+    - unresolved
   domains.compare:
     - match
     - tighter_profile

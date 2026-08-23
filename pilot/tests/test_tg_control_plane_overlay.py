@@ -92,6 +92,8 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert analyze.get("method_ref") == "analyze.md"
     assert scope.get("output_mode") == "return_value"
     assert scope.get("output_contract_id") == "tg-plan-scope-v1"
+    assert list(scope.get("produces") or []) == []
+    assert "不写文件" in str(scope.get("label_zh") or "")
     assert list(scope.get("allowed_write_paths") or []) == []
     assert list(fuse.get("allowed_write_paths") or []) == []
     assert list(construct.get("allowed_write_paths") or []) == []

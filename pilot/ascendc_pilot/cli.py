@@ -476,6 +476,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Architecture pin for .uo product lookup (arch35, arch22, …)",
     )
 
+    p_pin = sub.add_parser(
+        "pin-facts",
+        help="Primary pin: write operator change_contract.yaml (clone receipt is not SSOT)",
+    )
+    p_pin.add_argument("--project", type=Path, default=None)
+    p_pin.add_argument("--kind", default="", help="pr_regression | implementation_coverage")
+    p_pin.add_argument(
+        "--changed-files",
+        nargs="*",
+        default=[],
+        help="Pinned changed files. Omit or empty means no PR file set.",
+    )
+    p_pin.add_argument("--base-sha", default="")
+    p_pin.add_argument("--head-sha", default="")
+    p_pin.add_argument("--enumerate", default="", help="legal_keys only when the user asked")
+    p_pin.add_argument("--consumers", nargs="*", default=["tg-plan"])
+    p_pin.add_argument("--key", default="change_contract")
+
     p_uo = sub.add_parser("uo", help="UO Host dump / product-handle（查询请用 uo-query）")
     p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
     p_uo_query_alias = p_uo_sub.add_parser(
@@ -1245,6 +1263,24 @@ def main(argv: list[str] | None = None) -> int:
             notes=args.notes or "",
         )
         return print_result(payload)
+    if args.cmd == "pin-facts":
+        from ascendc_pilot.change_contract import pin_facts
+
+        files: list[str] = []
+        for item in getattr(args, "changed_files", None) or []:
+            files.extend(part.strip() for part in str(item).split(",") if part.strip())
+        payload = pin_facts(
+            args.project,
+            key=str(getattr(args, "key", "") or "change_contract"),
+            kind=str(getattr(args, "kind", "") or ""),
+            changed_files=files,
+            base_sha=str(getattr(args, "base_sha", "") or ""),
+            head_sha=str(getattr(args, "head_sha", "") or ""),
+            enumerate=str(getattr(args, "enumerate", "") or ""),
+            consumers=list(getattr(args, "consumers", None) or ["tg-plan"]),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
     if args.cmd == "uo-query":
         from uo_init.store.reader import find_uo_product
         from uo_init.uo_query import open_query

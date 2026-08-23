@@ -14,7 +14,7 @@
 ## Shell / OpenCode
 
 - 短 CLI：插件工具 `pilot_cli`。不要经 PowerShell `Select-Object -Last` / `Out-String` 或 bash `tail` 管道截断。
-- 不要用 `--help` / `-h` / `help` 发现协议。诊断用 `pilot_cli` `status` / `inspect-failure` / `scan-architectures`。工作流：`pilot_run`。查询：`pilot_cli` `uo-query --project <abs>`。环境修复：`pilot_cli` `retry-after-environment-fix`。
+- 不要用 `--help` / `-h` / `help` 发现协议。诊断用 `pilot_cli` `status` / `inspect-failure` / `scan-architectures`。工作流：`pilot_run`。查询：`pilot_cli` `uo-query --project <abs>`。跨 workflow 复用 clone/git 事实：`pilot_cli` `pin-facts --project <算子绝对路径>`。环境修复：`pilot_cli` `retry-after-environment-fix`。
 - 不要用 bash / `>` / `Set-Content` / `tee` 写 `.ascendc-pilot/**`。
 - 子代禁止用 OpenCode `skill`（读 session `method.md`）。producer 查图只用 `pilot_cli` `uo-query`。主控不要用原生 `skill` 加载 Pilot 编排。领域方法来自 session `method.md` / 认知 skill。
 - 只读工具（Read / Glob / Grep / list / search / find）authorize 不拦截，含算子树、测试仓、engines 与仓外路径。语义查询仍优先 `uo-query`；Grep 只定位，结论必须窗口 Read。Primary 的 Write/edit 为 ask。子代 `write_scopes` 为空时 `edit`/`write` 为 ask。

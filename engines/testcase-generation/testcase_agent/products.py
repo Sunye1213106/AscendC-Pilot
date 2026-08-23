@@ -67,9 +67,51 @@ def column_names(init_doc: dict[str, Any]) -> list[str]:
     return names
 
 
-_ROLES_OPTIONAL_UO = frozenset({"script_meta", "result_sink", "feature"})
 _CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
 _MAPPING_WRAPPER_KEYS = frozenset({"columns", "rows", "items", "mapping"})
+CONTROL_STATUSES = frozenset({"active", "fallback", "shadowed", "unwired", "result", "metadata"})
+RELATIONS = frozenset(
+    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence", "projection", "candidate"}
+)
+CONFIDENCES = frozenset({"confirmed", "partial", "unresolved"})
+_SOLVE_BLOCKED = frozenset({"unwired", "shadowed", "fallback", "result", "metadata"})
+
+
+def empty_mapping_row() -> dict[str, Any]:
+    return {
+        "control": {"status": ""},
+        "relation": "",
+        "confidence": "",
+        "runtime": {"target": "", "path": []},
+        "uo": {"id": "", "candidate": ""},
+        "encoding": "",
+        "evidence": "",
+    }
+
+
+def has_legacy_bind_fields(row: Any) -> bool:
+    return isinstance(row, dict) and ("role" in row or "uo_id" in row)
+
+
+def _control_status(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    control = row.get("control") if isinstance(row.get("control"), dict) else {}
+    return str(control.get("status") or "").strip()
+
+
+def is_confirmed_active(row: Any) -> bool:
+    if not isinstance(row, dict) or has_legacy_bind_fields(row):
+        return False
+    return _control_status(row) == "active" and str(row.get("confidence") or "").strip() == "confirmed"
+
+
+def is_solve_control(row: Any) -> bool:
+    if not is_confirmed_active(row):
+        return False
+    if _control_status(row) in _SOLVE_BLOCKED:
+        return False
+    return str(row.get("relation") or "").strip() not in {"projection", "candidate"}
 
 
 def _ingest_mapping_row(out: dict[str, Any], item: dict[str, Any], *, fallback: str = "") -> None:
@@ -81,14 +123,20 @@ def _ingest_mapping_row(out: dict[str, Any], item: dict[str, Any], *, fallback: 
     out[col] = row
 
 
+def _is_filled_mapping_row(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    status = _control_status(row)
+    relation = str(row.get("relation") or "").strip()
+    confidence = str(row.get("confidence") or "").strip()
+    if status or relation or confidence:
+        return True
+    return False
+
+
 def _drop_unfilled_mapping(out: dict[str, Any]) -> dict[str, Any]:
-    """Form cells with explicit empty role are not yet bound."""
-    kept: dict[str, Any] = {}
-    for key, row in out.items():
-        if isinstance(row, dict) and "role" in row and not str(row.get("role") or "").strip():
-            continue
-        kept[key] = row
-    return kept
+    """Rows without control.status / relation / confidence are not yet bound."""
+    return {key: row for key, row in out.items() if _is_filled_mapping_row(row)}
 
 
 def mapping_as_dict(raw: Any) -> dict[str, Any]:
@@ -110,10 +158,6 @@ def mapping_as_dict(raw: Any) -> dict[str, Any]:
             if isinstance(value, dict):
                 _ingest_mapping_row(out, value, fallback=label)
                 continue
-            if not label:
-                continue
-            row = {"uo_id": value, "column": label}
-            out[label] = row
         return _drop_unfilled_mapping(out)
     if isinstance(raw, list):
         for item in raw:
@@ -140,10 +184,39 @@ def _mapping_uses_name_schema(raw: Any) -> bool:
     )
 
 
+def _iter_mapping_rows(raw: Any) -> list[tuple[str, dict[str, Any]]]:
+    if isinstance(raw, dict):
+        return [(str(name), row) for name, row in raw.items() if isinstance(row, dict)]
+    if isinstance(raw, list):
+        out: list[tuple[str, dict[str, Any]]] = []
+        for item in raw:
+            if isinstance(item, dict):
+                out.append((str(item.get("column") or ""), item))
+        return out
+    return []
+
+
+def _iter_call_args(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, dict):
+        items: list[dict[str, Any]] = []
+        for name, value in raw.items():
+            if isinstance(value, dict):
+                row = dict(value)
+                row.setdefault("name", name)
+                items.append(row)
+            else:
+                items.append({"name": name})
+        return items
+    return []
+
+
 def validate_bind_part(bind: Any) -> list[str]:
     """Structural gate for `inspect yaml` / Primary PASS: kind enum + mapping shape.
 
-    Identifier values (empty or wrong uo_id) are Primary content, not this gate.
+    Empty ``uo.id`` is Primary content, not this gate. Leftover ``role`` /
+    ``uo_id`` / ``source_column`` is a schema error.
     """
     if not isinstance(bind, dict):
         return ["bind part is not a mapping"]
@@ -166,6 +239,22 @@ def validate_bind_part(bind: Any) -> list[str]:
             "mapping.columns[].name is not a valid schema; use mapping keyed by "
             "column or a list of {column: ...}"
         )
+    for name, row in _iter_mapping_rows(bind.get("mapping")):
+        if "role" in row or "uo_id" in row:
+            errors.append(f"mapping.{name} uses removed role/uo_id; rebind")
+        status = _control_status(row)
+        if status and status not in CONTROL_STATUSES:
+            errors.append(f"mapping.{name} control.status {status!r} invalid")
+        relation = str(row.get("relation") or "").strip()
+        if relation and relation not in RELATIONS:
+            errors.append(f"mapping.{name} relation {relation!r} invalid")
+        confidence = str(row.get("confidence") or "").strip()
+        if confidence and confidence not in CONFIDENCES:
+            errors.append(f"mapping.{name} confidence {confidence!r} invalid")
+    for item in _iter_call_args(bind.get("call_args")):
+        if "source_column" in item:
+            errors.append("call_args.source_column removed; use sources[]")
+            break
     return errors
 
 
@@ -244,16 +333,9 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
     must_map = require_mapping if require_mapping is not None else kind == "script_repo"
     if must_map and not mapping:
         errors.append("script_repo mapping is empty; bind columns to script and UO identifiers")
-    api_mapped = False
-    for col, row in mapping.items():
-        if not isinstance(row, dict):
-            continue
-        role = str(row.get("role") or "api_arg").strip() or "api_arg"
-        if role in _ROLES_OPTIONAL_UO:
-            continue
-        api_mapped = True
-    if kind == "script_repo" and must_map and mapping and not api_mapped:
-        errors.append("script_repo API argument columns are unbound; script_meta-only mapping is not enough")
+    confirmed = any(is_confirmed_active(row) for row in mapping.values())
+    if kind == "script_repo" and must_map and mapping and not confirmed:
+        errors.append("script_repo has no confirmed+active control; old role+uo_id is not a bind")
     if kind == "script_repo":
         if not str(doc.get("entry") or "").strip():
             errors.append("entry required")
@@ -382,7 +464,22 @@ def _check_controls(row: dict[str, Any], *, owner: str, allowed: set[str]) -> li
     return errors
 
 
-def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> list[str]:
+def _mapping_row_for(mapping: dict[str, Any], col: str) -> Any:
+    if col in mapping:
+        return mapping[col]
+    wanted = col.lower()
+    for key, row in mapping.items():
+        if str(key).strip().lower() == wanted:
+            return row
+    return None
+
+
+def validate_plan_fence(
+    fence: dict[str, Any],
+    *,
+    init_columns: list[str],
+    init_mapping: Any = None,
+) -> list[str]:
     from testcase_agent.coverage.predicate import validate_predicate
 
     errors: list[str] = []
@@ -457,6 +554,19 @@ def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> li
         if not controls:
             errors.append(f"{did}: controls required")
         errors.extend(_check_controls(row, owner=did, allowed=allowed))
+        if init_mapping is not None:
+            mapping = mapping_as_dict(init_mapping)
+            for col in controls:
+                mrow = _mapping_row_for(mapping, col)
+                if not is_confirmed_active(mrow):
+                    errors.append(
+                        f"{did}: control {col!r} is not confirmed+active; "
+                        "mark untestable + needs_binding"
+                    )
+                elif str((mrow or {}).get("relation") or "") == "projection":
+                    errors.append(
+                        f"{did}: projection {col!r} must not be written as an equality classifier"
+                    )
         parts = row.get("partitions") or []
         if not isinstance(parts, list) or len(parts) < 2:
             errors.append(f"{did}: need >=2 partitions")

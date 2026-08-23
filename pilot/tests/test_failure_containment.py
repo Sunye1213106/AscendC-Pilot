@@ -15,6 +15,7 @@ from ascendc_pilot.authorize.lease import (
 )
 from ascendc_pilot.observation import (
     ENVIRONMENT_INVARIANT,
+    FORMAT_TRANSPORT,
     apply_observation,
     build_observation,
     classify_failure,
@@ -43,6 +44,36 @@ def test_classify_uo_scope_finalize_is_environment_invariant():
     assert c["failure_class"] == ENVIRONMENT_INVARIANT
     assert c["retryable"] is False
     assert c["recommended_transition"] == "human_required"
+
+
+def test_classify_plan_fuse_required_is_format_transport_not_human():
+    c = classify_failure(
+        error_code="PLAN_FUSE_REQUIRED",
+        action_id="plan_promote",
+        source="finalize_action",
+        execution_mode="deterministic",
+        workflow_id="tg-plan",
+        phase="fuse",
+        messages=["缺少 plan_fuse YAML"],
+    )
+    assert c["failure_class"] == FORMAT_TRANSPORT
+    assert c["retryable"] is True
+    assert c["recommended_transition"] == "rework_required"
+
+
+def test_classify_plan_prose_required_is_format_transport_not_human():
+    c = classify_failure(
+        error_code="PLAN_PROSE_REQUIRED",
+        action_id="plan_promote",
+        source="finalize_action",
+        execution_mode="deterministic",
+        workflow_id="tg-plan",
+        phase="fuse",
+        messages=["缺少 Primary 散文"],
+    )
+    assert c["failure_class"] == FORMAT_TRANSPORT
+    assert c["retryable"] is True
+    assert c["recommended_transition"] == "rework_required"
 
 
 def test_classify_cann_env_not_ready_is_environment_invariant():

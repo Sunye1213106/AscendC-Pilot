@@ -4,98 +4,36 @@
 
 本路只填这份草稿里已有的 mapping key（每路 ≤20 列）。`call` / `call_args` 仍覆盖最富调用的每一个实参——接线需要全貌，列格子只写本路。
 
-本路回答：脚本怎么调算子、每个入参来自哪一列、剩下的列是什么。列值域以 `tables[].profile` 为准。
+查图只用 `pilot_cli uo-query`。缺哪个查哪个，不要先规划查询次数。
 
-身份字段由框架写入草稿，不要从 stub 抄进 YAML。查图只用 `pilot_cli uo-query`，不能用索引文件、头文件或源码阅读代替。
+## 6 步
 
-## 一条硬规则
-
-**role 只看 `torch_npu.*` / `aclnn*` 调用点，不看 CodeMap。**
-
-出现在实参列表里（位置参数或关键字）→ 追到的 CSV 列是 `api_arg`。  
-没出现 → 才考虑 `script_meta` / `result_sink` / `feature`。
-
-禁止用 AttrIndex / TILING_KEY / `dim_names` 有无来改 role。图上没有某名字，仍然可能是 `api_arg`。
-
-**不要用 `attr`。** 传进调用的全部是 `api_arg`。
-
-`dim_names` 是模板维宇宙，不是 role 宇宙。输入 dtype 进了传入张量 → `api_arg`。
+1. **打开 richest runtime call，抄真实 API args。** 禁止造伪 kwargs。先写 `call` + `call_args`，这一步完成前不要给列写 `control` / `relation`。
+2. **每个 API arg 反向追踪：** `arg ← runtime ← transform ← CSV column(s)`。张量用 `sources[]`（shape / dtype / layout 分条），不要压成单个 `source_column`。没有 CSV 列的字面量 / `None` / 现场公式进 findings，不要发明表头。
+3. **每列分类 `control.status` + `relation`。**
+   - `control.status`：`active` | `fallback` | `shadowed` | `unwired` | `result` | `metadata`
+   - `relation`：`direct` | `derived` | `tensor_shape` | `tensor_dtype` | `presence` | `projection` | `candidate`
+   - 表 100% 空且 runner 另有来源 → `shadowed` / `unwired`，不是 active 控制。
+   - 不进调用的 harness 标志 → `metadata` + `candidate`。
+4. **只有 `control.status: active` 才继续绑 UO。** unwired / shadowed / fallback / result / metadata 停在第 3 步，不要为它们填 `uo.id`。
+5. **追 CSV → API/input → Host → implementation state。** 整条闭合 → `confidence: confirmed` 且 `uo.id` 填短名；只碰到相似 UO 符号 → `uo.candidate` + `unresolved`。禁止把 `candidate` 升格成 `uo.id`。禁止 `TDF::` id 和 tiling 结构名。
+6. **plan 只消费 confirmed。** 本路不写 plan。未闭合的轴留给 review / plan 标 `untestable + needs_binding`。
 
 ## 输入 / 输出 / 停
 
-读：`repo_scan.yaml` 表头与 `tables[].profile`。有仓则打开入口脚本的**最富调用**（精度入口 / 非 profiler；没有再退回默认 mode）。不要发明 CSV 列名。不要通读 CSV。不要读对轴产物。
+读：`repo_scan.yaml` 表头与 `tables[].profile`。有仓则打开入口脚本的最富调用（精度入口 / 非 profiler）。不要发明 CSV 列名。不要通读 CSV。不要读对轴产物。
 
-有仓且本路没有任何 `api_arg`（且本路含入参列）→ 本切片失败。
+完成：本路每个 mapping key 都有 `control.status` + `relation` + `confidence`；`call_args` 用 `sources[]`；`pilot_cli inspect yaml --rel <本路 bindN.yaml 相对 .ascendc-pilot 的路径>` 返回 ok。
 
-完成：`call` + **`call_args` 清单** + 本路每个 mapping key 都有 role；凡 `call_args.source_column` 非空且该列在本路，都是 `api_arg` 且有 `uo_id`。`pilot_cli inspect yaml --rel <本路 bindN.yaml 相对 .ascendc-pilot 的路径>` 返回 ok 再停。
+## domains
 
-## 决策树（按顺序，不许跳）
-
-1. **打开最富调用，抄实参。** 先写 `call_args`。这一步做完之前禁止给任何列写 role。
-2. **每个实参追来源：**
-   - 字面量 / `None` / 现场公式、没有 CSV 列 → `source_column: null`，进 findings / `test_harness_gap`。
-   - 变量能追到读表函数 → `source_column` 填**读表函数读到的表头**，不是 runner 局部变量名。
-   - **张量实参** → 造这个张量用到的 dtype / layout / B / N / S / D 等也是 `api_arg`。即使 runner 从 `.pt` 加载，这些列仍是 `api_arg`。
-   - 最富调用里已有的 kwargs：同名表列是 `api_arg`（表全空或值从 `.pt` 来也一样）。
-3. **给本路每一列表头写 role（只许用第 2 步的清单）：**
-   - 出现在任一 `source_column` → **`api_arg`，必须有 `uo_id`**。
-   - 名字以 `Actual_` / `Expected_` 开头 → `result_sink`，禁止 `uo_id`。
-   - Enable / 用例名 / 是否跑这行 → `script_meta`，禁止 `uo_id`。
-   - 只改 Python 上下文、不进调用 → `feature`，有标识符写 `uo_id`。
-   - 只改写别的入参、本身不是 kwargs → `feature`。
-   - 读了 CSV 但调用里对应位置是硬编码 → `script_meta` + gap。
-4. **某次 mode 省略了某个 kwargs** → findings 记未接线。**列仍是 `api_arg`**，以最富调用为准。
-5. **查图只为 `uo_id`，在本路 role 全部写完之后。** 查不到 → findings 写 PARTIAL；禁止把 role 改成 `script_meta`。
-
-## 步骤
-
-1. `call.kind` ∈ {`pta`, `aclnn`, `mixed`}。`torch_npu` 且无 aclnn → `pta`。禁止 `pta_direct`。记下 `call.api` + `call.site`。
-2. 按决策树写 `call_args` 再写本路 `mapping`。
-3. 查图（role 已冻结）：
-   - **必须先**无参 `uo-query`（只要 `dim_names` / `hint`）。不能因为已有索引文件而跳过。
-   - 具名实参转驼峰标识符。proto 输入名用脚本关键字。
-   - **预算：** 无参 1 + 标识符 ≤8 + `Dim=` ≤4 + around ≤1。snippet 已出现的短名直接抄。不要先打满 8 次再回头留空。头文件已经出现的字段禁止再查。
-   - 同一列既是张量形状又是具名实参 → 具名实参赢。单字母字段只绑「列名就是那个维」的列。
-   - 禁止两个不同语义的列共用一个 `uo_id`（`*Dtype` vs `*ShapeType`）。
-   - `uo_id` 填卡片 `canonical` 或短 `name`，禁止 `TDF::` id。`dim_names` / `Dim=` 维名逐字抄。
-   - 已为某列查过的卡，禁止换成邻居短名。`Dim=` 只进 `domains.operator`，不是 mapping（列本身就是该开关时除外）。
-   - 不要用 `tiling_data_names` 结构名当 `uo_id`。形状列禁止绑 `query` / `key` / `value` / `dy`。
-   - 开关维不是 dtype / 形状列的身份，也不进它的 `operator`。
-   - `--file --line` 只从上一张卡复制。
-4. `domains` 只对 `api_arg`。不要改 `profile`（引擎已写入）。`compare` ∈ {`match`, `tighter_profile`, `tighter_operator`, `mismatch`}。**`compare=match` 仅当 `operator` 非空。** `feature` 的 `operator` 留空。
-5. 非字面量列写一句 `encoding`。不要把列标成 PR 焦点。
-
-## 看到这样
-
-| 现象 | 判断 |
-| --- | --- |
-| kwargs 有可选输入 | 对应列 `api_arg`，哪怕图上是 INPUT 不是 AttrIndex |
-| 张量进调用，runner 读 `.pt` | 造它们的维 / dtype / layout 仍是 `api_arg` |
-| 调用里硬编码字面量 | gap，不是列 |
-| 某 mode 没传该 kwargs | findings；列仍 `api_arg` |
-| 想写 `attr` / `pta_direct` | `api_arg` / `pta` |
-| 想用 `mapping.columns[].name` | 禁止；mapping 的 key 就是列名 |
-| 查无 AttrIndex | 继续 `api_arg`；换 proto 名 / tiling 字段 |
-| `Dim=` 有覆盖 | 只进 domains；dtype/shape 列绑字段 |
-| 想绑 tiling 结构名 | 改查结构里的字段 |
-| 想把开关维写成 dtype 列 | 留空 |
-| 想 Edit 合并后的 `bind.yaml` | Edit 本路 `bindN.yaml` |
-
-## 完成勾选
-
-- [ ] `call_args` 覆盖最富调用的每一个实参
-- [ ] 本路每个非空 `source_column` 是 `api_arg` 且有 `uo_id`
-- [ ] `call.kind` ∈ {pta, aclnn, mixed}
-- [ ] `script_meta` / `result_sink` 无 `uo_id`
-- [ ] mapping 是 `{列名: {role, uo_id, ...}}`，只含本路列
-- [ ] 没有 `attr`、没有 `pta_direct`；`uo_id` 是短名不是 `TDF::` id
-- [ ] 做过一次无参 `uo-query`
+不要改引擎已写入的 `profile`。`applicability` / `value` / `projection` 分开写：`Input_Layout → IsTnd` 是 projection，不是 equality。`operator` / `compare` 只对 active 控制列。`compare` ∈ {`match`, `tighter_profile`, `tighter_operator`, `mismatch`}。**`compare=match` 仅当 `operator` 非空。**
 
 ## 循环
 
 1. 打开 scan 入口 + 最富调用 + 读表函数。
-2. 写完 `call_args` → 再写本路 role。
-3. 无参索引；缺哪个 `uo_id` 查哪个标识符；停。
+2. 抄 `call_args`（`sources[]`）→ 再给本路列写 control/relation。
+3. 仅 active 列查 UO；缺哪个标识符查哪个；停。
 4. Edit 已有本路 YAML 的语义格。不要读对轴文件。
 
 ## 输出形状
@@ -106,29 +44,26 @@ call:
   api: torch_npu.<fn>
   site: path.py:LINE
 call_args:
-  - {name: keep_prob, source_column: Drop_Out_Possibility}
-  - {name: padding_mask, source_column: null}
+  - name: query
+    runtime_expr: q
+    sources:
+      - {column: B, relation: tensor_shape}
+      - {column: Dtype, relation: tensor_dtype}
 mapping:
   ColName:
-    role: api_arg           # api_arg | feature | script_meta | result_sink
-    uo_id: ident
+    control: {status: active}    # active|fallback|shadowed|unwired|result|metadata
+    relation: direct             # direct|derived|tensor_shape|tensor_dtype|presence|projection|candidate
+    confidence: confirmed        # confirmed|partial|unresolved
+    runtime: {target: ..., path: []}
+    uo: {id: ident, candidate: ''}
     evidence: path.py:LINE
     encoding: 字面量或一句
-columns:
-  - {name: ColName}
 domains:
   ColName:
+    applicability: ''
+    value: ''
+    projection: ''
     operator: ...
     compare: match
 findings: []
 ```
-
-## 反模式
-
-- 用 AttrIndex / `dim_names` 决定 role
-- 因为 runner 读 `.pt` 就把维列标成 `script_meta`
-- `call.kind: pta_direct`；`role: attr`
-- 通读 CSV；读对轴 `harness.yaml` 或其它 `bindN.yaml`
-- 跳过无参 `uo-query`（包括因为已有索引文件）
-- 把本路以外的列写进这份 YAML
-- Write 合并目标 `bind.yaml`

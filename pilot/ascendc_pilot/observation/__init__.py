@@ -115,6 +115,11 @@ _FORMAT_TRANSPORT_PATTERNS = (
     re.compile(r"literal[_-]?block", re.I),
     re.compile(r"JSONDecodeError|UnicodeDecodeError", re.I),
     re.compile(r"ECONNRESET|ConnectionReset|BrokenPipe", re.I),
+    re.compile(
+        r"PLAN_FUSE_REQUIRED|PLAN_PROSE_REQUIRED|PLAN_PR_CHANGE_REQUIRED|ENGINE_CONTRACT_VIOLATION",
+        re.I,
+    ),
+    re.compile(r"plan\.md has no yaml fence", re.I),
 )
 
 

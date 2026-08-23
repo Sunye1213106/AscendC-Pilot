@@ -303,6 +303,22 @@ def _capture_return_value(
     return {"text": str(text or ""), "doc": doc or {}}
 
 
+def _scope_answer_for_fuse(captured: dict[str, Any]) -> str:
+    """plan_scope is uo-query-like: natural language only. Prefer captured text."""
+    body = str((captured or {}).get("text") or "").strip()
+    if body:
+        return body
+    doc = (captured or {}).get("doc")
+    if isinstance(doc, dict) and doc:
+        try:
+            import yaml as _yaml
+
+            return str(_yaml.safe_dump(doc, allow_unicode=True, sort_keys=False) or "").strip()
+        except Exception:  # noqa: BLE001
+            return str(doc).strip()
+    return ""
+
+
 def _load_tg_captured(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
     sdir = _session_dir(project_root, run_id, action_id)
     captured = _load(sdir / "captured.yaml")
@@ -1973,19 +1989,12 @@ def prepare_action(
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
     if action_id == "plan_fuse":
         captured = _load_tg_captured(project_root, run_id, "plan_scope")
-        body = str(captured.get("text") or "").strip()
-        if not body and captured.get("doc"):
-            try:
-                import yaml as _yaml
-
-                body = _yaml.safe_dump(captured.get("doc"), allow_unicode=True, sort_keys=False)
-            except Exception:  # noqa: BLE001
-                body = str(captured.get("doc"))
+        body = _scope_answer_for_fuse(captured)
         prompt_r = (
             prompt_r.rstrip()
-            + "\n\n## Planning Context (session capture)\n\n```yaml\n"
-            + (body or "# missing — PLAN_SCOPE_REQUIRED")
-            + "\n```\n"
+            + "\n\n## Scope answer (not a file; Primary already read this)\n\n"
+            + (body or "(empty — Primary must state what to test before fuse)")
+            + "\n"
         )
     user_question = str(state.get("intent") or "").strip()
     if (
@@ -2802,6 +2811,11 @@ def prepare_action(
                 f" Host `pilot_run` 完成本步（插件注入全文）；"
                 f" 禁止再手写 scratch yaml。"
             )
+            if action_id == "plan_scope":
+                result["message_zh"] += (
+                    " plan_scope 像 uo-query：子代理只把要测的东西说清楚；"
+                    "Primary 读回答即可，禁止写文件，不要等 targets.yaml。"
+                )
         result["finalize_hint"] = "pilot_run"
         result["finalize_hint_fallback"] = ""
     else:
@@ -3244,6 +3258,12 @@ def _attach_finalize_observation(
     if not finding_rows:
         finding_rows = _engine_audit_findings(eng, eng2)
 
+    explicit_class = str(
+        payload.get("failure_class")
+        or eng.get("failure_class")
+        or eng2.get("failure_class")
+        or ""
+    ).strip() or None
     recorded = record_pilot_result(
         project_root,
         ok=False,
@@ -3262,6 +3282,7 @@ def _attach_finalize_observation(
         messages=[m for m in messages if m],
         findings=finding_rows or None,
         source="finalize_action",
+        explicit_class=explicit_class,
     )
     out = dict(payload)
     out["observation"] = recorded.get("observation")
@@ -3595,6 +3616,11 @@ def finalize_action(
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
     }
+    if overall_ok and action_id == "plan_scope":
+        result["message_zh"] = (
+            "plan_scope 已回答（无文件）。Primary 读回答、弄清要测什么后继续 plan_fuse；"
+            "不要写 targets.yaml / plan.md。"
+        )
     if not overall_ok and not engine_ok and isinstance(engine_result, dict):
         from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
 

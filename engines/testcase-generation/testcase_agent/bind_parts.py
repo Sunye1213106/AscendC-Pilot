@@ -22,10 +22,10 @@ _CANNOT_DEFAULT = (
     "illegal_range",
 )
 _CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
-_ROLES = frozenset({"api_arg", "feature", "script_meta", "result_sink", ""})
 LLM_EDIT_KEY = "llm_edit"
 BIND_COLUMN_CHUNK_SIZE = 20
-_MAPPING_CELLS = ("role", "uo_id", "encoding", "evidence")
+_MAPPING_TOP_KEYS = ("control", "relation", "confidence", "runtime", "uo", "encoding", "evidence")
+_DOMAIN_LLM_KEYS = ("applicability", "value", "projection", "operator", "compare")
 
 
 def load_schema(kind: str) -> dict[str, Any]:
@@ -176,8 +176,55 @@ def _candidates(scan: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _empty_mapping_row() -> dict[str, str]:
-    return {"role": "", "uo_id": "", "encoding": "", "evidence": ""}
+def _empty_mapping_row() -> dict[str, Any]:
+    from .products import empty_mapping_row
+
+    return empty_mapping_row()
+
+
+def _empty_domain_row(profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "profile": dict(profile or {}),
+        "applicability": "",
+        "value": "",
+        "projection": "",
+        "operator": "",
+        "compare": "",
+    }
+
+
+def _strip_legacy_mapping(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out.pop("role", None)
+    out.pop("uo_id", None)
+    return out
+
+
+def _merge_mapping_row(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+    out = _strip_legacy_mapping(dst if isinstance(dst, dict) else _empty_mapping_row())
+    for key in _MAPPING_TOP_KEYS:
+        if key not in src:
+            continue
+        val = src.get(key)
+        if key in {"control", "runtime", "uo"} and isinstance(val, dict):
+            base = dict(out.get(key) or {}) if isinstance(out.get(key), dict) else {}
+            for nested_key, nested_val in val.items():
+                if nested_val is None and nested_key == "path":
+                    base[nested_key] = []
+                else:
+                    base[nested_key] = "" if nested_val is None else nested_val
+            out[key] = base
+        else:
+            out[key] = "" if val is None else val
+    return out
+
+
+def _normalize_call_arg(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out.pop("source_column", None)
+    if out.get("sources") is None and "sources" in out:
+        out["sources"] = []
+    return out
 
 
 def chunk_column_names(
@@ -253,7 +300,14 @@ def _chunk_has_llm_semantics(doc: dict[str, Any]) -> bool:
         return True
     mapping = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
     for row in mapping.values():
-        if isinstance(row, dict) and str(row.get("role") or "").strip():
+        if not isinstance(row, dict):
+            continue
+        control = row.get("control") if isinstance(row.get("control"), dict) else {}
+        if (
+            str(control.get("status") or "").strip()
+            or str(row.get("relation") or "").strip()
+            or str(row.get("confidence") or "").strip()
+        ):
             return True
     return False
 
@@ -317,7 +371,7 @@ def _bind_doc_subset(bind: dict[str, Any], names: list[str]) -> dict[str, Any]:
             name: dict(mapping.get(name) or _empty_mapping_row()) for name in names
         },
         "domains": {
-            name: dict(domains.get(name) or {"profile": {}, "operator": "", "compare": ""})
+            name: dict(domains.get(name) or _empty_domain_row())
             for name in names
         },
         "findings": [],
@@ -403,7 +457,7 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
         if isinstance(row, dict) and str(row.get("name") or "").strip():
             name = str(row["name"])
             if name not in seen_args:
-                call_args.append(dict(row))
+                call_args.append(_normalize_call_arg(row))
                 seen_args.add(name)
     mapping = dict(bind.get("mapping") or {}) if isinstance(bind.get("mapping"), dict) else {}
     domains = dict(bind.get("domains") or {}) if isinstance(bind.get("domains"), dict) else {}
@@ -426,7 +480,7 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
             name = str(row.get("name") or "").strip()
             if not name or name in seen_args:
                 continue
-            call_args.append(dict(row))
+            call_args.append(_normalize_call_arg(row))
             seen_args.add(name)
         ch_map = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
         meta = doc.get("chunk") if isinstance(doc.get("chunk"), dict) else {}
@@ -437,22 +491,16 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
             src = ch_map.get(name)
             if not isinstance(src, dict):
                 continue
-            dst = dict(mapping.get(name) or _empty_mapping_row())
-            for key in _MAPPING_CELLS:
-                if key in src:
-                    val = src.get(key)
-                    dst[key] = "" if val is None else val
-            mapping[name] = dst
+            mapping[name] = _merge_mapping_row(mapping.get(name) or _empty_mapping_row(), src)
         ch_dom = doc.get("domains") if isinstance(doc.get("domains"), dict) else {}
         for name in chunk_names:
             src = ch_dom.get(name)
             if not isinstance(src, dict):
                 continue
-            dst = dict(domains.get(name) or {})
-            if "operator" in src:
-                dst["operator"] = src.get("operator") or ""
-            if "compare" in src:
-                dst["compare"] = src.get("compare") or ""
+            dst = dict(domains.get(name) or _empty_domain_row())
+            for key in _DOMAIN_LLM_KEYS:
+                if key in src:
+                    dst[key] = src.get(key) or ""
             dst.setdefault("profile", {})
             domains[name] = dst
         if isinstance(doc.get("findings"), list):
@@ -489,11 +537,7 @@ def emit_bind_parts(
             "columns": [{"name": name} for name in columns],
             "mapping": {name: _empty_mapping_row() for name in columns},
             "domains": {
-                name: {
-                    "profile": profiles.get(name) or {},
-                    "operator": "",
-                    "compare": "",
-                }
+                name: _empty_domain_row(profiles.get(name) or {})
                 for name in columns
             },
             "findings": [],
@@ -630,32 +674,47 @@ def restore_bind(doc: dict[str, Any], owned: dict[str, Any]) -> tuple[dict[str, 
     for name in names:
         row = raw_map.get(name) if isinstance(raw_map.get(name), dict) else {}
         if row:
-            mapping[name] = dict(row)
+            mapping[name] = _merge_mapping_row(_empty_mapping_row(), row)
             mapping[name].pop("evidence_window_sha256", None)
             mapping[name].pop("snippet", None)
             mapping[name].pop("evidence_snippet", None)
         else:
             mapping[name] = _empty_mapping_row()
     out["mapping"] = mapping
+    if isinstance(out.get("call_args"), list):
+        out["call_args"] = [
+            _normalize_call_arg(row) for row in out["call_args"] if isinstance(row, dict)
+        ]
     profiles = owned.get("domains_profile") if isinstance(owned.get("domains_profile"), dict) else {}
     raw_dom = out.get("domains") if isinstance(out.get("domains"), dict) else {}
     domains: dict[str, Any] = {}
     for name in names:
         row = raw_dom.get(name) if isinstance(raw_dom.get(name), dict) else {}
-        domains[name] = {
-            "profile": profiles.get(name) if isinstance(profiles.get(name), dict) else {},
-            "operator": str(row.get("operator") or ""),
-            "compare": str(row.get("compare") or ""),
-        }
+        domains[name] = _empty_domain_row(
+            profiles.get(name) if isinstance(profiles.get(name), dict) else {}
+        )
+        for key in _DOMAIN_LLM_KEYS:
+            if key in row:
+                domains[name][key] = row.get(key) or ""
     out["domains"] = domains
     call = out.get("call") if isinstance(out.get("call"), dict) else {}
     kind = str(call.get("kind") or "").strip()
     if kind and kind not in _CALL_KINDS:
         errors.append(f"call.kind {kind!r} not in pta|aclnn|mixed")
-    for row in mapping.values():
-        role = str(row.get("role") or "").strip()
-        if role and role not in _ROLES:
-            errors.append(f"mapping role {role!r} invalid")
+    from .products import CONFIDENCES, CONTROL_STATUSES, RELATIONS
+
+    for name, row in mapping.items():
+        status = ""
+        control = row.get("control") if isinstance(row.get("control"), dict) else {}
+        status = str(control.get("status") or "").strip()
+        if status and status not in CONTROL_STATUSES:
+            errors.append(f"mapping.{name} control.status {status!r} invalid")
+        relation = str(row.get("relation") or "").strip()
+        if relation and relation not in RELATIONS:
+            errors.append(f"mapping.{name} relation {relation!r} invalid")
+        confidence = str(row.get("confidence") or "").strip()
+        if confidence and confidence not in CONFIDENCES:
+            errors.append(f"mapping.{name} confidence {confidence!r} invalid")
     return out, errors
 
 
@@ -732,7 +791,9 @@ def apply_bind_fill(bind_path: Path, fill_path: Path | None = None) -> dict[str,
     if isinstance(fill.get("call"), dict):
         bind["call"] = dict(fill["call"])
     if isinstance(fill.get("call_args"), list):
-        bind["call_args"] = list(fill["call_args"])
+        bind["call_args"] = [
+            _normalize_call_arg(row) for row in fill["call_args"] if isinstance(row, dict)
+        ]
     if isinstance(fill.get("findings"), list):
         bind["findings"] = list(fill["findings"])
     fill_map = fill.get("mapping") if isinstance(fill.get("mapping"), dict) else {}
@@ -741,21 +802,17 @@ def apply_bind_fill(bind_path: Path, fill_path: Path | None = None) -> dict[str,
         src = fill_map.get(name)
         if not isinstance(src, dict):
             continue
-        dst = dict(row) if isinstance(row, dict) else _empty_mapping_row()
-        for key in _MAPPING_CELLS:
-            if key in src:
-                val = src.get(key)
-                dst[key] = "" if val is None else val
-        mapping[name] = dst
+        mapping[name] = _merge_mapping_row(row if isinstance(row, dict) else _empty_mapping_row(), src)
     bind["mapping"] = mapping
     fill_dom = fill.get("domains") if isinstance(fill.get("domains"), dict) else {}
     domains = bind.get("domains") if isinstance(bind.get("domains"), dict) else {}
     for name, row in list(domains.items()):
-        dst = dict(row) if isinstance(row, dict) else {}
+        dst = dict(row) if isinstance(row, dict) else _empty_domain_row()
         src = fill_dom.get(name)
         if isinstance(src, dict):
-            dst["operator"] = str(src.get("operator") or "")
-            dst["compare"] = str(src.get("compare") or "")
+            for key in _DOMAIN_LLM_KEYS:
+                if key in src:
+                    dst[key] = src.get(key) or ""
         domains[name] = dst
     bind["domains"] = domains
     owned_path = target.parent / ".engine" / "bind.owned.yaml"
