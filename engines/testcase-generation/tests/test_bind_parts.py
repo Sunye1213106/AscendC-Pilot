@@ -265,7 +265,7 @@ def test_merge_bind_chunks_unions_mapping_and_call_args(tmp_path: Path) -> None:
     c1 = yaml.safe_load((parts / "bind1.yaml").read_text(encoding="utf-8"))
     c1["call_args"] = [{"name": "y", "sources": [{"column": "C20", "relation": "direct"}]}]
     c1["mapping"]["C20"]["control"] = {"status": "metadata"}
-    c1["mapping"]["C20"]["relation"] = "candidate"
+    c1["mapping"]["C20"]["relation"] = ""
     (parts / "bind1.yaml").write_text(yaml.safe_dump(c1, allow_unicode=True), encoding="utf-8")
     merged = BP.merge_bind_chunks(parts)
     assert merged["ok"] is True and merged["chunks"] == 2

@@ -2,7 +2,9 @@
 
 通读 `parts/harness.yaml` 与 `parts/bind.yaml`。不要写文件。本步只判过不过：放行后引擎才 `bind_promote` 合并正式 `init.yaml`。两份没到齐不能判。
 
-只判草稿自洽与否。不要自己补列、不要改口径。旧扁平 `role` + `uo_id` / 单 `source_column` 不是绑定，见即 `REWORK bind`。
+**禁止做 schema / YAML 审查。** 非法组合（`relation=candidate`、`confirmed` 却空 `uo.id`、非 active 却 `confirmed`）由引擎 validator 拒绝；`PASS` 时引擎会再跑同一 validator，失败是 `BIND_PART_INVALID`，不是「schema 看起来 OK 所以过」。本窗只抽查已 `confirmed` 行的 provenance：这条 `uo.id` 是否真是 CSV→API→Host→implementation state 闭合链上的实现状态。
+
+不要自己补列、不要改口径。
 
 ## 输入 / 输出 / 停
 
@@ -10,52 +12,50 @@
 
 scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_repo`；点了仓却扫空则不应放行。
 
-## Provenance audit
+## Provenance audit（仅 confirmed 行）
 
-逐列核对，不要只看「格子填了」。任一项失败就 REWORK。
+对每条 `confidence: confirmed` 的列抽查，不要只看格子填了。任一项失败就 REWORK。
 
-1. **`control.status` 对得上 corpus / runner。** 表 100% 空且 runner 从别列重算 → 空列必须是 `shadowed`，不得 `active`。API 语义对但当前 corpus 全空 → `unwired`。不进调用的 harness 标志 → `metadata`。把这些写成 active 控制 → `REWORK bind`。
-2. **`uo.id` 仅当链路闭合。** CSV → runtime → Host/Tiling 整条可追才允许 `uo.id` + `confidence: confirmed`。只碰到相似 UO 符号 → `uo.candidate` + `unresolved`。**禁止把 `candidate` 升格成 `uo.id`。**
-3. **`relation` 不要压成一种。** 直接传参 `direct`；脚本变换 `derived`；张量构造 `tensor_shape` / `tensor_dtype`。`Input_Layout → IsTnd` 写在 `domains.projection`，不是 mapping.relation。
-4. **`call_args` 用 `sources[]`。** 出现 `source_column` → `REWORK bind`。张量多源必须分条，不要挑一列当整个张量的身份。
-5. **domains 拆开。** `applicability` / `value` / `projection` 分开写。`domains.profile` 引用 scan profile，不要改引擎写入的 profile。`operator` 空却 `compare=match` → `REWORK bind`。
-6. **plan 消费面。** 未 `confirmed` + `active` + 非空 `uo.id` 的列不得当确定性 classifier。本步不写 plan，但草稿若把 unresolved / candidate 写成已绑定控制 → `REWORK bind`。后续 plan 会把未确认轴标 `untestable + needs_binding`。
+1. **`uo.id` 指对了闭合链上的符号。** CSV → runtime → Host/Tiling 整条可追。只碰到相似 UO 符号应是 `uo.candidate` + `unresolved`，不得标 `confirmed`。
+2. **`relation` 描述 CSV→runtime API。** `direct` = identity / 平凡转换；`derived` = 非 identity 脚本变换；张量用 `tensor_shape` / `tensor_dtype` / `presence`。分不清应空 relation + `unresolved`。`Input_Layout → IsTnd` 写在 `domains.projection`。
+3. **`call_args` 的 `sources[]` 对得上这条 confirmed 列。** 张量多源必须分条。
+4. **domains 拆开。** `applicability` / `value` / `projection` 分开写。`domains.profile` 引用 scan profile。`operator` 空却 `compare=match` → `REWORK bind`。
+5. **plan 消费面。** 只有上述 confirmed 行可当确定性 Target/Dimension control。partial / unresolved 不能升级。本步不写 plan。
 
-## 清单（其余）
+## 清单（其余，叙事不是 schema）
 
-7. **两份自洽。** harness 引用的表 / 入口 / `--case` 与 bind 的列集合对得上。
-8. **没有发明列。** bind 列名必须来自 scan 表头或（无仓时）Host API。
-9. **精度口径来自脚本。** `modes.precision` / `modes.perf` 与 argparse 一致。`--golden-only` 写成精度 → `REWORK harness`。
-10. **两路 `call.kind` 同一世界。** 非法 kind（不是 `pta` / `aclnn` / `mixed`）→ `REWORK bind`。
-11. **无仓叙事。** `kind=default_input` 时 harness 应写缺口而不是假入口。
-12. **generate_inputs 缺口诚实。** runner 造不出的标缺口。encoding 非平凡列应说明脚本写入什么、算子读成什么。
+6. **两份自洽。** harness 引用的表 / 入口 / `--case` 与 bind 的列集合对得上。
+7. **没有发明列。** bind 列名必须来自 scan 表头或（无仓时）Host API。
+8. **精度口径来自脚本。** `modes.precision` / `modes.perf` 与 argparse 一致。`--golden-only` 写成精度 → `REWORK harness`。
+9. **无仓叙事。** `kind=default_input` 时 harness 应写缺口而不是假入口。
+10. **generate_inputs 缺口诚实。** runner 造不出的标缺口。
 
 ## 常驻判断
 
 正式产物只有 `init.yaml`。草稿里若又写出 inventory / audit / fingerprint，退回重写，不要 promote。
 
-精度/性能 oracle 是 harness mode，不是 Host TilingKey HIT。
+精度/性能 oracle 是 harness mode，不是 Host TilingKey HIT，也不是 plan `evidence.field`。
 
 冲突时写清改哪一路：列错了改 bind；怎么跑/怎么比错了改 harness；两边叙事打架就两路都 REWORK。
 
-放行后才 plan/solve。`confirmed` 由 `bind_promote` 写在 `init.yaml` 上，本步不写。
+放行后才 plan/solve。本步不写 `init.yaml`。
 
 ## 看到这样
 
 | 现象 | 下一发 |
 | --- | --- |
-| 旧 `role`/`uo_id`/`source_column`；`control.status` 与空列/派生不符；`candidate` 写成 `uo.id` | `REWORK bind` |
+| confirmed 行的 `uo.id` 不是闭合链上的实现状态 | `REWORK bind` |
 | 精度口径与 argparse 不符 / 编了阈值 / golden-only 当精度 | `REWORK harness` |
 | 无仓却写成 script_repo，或两边叙事打架 | `REWORK harness,bind` |
-| 清单全过 | `PASS` |
+| 抽查过、叙事自洽 | `PASS` |
 
-原因写一句人能改的话：改哪一字段、为什么。不要只说「不自洽」。
+原因写一句人能改的话：改哪一字段、为什么。不要做 YAML schema 点评。
 
 ## 完成勾选
 
 - [ ] 两份都读完，不是只看文件在不在
-- [ ] 逐列做过 provenance：status / relation / confidence / `uo.id` vs `candidate`
-- [ ] 精度/性能没有被写成 Host HIT
+- [ ] 只抽查了 confirmed 行的 provenance，没有做 schema 审查
+- [ ] 精度/性能没有被写成 Host HIT 或 evidence.field
 - [ ] 下一发是 PASS 或带原因的 REWORK，没有自己补 YAML
 
 ## 输出形状
@@ -68,5 +68,5 @@ intent=PASS
 
 ```text
 intent=REWORK bind
-原因：列 Foo 的 uo.candidate 被写成了 uo.id，链路未闭合
+原因：列 Foo 的 uo.id 不是闭合链上的实现状态
 ```

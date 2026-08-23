@@ -309,6 +309,49 @@ def _unique_operator_arch_pair(resolved: dict[str, Any]) -> tuple[Path, str] | N
     return Path(root).expanduser().resolve(), arch
 
 
+def _write_operator_clone_receipts(
+    *,
+    unique: tuple[Path, str] | None,
+    op_root: Path,
+    acquire: dict[str, Any],
+    resolved: dict[str, Any],
+    source: dict[str, Any],
+    changed: list[Any],
+    worktree: str,
+) -> None:
+    """Candidate facts belong on the operator control clone_receipt. Write failure is clone failure."""
+    from ascendc_pilot.change_contract import write_clone_receipt
+
+    files = [str(x).strip() for x in changed if str(x).strip()]
+    base_sha = str(acquire.get("base_sha") or resolved.get("base_sha") or "")
+    head_sha = str(
+        acquire.get("head_sha") or resolved.get("head_sha") or resolved.get("source_revision") or ""
+    )
+    targets: list[Path] = []
+    seen: set[str] = set()
+    if unique:
+        targets.append(Path(op_root).expanduser().resolve())
+    else:
+        for raw in list(resolved.get("operator_roots") or acquire.get("operator_roots") or []):
+            root = Path(str(raw)).expanduser()
+            if not root.exists():
+                continue
+            key = str(root.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(root.resolve())
+    for target in targets:
+        write_clone_receipt(
+            target,
+            source=source,
+            changed_files=files,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            worktree_head=worktree,
+        )
+
+
 def _clone_only_receipt(
     *,
     project: Path,
@@ -316,6 +359,7 @@ def _clone_only_receipt(
     skipped_nested: bool = False,
     ctx: dict[str, Any] | None = None,
     anchor_root: Path | None = None,
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     worktree = str(acquire.get("worktree_head") or acquire.get("project") or project)
     resolved: dict[str, Any] = {}
@@ -337,6 +381,23 @@ def _clone_only_receipt(
     ask_payload = resolved.get("ask_question") if isinstance(resolved.get("ask_question"), dict) else {}
     ask_options = [opt for opt in (ask_payload.get("options") or []) if opt]
     can_ask = bool(resolved.get("needs_human_decision") and ask_options)
+    try:
+        _write_operator_clone_receipts(
+            unique=unique,
+            op_root=op_root,
+            acquire=acquire,
+            resolved=resolved,
+            source=dict(source or acquire.get("source") or {}),
+            changed=changed,
+            worktree=worktree,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "engine": "intent_promote",
+            "error": "CLONE_RECEIPT_WRITE_FAILED",
+            "message_zh": f"无法写入 clone_receipt.yaml：{exc}"[:400],
+        }
     if unique:
         try:
             from ascendc_pilot.run_resume import save_pr_architecture_pin
@@ -370,7 +431,6 @@ def _clone_only_receipt(
                 next_project=str(op_root),
                 next_architecture=arch,
                 selected_by="pr_changed_files",
-                changed_files=changed,
                 message_zh=message,
             )
         except Exception:  # noqa: BLE001
@@ -451,13 +511,6 @@ def _clone_only_receipt(
             _receipt(receipt_root, receipt_ctx, "intent_promoted.yaml", receipt)
         except Exception:  # noqa: BLE001
             pass
-        if unique and op_root.exists() and op_root != receipt_root:
-            pin_ctx = dict(receipt_ctx)
-            pin_ctx["architecture"] = arch
-            try:
-                _receipt(op_root, pin_ctx, "intent_promoted.yaml", receipt)
-            except Exception:  # noqa: BLE001
-                pass
     return receipt
 
 
@@ -574,6 +627,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             skipped_nested=bool(acquire.get("skipped_nested_clone")),
             ctx=ctx,
             anchor_root=Path(project_root).expanduser().resolve(),
+            source=source,
         )
 
     if llm_intent["needed_workflows"]:

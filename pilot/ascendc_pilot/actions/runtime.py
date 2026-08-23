@@ -1055,8 +1055,8 @@ def _complete_bind_review_prepare(
                 from testcase_agent import products
 
                 bind_errors = products.validate_bind_part(bind_doc)
-            except Exception:  # noqa: BLE001
-                bind_errors = []
+            except Exception as exc:  # noqa: BLE001
+                bind_errors = [str(exc)]
         if bind_errors:
             result["ok"] = False
             result["error"] = "BIND_PART_INVALID"

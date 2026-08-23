@@ -22,6 +22,7 @@ CLI_HELP_ZH = {
     "inspect": "查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window）",
     "inspect-failure": "查看结构化 failure 信息",
     "next": "查看可执行的下一动作与 obligations",
+    "pin-facts": "从 clone_receipt promote 为 change_contract；无 PR 候选时才允许本地 implementation_coverage",
     "retry-after-environment-fix": "环境修复后恢复失败动作的 rework 状态",
     "rework": "沿声明的 rework edge 恢复",
     "ro-search": "只读源码搜索，不执行 shell 重定向",

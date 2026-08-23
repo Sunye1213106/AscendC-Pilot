@@ -71,12 +71,15 @@ _CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
 _MAPPING_WRAPPER_KEYS = frozenset({"columns", "rows", "items", "mapping"})
 CONTROL_STATUSES = frozenset({"active", "fallback", "shadowed", "unwired", "result", "metadata"})
 RELATIONS = frozenset(
-    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence", "candidate"}
+    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence"}
 )
 CONFIDENCES = frozenset({"confirmed", "partial", "unresolved"})
 _SOLVE_BLOCKED = frozenset({"unwired", "shadowed", "fallback", "result", "metadata"})
 _SOLVE_RELATIONS = frozenset(
     {"direct", "derived", "tensor_shape", "tensor_dtype", "presence"}
+)
+_ORACLE_EVIDENCE_FIELDS = frozenset(
+    {"precision", "pricision", "md5", "accuracy", "oracle", "golden", "perf", "performance"}
 )
 
 
@@ -110,6 +113,24 @@ def _uo_id(row: Any) -> str:
     return str(uo.get("id") or "").strip()
 
 
+def _uo_candidate(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    uo = row.get("uo") if isinstance(row.get("uo"), dict) else {}
+    return str(uo.get("candidate") or "").strip()
+
+
+def _runtime_path(row: Any) -> list[str]:
+    if not isinstance(row, dict):
+        return []
+    runtime = row.get("runtime") if isinstance(row.get("runtime"), dict) else {}
+    path = runtime.get("path") or []
+    if isinstance(path, list):
+        return [str(x).strip() for x in path if str(x).strip()]
+    text = str(path).strip()
+    return [text] if text else []
+
+
 def is_bound_control(row: Any) -> bool:
     if not isinstance(row, dict) or has_legacy_bind_fields(row):
         return False
@@ -117,12 +138,9 @@ def is_bound_control(row: Any) -> bool:
         return False
     if str(row.get("confidence") or "").strip() != "confirmed":
         return False
-    if not _uo_id(row):
+    if not _uo_id(row) or _uo_candidate(row):
         return False
-    relation = str(row.get("relation") or "").strip()
-    if relation == "candidate":
-        return False
-    return True
+    return str(row.get("relation") or "").strip() in _SOLVE_RELATIONS
 
 
 def is_confirmed_active(row: Any) -> bool:
@@ -235,12 +253,50 @@ def _iter_call_args(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
-def validate_bind_part(bind: Any) -> list[str]:
-    """Structural gate for `inspect yaml` / Primary PASS: kind enum + mapping shape.
+def _validate_mapping_row(name: str, row: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    status = _control_status(row)
+    relation = str(row.get("relation") or "").strip()
+    confidence = str(row.get("confidence") or "").strip()
+    uo_id = _uo_id(row)
+    candidate = _uo_candidate(row)
+    path = _runtime_path(row)
+    if status and status not in CONTROL_STATUSES:
+        errors.append(f"mapping.{name} control.status {status!r} invalid")
+    if relation and relation not in RELATIONS:
+        errors.append(f"mapping.{name} relation {relation!r} invalid")
+    if confidence and confidence not in CONFIDENCES:
+        errors.append(f"mapping.{name} confidence {confidence!r} invalid")
+    if not status and not relation and not confidence:
+        return errors
+    if confidence == "confirmed":
+        if status != "active":
+            errors.append(f"mapping.{name} confirmed requires control.status=active")
+        if relation not in _SOLVE_RELATIONS:
+            errors.append(
+                f"mapping.{name} confirmed requires relation in "
+                "direct|derived|tensor_shape|tensor_dtype|presence"
+            )
+        if not uo_id or candidate:
+            errors.append(f"mapping.{name} confirmed requires nonempty uo.id and empty uo.candidate")
+    elif confidence == "partial":
+        if uo_id:
+            errors.append(f"mapping.{name} partial requires empty uo.id")
+        if not candidate and not path:
+            errors.append(f"mapping.{name} partial requires uo.candidate or runtime.path")
+    elif confidence == "unresolved":
+        if uo_id:
+            errors.append(f"mapping.{name} unresolved requires empty uo.id")
+    if status and status != "active":
+        if uo_id:
+            errors.append(f"mapping.{name} non-active requires empty uo.id")
+        if confidence == "confirmed":
+            errors.append(f"mapping.{name} confirmed requires control.status=active")
+    return errors
 
-    Empty ``uo.id`` is Primary content, not this gate. Leftover ``role`` /
-    ``uo_id`` / ``source_column`` is a schema error.
-    """
+
+def validate_bind_part(bind: Any) -> list[str]:
+    """Bind legality: call kind, mapping shape, and confirmed/partial/unresolved state machine."""
     if not isinstance(bind, dict):
         return ["bind part is not a mapping"]
     errors: list[str] = []
@@ -265,15 +321,7 @@ def validate_bind_part(bind: Any) -> list[str]:
     for name, row in _iter_mapping_rows(bind.get("mapping")):
         if "role" in row or "uo_id" in row:
             errors.append(f"mapping.{name} uses removed role/uo_id; rebind")
-        status = _control_status(row)
-        if status and status not in CONTROL_STATUSES:
-            errors.append(f"mapping.{name} control.status {status!r} invalid")
-        relation = str(row.get("relation") or "").strip()
-        if relation and relation not in RELATIONS:
-            errors.append(f"mapping.{name} relation {relation!r} invalid")
-        confidence = str(row.get("confidence") or "").strip()
-        if confidence and confidence not in CONFIDENCES:
-            errors.append(f"mapping.{name} confidence {confidence!r} invalid")
+        errors.extend(_validate_mapping_row(name, row))
     for item in _iter_call_args(bind.get("call_args")):
         if "source_column" in item:
             errors.append("call_args.source_column removed; use sources[]")
@@ -353,6 +401,9 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
     if kind == "script_repo" and not cols:
         errors.append("script_repo init.yaml has no columns")
     mapping = mapping_as_dict(doc.get("mapping"))
+    for name, row in mapping.items():
+        if isinstance(row, dict):
+            errors.extend(_validate_mapping_row(name, row))
     must_map = require_mapping if require_mapping is not None else kind == "script_repo"
     if must_map and not mapping:
         errors.append("script_repo mapping is empty; bind columns to script and UO identifiers")
@@ -471,6 +522,10 @@ def _check_observe_field(field: str, *, owner: str) -> str | None:
     name = str(field or "").strip()
     if not name:
         return f"{owner}: observe field empty"
+    bare = name.split(".")[-1].strip().lower()
+    lowered = name.lower()
+    if bare in _ORACLE_EVIDENCE_FIELDS or "precision" in lowered or lowered.endswith("md5"):
+        return f"{owner}: evidence.field {name!r} is an oracle, not a Target observe field"
     if name.startswith(_OBSERVE_PREFIXES) or "." not in name:
         return None
     return f"{owner}: observe field {name!r} must be case.*|replay.*|probe.* or a bare symbol"

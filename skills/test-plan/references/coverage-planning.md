@@ -48,5 +48,5 @@ Host TilingKey HIT ≠ Target HIT（除非 evidence 就是那条 field）
 
 - 写 plan.md 散文三节（那是 Primary 的）
 - 默认全量 Key
-- 把 unresolved / candidate 绑定写成确定 classifier
+- 把 unresolved / partial 绑定写成确定 classifier
 - Write 磁盘

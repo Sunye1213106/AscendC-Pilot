@@ -50,15 +50,16 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 * 刚完成 `/uo-init`，或 `.uo` 与当前源码一致：不要再跑 `/uo-update`。
 * 禁止把 `/uo-update` 紧挨着排在刚完成的 `/uo-init` 后面。
 
-不要为理解 PR diff 去跑 `/uo-update`。clone 回执只是候选事实，不是 SSOT。后续 workflow 还要用这次改动时，Primary 显式 `pilot_cli pin-facts --project <算子绝对路径>`，写入算子 `.ascendc-pilot/control/change_contract.yaml`。`/tg-plan` 只读这份 pin。禁止 `git diff HEAD` 当 PR 信号。
+不要为理解 PR diff 去跑 `/uo-update`。clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.yaml`。后续 workflow 还要用这次改动时，Primary 显式 `pilot_cli pin-facts --project <算子绝对路径>`，从 clone_receipt **promote** 成 `change_contract.yaml`。`/tg-plan` 只读这份 pin。禁止 `git diff HEAD` 当 PR 信号。禁止手传 `--changed-files` 或空默认写盘。
 
 ```text
-IF 下一步还要用 clone/git 事实 THEN pin-facts(change_contract)
-IF source.kind == pull_request AND (change_contract 不存在 OR changed_files 为空)
-   AND change_contract.kind != implementation_coverage
-THEN FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin，不是 human_required）
-generic TilingKey fallback 仅 change_contract.kind == implementation_coverage
-enumerate: legal_keys 仅 pin enumerate: legal_keys
+pin-facts --project <算子> = 读 clone_receipt → 写 change_contract（kind=pr_regression，files/sha 原样 promote）
+无 clone_receipt → ok=false，不写盘
+已有 PR clone_receipt 时禁止 kind=implementation_coverage / enumerate=legal_keys
+IF clone_receipt/user_goal 表明 PR 源 AND（change_contract 非法或 changed_files 为空）
+THEN plan_precheck FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin；不进入 plan_scope）
+generic TilingKey fallback 仅无 PR 候选且 change_contract.kind == implementation_coverage
+enumerate: legal_keys 仅上述本地覆盖 pin
 ```
 
 `user_goal.kind` 是交付物标签（`generate_change_tests`），不是 `pr_regression`。PR 针对性看 `source.kind=pull_request`。不要用 pin 去改写 `user_goal.kind`。

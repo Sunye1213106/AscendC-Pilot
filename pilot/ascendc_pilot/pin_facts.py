@@ -1,8 +1,10 @@
-"""This-run operator pin facts for host_step / complete payloads.
+"""This-run operator pin for host_step / complete payloads.
 
-Clone/pin already happens in workspace engines. This module is the facts
-channel: persist onto the live Host run state, then copy into complete()
-and host_step so compactPilotRunPayload can keep project/architecture.
+This module is NOT change_contract. It only carries next_project /
+next_architecture / selected_by onto the live Host run state so
+compactPilotRunPayload can keep the operator pin. PR changed_files
+belong on operator clone_receipt.yaml (candidate) and change_contract.yaml
+(SSOT after pin-facts promote). Host state must not persist changed_files.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ def persist_pin_on_state(
     next_project: str = "",
     next_architecture: str = "",
     selected_by: str = "",
-    changed_files: list[str] | None = None,
     message_zh: str = "",
 ) -> None:
     from ascendc_pilot.state import load_state, save_state
@@ -34,8 +35,6 @@ def persist_pin_on_state(
         st["next_architecture"] = str(next_architecture)
     if selected_by:
         st["selected_by"] = str(selected_by)
-    if changed_files:
-        st["changed_files"] = [str(x) for x in changed_files if str(x).strip()]
     if message_zh:
         st["pin_message_zh"] = str(message_zh)
     save_state(root, st)

@@ -12,7 +12,7 @@
 
 ## 空列与派生
 
-当前 corpus 全空、runner 从另一列重算 → 空列是 `shadowed`，源列才是 `active` + `derived`。API 语义对但表全空 → `unwired`，先修 harness，不当 solve 控制。不进调用的 harness 标志（如 MD5 / deterministic）→ `metadata` + `uo.candidate`，禁止写成 `uo.id`。
+当前 corpus 全空、runner 从另一列重算 → 空列是 `shadowed`，源列才是 `active` + `derived`。API 语义对但表全空 → `unwired`，先修 harness，不当 solve 控制。不进调用的 harness 标志（如 MD5 / deterministic）→ `metadata` + 空 relation + `uo.candidate`，禁止写成 `uo.id`，禁止 `confidence: confirmed`。
 
 ## 张量多源
 

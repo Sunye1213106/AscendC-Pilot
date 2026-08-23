@@ -190,4 +190,9 @@ def test_clone_only_unique_pin_writes_host_run_state(tmp_path: Path, monkeypatch
     assert str(st.get("next_project") or "") == str(op)
     assert st.get("next_architecture") == "arch0"
     assert st.get("selected_by") == "pr_changed_files"
-    assert "kernel.cpp" in str(st.get("changed_files") or [])
+    assert not st.get("changed_files")
+    from ascendc_pilot.change_contract import load_clone_receipt
+
+    receipt = load_clone_receipt(op)
+    assert receipt is not None
+    assert "kernel.cpp" in str(receipt.get("changed_files") or [])

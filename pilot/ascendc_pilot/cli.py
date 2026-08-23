@@ -478,21 +478,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p_pin = sub.add_parser(
         "pin-facts",
-        help="Primary pin: write operator change_contract.yaml (clone receipt is not SSOT)",
+        help="Promote clone_receipt to change_contract; local coverage only without a PR receipt",
     )
-    p_pin.add_argument("--project", type=Path, default=None)
-    p_pin.add_argument("--kind", default="", help="pr_regression | implementation_coverage")
+    p_pin.add_argument("--project", type=Path, required=True)
     p_pin.add_argument(
-        "--changed-files",
-        nargs="*",
-        default=[],
-        help="Pinned changed files. Omit or empty means no PR file set.",
+        "--kind",
+        default="",
+        help="omit to promote PR clone_receipt; implementation_coverage only when no PR receipt",
     )
-    p_pin.add_argument("--base-sha", default="")
-    p_pin.add_argument("--head-sha", default="")
-    p_pin.add_argument("--enumerate", default="", help="legal_keys only when the user asked")
-    p_pin.add_argument("--consumers", nargs="*", default=["tg-plan"])
-    p_pin.add_argument("--key", default="change_contract")
+    p_pin.add_argument(
+        "--enumerate",
+        default="",
+        help="legal_keys only for local implementation_coverage",
+    )
 
     p_uo = sub.add_parser("uo", help="UO Host dump / product-handle（查询请用 uo-query）")
     p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
@@ -1266,18 +1264,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "pin-facts":
         from ascendc_pilot.change_contract import pin_facts
 
-        files: list[str] = []
-        for item in getattr(args, "changed_files", None) or []:
-            files.extend(part.strip() for part in str(item).split(",") if part.strip())
         payload = pin_facts(
             args.project,
-            key=str(getattr(args, "key", "") or "change_contract"),
             kind=str(getattr(args, "kind", "") or ""),
-            changed_files=files,
-            base_sha=str(getattr(args, "base_sha", "") or ""),
-            head_sha=str(getattr(args, "head_sha", "") or ""),
             enumerate=str(getattr(args, "enumerate", "") or ""),
-            consumers=list(getattr(args, "consumers", None) or ["tg-plan"]),
         )
         print_json(payload)
         return 0 if payload.get("ok") else 1
@@ -1733,8 +1723,8 @@ def _cmd_inspect(args: Any) -> int:
                 from testcase_agent.products import check_tg_part
 
                 part_errors = check_tg_part(doc)
-            except Exception:  # noqa: BLE001
-                part_errors = []
+            except Exception as exc:  # noqa: BLE001
+                part_errors = [str(exc)]
         if part_errors:
             print_json(
                 {

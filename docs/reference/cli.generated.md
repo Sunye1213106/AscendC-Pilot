@@ -24,7 +24,7 @@
 | `acp inspect-failure` | 查看结构化 failure 信息 |
 | `acp interpret-user-turn` | 把用户本轮回复映射到待确认选项，或因打断而取消该确认 |
 | `acp next` | 查看可执行的下一动作与 obligations |
-| `acp pin-facts` | Primary pin: write operator change_contract.yaml (clone receipt is not SSOT) |
+| `acp pin-facts` | 从 clone_receipt promote 为 change_contract；无 PR 候选时才允许本地 implementation_coverage |
 | `acp retry-after-environment-fix` | 环境修复后恢复失败动作的 rework 状态 |
 | `acp rework` | 沿声明的 rework edge 恢复 |
 | `acp ro-search` | 只读源码搜索，不执行 shell 重定向 |

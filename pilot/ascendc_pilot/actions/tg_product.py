@@ -637,9 +637,9 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             doc[key] = harness[key]
         elif staged.get(key) is not None:
             doc[key] = staged[key]
-    # Merge dumps extracted structure. inspect yaml only refuses illegal
-    # shape (parse, kind enum, mapping key schema). Identifier content is
-    # Primary. Illegal call.kind still fails validate_init (ses_fd6e).
+    # Merge dumps extracted structure. Validator owns bind legality
+    # (including confirmed/uo.id). Primary judges whether a filled uo.id
+    # names the right implementation symbol.
     path = products.dump_init(tg, doc)
     proofs = _evidence_proofs(project_root, mapping)
     receipt = _receipt(
@@ -717,7 +717,7 @@ def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Prefetch from the Primary pin only. Never git diff HEAD."""
     arch = str(ctx.get("architecture") or "").strip()
-    from ascendc_pilot.change_contract import changed_files_of, load_change_contract
+    from ascendc_pilot.change_contract import allow_legal_keys, changed_files_of, load_change_contract
 
     contract = load_change_contract(project_root) or {}
     files = changed_files_of(contract)
@@ -725,7 +725,6 @@ def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[
     note = ""
     if not has_diff:
         note = "无已 pin 的 change_contract.changed_files；不得把 git diff HEAD 当 PR 信号"
-    allow_legal_keys = str(contract.get("enumerate") or "").strip() == "legal_keys"
     intents = products.collect_intent_sources(project_root, architecture=arch)
     return {
         "schema": "tg-plan-scope-packet/v1",
@@ -733,7 +732,7 @@ def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[
         "note": note,
         "changed_files": files,
         "change_contract": contract,
-        "allow_legal_keys": allow_legal_keys,
+        "allow_legal_keys": allow_legal_keys(project_root),
         "identifiers": [],
         "ident_cards": [],
         "intent_sources": intents,
@@ -837,15 +836,13 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         text, fence = products.load_plan(tg)
     except products.ProductError as exc:
         return {"ok": False, "engine": "plan_validate", "error": str(exc), "ask": exc.ask}
-    from ascendc_pilot.change_contract import load_change_contract
+    from ascendc_pilot.change_contract import allow_legal_keys
 
-    contract = load_change_contract(project_root) or {}
-    allow_legal_keys = str(contract.get("enumerate") or "").strip() == "legal_keys"
     errors = products.validate_plan_fence(
         fence,
         init_columns=products.column_names(init_doc),
         init_mapping=products.mapping_as_dict(init_doc.get("mapping")),
-        allow_legal_keys=allow_legal_keys,
+        allow_legal_keys=allow_legal_keys(project_root),
     )
     errors.extend(products.validate_plan_prose(text))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:

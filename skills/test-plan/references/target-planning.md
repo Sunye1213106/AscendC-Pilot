@@ -4,7 +4,7 @@
 
 ## 输入 / 输出 / 停
 
-读：`tg/init.yaml`、对话 / `--intent`、可选 CE plan / handoff、算子 `.ascendc-pilot/control/change_contract.yaml`（若已 pin）。改动文件只作方向线索，不要当覆盖清单。没有 pin 时禁止 `git diff HEAD`。`source.kind=pull_request` 且 pin 的 `changed_files` 为空（或根本没有 pin）时，回答缺口是 `PLAN_PR_CHANGE_REQUIRED`，不要改口去测「当前实现」。generic TilingKey 仅 `change_contract.kind=implementation_coverage`。`legal_keys` 仅 pin `enumerate: legal_keys`。
+读：`tg/init.yaml`、对话 / `--intent`、可选 CE plan / handoff、算子 `.ascendc-pilot/control/change_contract.yaml`（已 pin 才会进本窗）。改动文件只作方向线索，不要当覆盖清单。禁止 `git diff HEAD`。generic TilingKey 仅 `change_contract.kind=implementation_coverage`（且没有 PR clone_receipt）。`legal_keys` 仅本地覆盖 pin `enumerate: legal_keys`。PR 未 pin 时引擎停在 `plan_precheck`，本窗看不到该状态，不要在回答里写 `PLAN_PR_CHANGE_REQUIRED`。
 
 交回：一段说清楚「测什么」的回答。禁止 Write。禁止为了格式去凑 YAML。
 
@@ -31,8 +31,9 @@
 - 交 `targets.yaml` 或任何磁盘产物
 - 把「可能有关」写成已经确认的 UO 绑定
 - 没搞懂就退回全量 TilingKey 枚举
-- packet 无 change_contract 时把目标改成「测当前实现」
+- packet 无 change_contract 时把目标改成「测当前实现」（引擎不会让本窗见到未 pin 的 PR）
 - 把 clone 回执或 Host run state 当成已 pin 的 PR 文件集
+- 在本窗回答里写 `PLAN_PR_CHANGE_REQUIRED` 或解析 return_value 当控制失败
 
 ## 停
 

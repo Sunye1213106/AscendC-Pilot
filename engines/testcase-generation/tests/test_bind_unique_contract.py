@@ -147,10 +147,61 @@ def test_confirmed_without_uo_id_is_not_bound() -> None:
     assert any("confirmed" in e or "uo.id" in e or "bound" in e for e in errors)
 
 
+def test_validate_bind_part_rejects_relation_candidate() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "is_deter": {
+                    "control": {"status": "metadata"},
+                    "relation": "candidate",
+                    "confidence": "unresolved",
+                    "uo": {"id": "", "candidate": "DeterType"},
+                }
+            },
+        }
+    )
+    assert any("candidate" in e for e in errors)
+
+
+def test_validate_bind_part_rejects_confirmed_empty_id_with_candidate() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "Dtype": {
+                    "control": {"status": "active"},
+                    "relation": "direct",
+                    "confidence": "confirmed",
+                    "uo": {"id": "", "candidate": "inputDataType"},
+                }
+            },
+        }
+    )
+    assert any("uo.id" in e or "confirmed" in e for e in errors)
+
+
+def test_validate_bind_part_rejects_confirmed_non_active() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "Enable": {
+                    "control": {"status": "metadata"},
+                    "relation": "direct",
+                    "confidence": "confirmed",
+                    "uo": {"id": "Enable", "candidate": ""},
+                }
+            },
+        }
+    )
+    assert any("confirmed" in e and "active" in e for e in errors)
+
+
 def test_danger_fixtures_are_not_solve_controls() -> None:
     is_deter = {
         "control": {"status": "metadata"},
-        "relation": "candidate",
+        "relation": "",
         "confidence": "unresolved",
         "uo": {"id": "", "candidate": "DeterType"},
     }
@@ -187,7 +238,7 @@ def test_plan_rejects_unconfirmed_control() -> None:
         init_mapping={
             "is_deter": {
                 "control": {"status": "metadata"},
-                "relation": "candidate",
+                "relation": "",
                 "confidence": "unresolved",
                 "uo": {"candidate": "DeterType"},
             }
@@ -252,3 +303,29 @@ def test_plan_accepts_legal_keys_when_allowed() -> None:
         allow_legal_keys=True,
     )
     assert not any("legal_keys" in e for e in errors)
+
+
+def test_plan_rejects_oracle_fields_as_evidence() -> None:
+    fence = _v3_fence(["B"])
+    fence["targets"][0]["evidence"] = {
+        "kind": "replay_field",
+        "field": "precision",
+        "expected": "pass",
+    }
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["B"],
+        init_mapping={"B": _confirmed(uo_id="b")},
+    )
+    assert any("precision" in e or "oracle" in e for e in errors)
+    fence["targets"][0]["evidence"] = {
+        "kind": "replay_field",
+        "field": "md5",
+        "expected": "abc",
+    }
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["B"],
+        init_mapping={"B": _confirmed(uo_id="b")},
+    )
+    assert any("md5" in e or "oracle" in e for e in errors)

@@ -309,7 +309,7 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
         "  - column: D\n    control: {status: active}\n    relation: direct\n"
         "    confidence: confirmed\n    uo: {id: DTemplateNum, candidate: ''}\n"
         "    encoding: 字面量\n"
-        "  - column: CaseName\n    control: {status: metadata}\n    relation: candidate\n"
+        "  - column: CaseName\n    control: {status: metadata}\n    relation: ''\n"
         "    confidence: unresolved\n    uo: {id: '', candidate: ''}\n"
         "domains:\n  D:\n    profile: {max: 1}\n    operator: {declared: [0, 1], product: [0, 1]}\n"
         "    compare: match\n"
@@ -612,6 +612,41 @@ def test_bind_review_pass_blocked_on_invalid_yaml(synthetic_root: Path) -> None:
     assert out.get("host_step_kind") == "primary_review"
     assert not (sdir / "verdict.yaml").is_file()
     assert (bind_parts / "harness.yaml").is_file()
+
+
+def test_bind_review_pass_rejects_confirmed_empty_uo_id(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text(
+        "call: {kind: pta}\n"
+        "mapping:\n"
+        "  Dtype:\n"
+        "    control: {status: active}\n"
+        "    relation: direct\n"
+        "    confidence: confirmed\n"
+        "    uo: {id: '', candidate: inputDataType}\n",
+        encoding="utf-8",
+    )
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    out = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="PASS",
+    )
+    assert out.get("ok") is False, out
+    assert out.get("error") == "BIND_PART_INVALID"
+    assert not (sdir / "verdict.yaml").is_file()
 
 
 def test_bind_review_rework_keeps_named_slice_for_patch(synthetic_root: Path) -> None:

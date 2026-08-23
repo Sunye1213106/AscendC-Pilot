@@ -12,9 +12,9 @@
 2. **每个 API arg 反向追踪：** `arg ← runtime ← transform ← CSV column(s)`。张量用 `sources[]`（shape / dtype / layout 分条），不要压成单个 `source_column`。没有 CSV 列的字面量 / `None` / 现场公式进 findings，不要发明表头。
 3. **每列分类 `control.status` + `relation`。**
    - `control.status`：`active` | `fallback` | `shadowed` | `unwired` | `result` | `metadata`
-   - `relation`：`direct` | `derived` | `tensor_shape` | `tensor_dtype` | `presence` | `candidate`
+   - `relation`：`direct` | `derived` | `tensor_shape` | `tensor_dtype` | `presence`（分不清就留空 + `confidence: unresolved`）
    - 表 100% 空且 runner 另有来源 → `shadowed` / `unwired`，不是 active 控制。
-   - 不进调用的 harness 标志 → `metadata` + `candidate`。
+   - 不进调用的 harness 标志 → `metadata` + 空 relation + `unresolved`，不要填 `uo.id`。
 4. **只有 `control.status: active` 才继续绑 UO。** unwired / shadowed / fallback / result / metadata 停在第 3 步，不要为它们填 `uo.id`。
 5. **追 CSV → API/input → Host → implementation state。** 整条闭合 → `confidence: confirmed` 且 `uo.id` 填短名；只碰到相似 UO 符号 → `uo.candidate` + `unresolved`。禁止把 `candidate` 升格成 `uo.id`。禁止 `TDF::` id 和 tiling 结构名。
 6. **plan 只消费 confirmed。** 本路不写 plan。未闭合的轴留给 review / plan 标 `untestable + needs_binding`。
@@ -52,7 +52,7 @@ call_args:
 mapping:
   ColName:
     control: {status: active}    # active|fallback|shadowed|unwired|result|metadata
-    relation: direct             # direct|derived|tensor_shape|tensor_dtype|presence|candidate
+    relation: direct             # direct|derived|tensor_shape|tensor_dtype|presence
     confidence: confirmed        # confirmed|partial|unresolved
     runtime: {target: ..., path: []}
     uo: {id: ident, candidate: ''}

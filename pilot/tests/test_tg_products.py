@@ -26,8 +26,7 @@ def _confirmed(uo_id: str, *, relation: str = "direct") -> dict:
     }
 
 
-def test_validate_bind_part_empty_uo_id_is_content_not_structure() -> None:
-    """Primary judges whether uo.id is filled/correct; inspect only checks shape."""
+def test_validate_bind_part_accepts_unwired_unresolved_empty_id() -> None:
     errors = products.validate_bind_part(
         {
             "call": {"kind": "pta"},
@@ -63,7 +62,7 @@ def test_validate_bind_part_allows_feature_without_uo_id() -> None:
                 "B": _confirmed("b"),
                 "inner_drop": {
                     "control": {"status": "metadata"},
-                    "relation": "candidate",
+                    "relation": "",
                     "confidence": "unresolved",
                     "uo": {"id": "", "candidate": ""},
                 },
@@ -73,7 +72,7 @@ def test_validate_bind_part_allows_feature_without_uo_id() -> None:
     assert not any("inner_drop" in e for e in errors)
 
 
-def test_validate_init_empty_uo_id_is_content_not_structure() -> None:
+def test_validate_init_unwired_empty_id_is_legal() -> None:
     errors = products.validate_init(
         {
             "schema": products.INIT_SCHEMA,
@@ -93,7 +92,7 @@ def test_validate_init_empty_uo_id_is_content_not_structure() -> None:
                 },
                 "inner_drop": {
                     "control": {"status": "metadata"},
-                    "relation": "candidate",
+                    "relation": "",
                     "confidence": "unresolved",
                     "uo": {"id": "", "candidate": ""},
                 },
@@ -323,7 +322,7 @@ def test_inspect_yaml_applies_bind_fill_before_structure_check(tmp_path: Path, c
     assert bind["run_id"] == "RUN_1"
 
 
-def test_inspect_yaml_checks_structure_not_uo_id_content(tmp_path: Path, capsys) -> None:
+def test_inspect_yaml_rejects_illegal_bind_state(tmp_path: Path, capsys) -> None:
     import json
     from argparse import Namespace
 
@@ -356,3 +355,16 @@ def test_inspect_yaml_checks_structure_not_uo_id_content(tmp_path: Path, capsys)
     assert payload.get("ok") is False
     assert payload.get("error") == "BIND_PART_INVALID"
     assert any("pta_direct" in str(e) for e in (payload.get("errors") or []))
+
+    path.write_text(
+        "schema: tg-bind-part/v1\ncall: {kind: pta}\nmapping:\n  Dtype:\n"
+        "    control: {status: active}\n    relation: direct\n"
+        "    confidence: confirmed\n    uo: {id: '', candidate: inputDataType}\n",
+        encoding="utf-8",
+    )
+    rc = _cmd_inspect(Namespace(inspect_cmd="yaml", project=tmp_path, rel=rel))
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get("ok") is False
+    assert payload.get("error") == "BIND_PART_INVALID"
+    assert any("uo.id" in str(e) or "confirmed" in str(e) for e in (payload.get("errors") or []))
