@@ -87,7 +87,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_ho
 
 | 参数 | 说明 |
 | --- | --- |
-| `workflow` | 现有 slash id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
+| `workflow` | 工作流 id（无前导 `/`）：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。聊天 slash 才写 `/uo-init`。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
 | `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。bash `git clone` 走 OpenCode ask，不要自己建 PR 仓 |
 | `architecture` | `uo-init` / `uo-update` 必填产物槽。有 `arch*` 时从 `scan-architectures` 选项里选；没有这些目录时用 `default`（一套实现），不要猜 arch35 |
 | `intent` | 用户原话里的产品意图；不要编造 |

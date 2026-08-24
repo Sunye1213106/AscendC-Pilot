@@ -19,9 +19,9 @@ accuracy PASS 但 Target MISS ≠ 已覆盖
 
 ## 步骤
 
-1. **只看 MISS / UNKNOWN。** CLOSED / REDUNDANT 不再分析。GUARD_LEAK 停止。
-2. **分类。** 桶见本窗失败模式表。先认：`REWRITE`、`REFUSE`、`CRASH`/`NOT_RUN`、构造错、谓词没打到、未声明态。
-3. **指导下轮。** 写「改哪几列、仍打哪条义务」。
+1. **只看 MISS / UNKNOWN。** CLOSED / REDUNDANT 不再分析。GUARD_LEAK 停止。引擎若标了 `HARNESS_CONTROL_GAP` / `HARNESS_OBSERVATION_GAP` / `PLAN_INVALID`，不要回 construct。
+2. **分类。** 只有 `CASE_REFINABLE` 才写下轮改列。`HARNESS_CONTROL_GAP` / `HARNESS_OBSERVATION_GAP` / `PLAN_INVALID` 停，回到 plan。
+3. **指导下轮。** 仅 CASE_REFINABLE：写「改哪几列、仍打哪条义务」。
 4. **不可达。** 只有 `source_proof` 才能标 `PROVED_UNREACHABLE`。`REFUSE` ≠ 不可达。
 
 ## 常驻判断
@@ -35,9 +35,10 @@ accuracy PASS 但 Target MISS ≠ 已覆盖
 | 现象 | 判断 |
 | --- | --- |
 | 引擎 CLOSED | 不再分析 |
-| MISS | 改 control 列再打同一义务 |
-| UNKNOWN | 缺收据 / 探针；不要假装 HIT |
+| MISS | 仅当引擎标 `CASE_REFINABLE` 时改 control 列再打同一义务 |
+| UNKNOWN | 缺收据 / 探针；`HARNESS_OBSERVATION_GAP` 不要假装换 case 能修好 |
 | GUARD_LEAK | 停 refine，留给 CE |
+| HARNESS_CONTROL_GAP / HARNESS_OBSERVATION_GAP / PLAN_INVALID | 停，回 `/tg-plan`，不要 construct 打转 |
 | Host `HIT` 但 Target 是别的字段 | 仍可能 MISS |
 | 「搜索没找到」 | 不是不可达 |
 

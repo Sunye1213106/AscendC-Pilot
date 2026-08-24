@@ -5,7 +5,7 @@
 
 ## 传输
 
-- 工作流只用 Host 工具 `pilot_run`（工具行上有实时进度）。自然语言输入：思考里按产物缺口选 slash；对用户只陈述目标、现状与下一步，再 `todowrite` 后 `pilot_run(workflow=<当前格>)`。只有「获取 PR 代码」用 `workflow=auto`。`auto` 回执已唯一确定 `(算子, architecture)` 时直接用于后续格。`host_step.done` 回到 Primary；不要 Host-`continue_goal` 跨用户 slash。显式 slash：`workflow=<已有 id>`。Driver 不得用引擎 `todo.todo_sync` 覆盖 Primary Todo。不要用 OpenCode 原生 `skill` 做 Pilot 编排。需主控派 Task 的 workflow **串行**；同一格 `host_step.tasks` ≥2 由主控同一轮 fanout。不要把 `/uo-query` 卡片全文写入后续 `pilot_run` intent。
+- 工作流只用 Host 工具 `pilot_run`（工具行上有实时进度）。自然语言输入：思考里按产物缺口选 slash；对用户只陈述目标、现状与下一步，再 `todowrite` 后 `pilot_run(workflow=<当前格 id>)`。聊天 slash 带 `/`（`/uo-init`）；`pilot_run.workflow` / `acp start` 用不带 `/` 的 id（`uo-init`）。入口把 `/uo-init` 归一成 `uo-init`。只有「获取 PR 代码」用 `workflow=auto`。`auto` 回执已唯一确定 `(算子, architecture)` 时直接用于后续格。`host_step.done` 回到 Primary；不要 Host-`continue_goal` 跨用户 slash。显式 slash：`workflow=<已有 id>`。Driver 不得用引擎 `todo.todo_sync` 覆盖 Primary Todo。不要用 OpenCode 原生 `skill` 做 Pilot 编排。需主控派 Task 的 workflow **串行**；同一格 `host_step.tasks` ≥2 由主控同一轮 fanout。不要把 `/uo-query` 卡片全文写入后续 `pilot_run` intent。
 - 工具列表里没有 `pilot_run`：请用户完全退出 OpenCode 并重装插件。
 - 例外：**禁止**对 `uo-query` 调用 `pilot_run`。
 - Driver 返回 `dispatch_subagent` 时，Task 正文必须是 `task_prompt_stub` 原文。`host_step.tasks` ≥2 时同一轮派发更好；ACK 只认到齐数量。`host_step.kind=primary_review` 时不要改口径、不开 question。YAML 无法解析时主控可 Edit `bind_init/parts` 只修缩进，再用 `pilot_cli inspect yaml` 确认。下一发 intent 仅 `PASS` 或 `REWORK bind` / `REWORK harness,bind`。REWORK 后现稿留在磁盘上，子代理按原因 patch，不要从零重写。勾 Todo 后再 `pilot_run` 下一格。

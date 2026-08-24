@@ -2,7 +2,8 @@
 """Deterministic TG v3 coverage: predicates, obligations, eval, signatures, ledger."""
 
 from .compile import compile_obligations
-from .eval import evaluate_obligation, flatten_observe
+from .compile import PlanCompileError
+from .eval import classify_eval_failure, evaluate_obligation, flatten_observe
 from .ledger import (
     LEDGER_SCHEMA,
     dump_worklog,
@@ -18,6 +19,8 @@ __all__ = [
     "KNOWN_OPS",
     "LEDGER_SCHEMA",
     "Truth",
+    "PlanCompileError",
+    "classify_eval_failure",
     "compile_obligations",
     "dump_worklog",
     "evaluate",

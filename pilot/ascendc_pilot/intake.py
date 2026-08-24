@@ -191,7 +191,9 @@ def prepare_workflow_start(
     intent: str = "",
 ) -> dict[str, Any]:
     """Run legacy intake, intercepting explicit PR source before local gates."""
-    wf = str(workflow_id or "").strip()
+    from ascendc_pilot.workflows import resolve_workflow_id
+
+    wf = resolve_workflow_id(workflow_id)
     original_root = Path(project).expanduser().resolve()
     root = original_root
     arch = str(architecture or "").strip()

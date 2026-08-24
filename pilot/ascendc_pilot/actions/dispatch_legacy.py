@@ -1290,15 +1290,80 @@ def _attach_host_step_body(
 
             return drive_until_interaction(project_root, prepare=prepare_action)
 
+        def _drain_after_auto() -> dict[str, Any]:
+            """PASS / REWORK / consumed ticket: keep draining even if we arrived
+            from drive._done(reenter_drive=False). Nested attach (depth>1) must
+            not drain again — that re-dispatches a finished action."""
+            again = _drive_again()
+            if again is not None:
+                return again
+            depth_now = int(getattr(_ATTACH_DEPTH, "n", 0) or 0)
+            if depth_now > 1:
+                out["host_step"] = build_host_step(
+                    kind="failed",
+                    project_root=project_root,
+                    action_id=action_id,
+                    actor_id=actor_id,
+                    message_zh=(
+                        f"`{action_id}` 已结束或 ticket 已消费，但推荐下一步仍是它。"
+                        "禁止重派。请 `pilot_run` 当前工作流让引擎选下一步。"
+                    ),
+                )
+                return out
+            from ascendc_pilot.actions.drive import drive_until_interaction
+
+            return drive_until_interaction(project_root, prepare=prepare_action)
+
+        def _primary_review_host_step(prep: dict[str, Any]) -> dict[str, Any]:
+            extra_review = {
+                "harness_path": str(prep.get("harness_path") or ""),
+                "bind_path": str(prep.get("bind_path") or ""),
+                "verdict_path": str(prep.get("verdict_path") or ""),
+            }
+            review_msg = str(prep.get("message_zh") or "")
+            if action_id == "plan_narrate":
+                review_msg = review_msg or "主控写三节散文；下一发 intent 交 ## 测什么 / ## 覆盖什么 / ## 怎么判定"
+            else:
+                review_msg = review_msg or "主控通读两路草稿；下一发 PASS 或 REWORK"
+            out["host_step"] = build_host_step(
+                kind="primary_review",
+                project_root=project_root,
+                action_id=action_id,
+                actor_id=actor_id or str(prep.get("actor_id") or "ascendc-pilot"),
+                prepare=prep,
+                message_zh=review_msg,
+                extra=extra_review,
+            )
+            out["prepare"] = prep
+            return out
+
+        if kind == "primary_review" and existing_prep:
+            if existing_prep.get("ok") is False:
+                out["host_step"] = build_host_step(
+                    kind="failed",
+                    project_root=project_root,
+                    action_id=action_id,
+                    actor_id=actor_id or str(existing_prep.get("actor_id") or "ascendc-pilot"),
+                    message_zh=str(
+                        existing_prep.get("message_zh")
+                        or existing_prep.get("error")
+                        or "prepare failed"
+                    ),
+                    extra={"prepare": existing_prep},
+                )
+                out["prepare"] = existing_prep
+                return out
+            if existing_prep.get("auto_finalize") or existing_prep.get("continue_drive"):
+                return _drain_after_auto()
+            return _primary_review_host_step(existing_prep)
+
         run_id = str((load_state(project_root) or {}).get("run_id") or "").strip()
         live = find_dispatch_ticket_for_action(
             project_root, run_id=run_id, action_id=action_id
         )
         live_status = str((live or {}).get("status") or "")
         if live and live_status == "consumed":
-            again = _drive_again()
-            if again is not None:
-                return again
+            return _drain_after_auto()
         if live and live_status in {"processing", "blocked_repeat_failure"}:
             out["dispatch_ticket"] = str(live.get("ticket_id") or "")
             out["prepare"] = {"run_id": run_id, "action_id": action_id, "reused_ticket": True}
@@ -1348,47 +1413,21 @@ def _attach_host_step_body(
             return out
 
         if prep.get("auto_skip_human_gate") and prep.get("auto_finalize"):
-            again = _drive_again()
-            if again is not None:
-                return again
+            return _drain_after_auto()
 
         if prep.get("continue_drive"):
-            again = _drive_again()
-            if again is not None:
-                return again
+            return _drain_after_auto()
 
         if prep.get("reuse_host_step") and isinstance(prep.get("host_step"), dict):
             out["host_step"] = prep["host_step"]
             out["prepare"] = prep
             return out
 
-        if kind == "primary_review" and prep.get("auto_finalize"):
-            again = _drive_again()
-            if again is not None:
-                return again
+        if kind == "primary_review" and prep.get("ok") and prep.get("auto_finalize"):
+            return _drain_after_auto()
 
         if kind == "primary_review" or str(prep.get("host_step_kind") or "") == "primary_review":
-            extra_review = {
-                "harness_path": str(prep.get("harness_path") or ""),
-                "bind_path": str(prep.get("bind_path") or ""),
-                "verdict_path": str(prep.get("verdict_path") or ""),
-            }
-            review_msg = str(prep.get("message_zh") or "")
-            if action_id == "plan_narrate":
-                review_msg = review_msg or "主控写三节散文；下一发 intent 交 ## 测什么 / ## 覆盖什么 / ## 怎么判定"
-            else:
-                review_msg = review_msg or "主控通读两路草稿；下一发 PASS 或 REWORK"
-            out["host_step"] = build_host_step(
-                kind="primary_review",
-                project_root=project_root,
-                action_id=action_id,
-                actor_id=actor_id or str(prep.get("actor_id") or "ascendc-pilot"),
-                prepare=prep,
-                message_zh=review_msg,
-                extra=extra_review,
-            )
-            out["prepare"] = prep
-            return out
+            return _primary_review_host_step(prep)
 
         if kind == "primary_interactive" or prep.get("needs_human_decision"):
             out["host_step"] = build_host_step(
@@ -1421,9 +1460,8 @@ def _attach_host_step_body(
                     result_text="harvest",
                     slice_id="",
                 )
-            again = _drive_again()
-            if again is not None:
-                return again
+            # Parts already merged; never issue a second ticket from drive._done.
+            return _drain_after_auto()
 
         tasks = _compact_dispatch_tasks(prep.get("dispatch_tasks"))
         ticket = issue_dispatch_ticket(

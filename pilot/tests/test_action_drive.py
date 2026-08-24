@@ -205,6 +205,279 @@ def test_drive_continues_when_primary_interactive_autofinalizes(monkeypatch, tmp
     assert result.get("stop_reason") in {"workflow_complete", "interaction_required"}
 
 
+def test_drive_continues_when_primary_review_autofinalizes(monkeypatch, tmp_path: Path):
+    """PASS must drain bind_promote in the same turn, not stop at primary_review."""
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-init", "phase": "bind", "status": "running"}
+    prepared: list[str] = []
+
+    def describe_next(_root: Path):
+        if "bind_promote" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {"id": None, "reason": "pipeline_complete"},
+            }
+        if "bind_review" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {
+                    "id": "bind_promote",
+                    "reason": "pipeline_incomplete",
+                },
+            }
+        return {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "bind_review",
+                "reason": "pipeline_incomplete",
+            },
+        }
+
+    def action_by_id(_workflow_id: str, action_id: str, **_kwargs):
+        if action_id == "bind_review":
+            return {
+                "id": "bind_review",
+                "execution_mode": "primary_review",
+                "agent_id": "ascendc-pilot",
+                "role_id": "controller",
+            }
+        return {
+            "id": action_id,
+            "execution_mode": "deterministic",
+            "agent_id": "deterministic-tg-engine",
+            "role_id": "deterministic_engine",
+        }
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(state_mod, "describe_next", describe_next)
+    monkeypatch.setattr(workflows_mod, "action_by_id", action_by_id)
+    monkeypatch.setattr(
+        workflows_mod,
+        "get_workflow",
+        lambda *_args, **_kwargs: {
+            "transitions": [],
+            "terminal_ready_states": ["bind"],
+        },
+    )
+    monkeypatch.setattr(
+        state_mod,
+        "complete_workflow",
+        lambda _root: {"ok": True, "state": {**state, "status": "passed"}},
+    )
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        if action_id == "bind_review":
+            return {
+                "ok": True,
+                "auto_finalize": True,
+                "message_zh": "主控裁判已放行，本轮继续 bind_promote。",
+            }
+        return {"ok": True, "auto_finalize": True}
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["bind_review", "bind_promote"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") == "workflow_complete"
+    step = result.get("host_step") or {}
+    assert step.get("kind") != "primary_review"
+    assert step.get("action_id") != "bind_review"
+
+
+def test_drive_primary_review_stops_without_pass(monkeypatch, tmp_path: Path):
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-init", "phase": "bind", "status": "running"}
+    prepared: list[str] = []
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(
+        state_mod,
+        "describe_next",
+        lambda _root: {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "bind_review",
+                "reason": "pipeline_incomplete",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        workflows_mod,
+        "action_by_id",
+        lambda *_args, **_kwargs: {
+            "id": "bind_review",
+            "execution_mode": "primary_review",
+            "agent_id": "ascendc-pilot",
+            "role_id": "controller",
+        },
+    )
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        return {
+            "ok": True,
+            "host_step_kind": "primary_review",
+            "harness_path": "h.yaml",
+            "bind_path": "b.yaml",
+            "message_zh": "请通读 harness.yaml 与 bind.yaml。下一发 PASS。",
+        }
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["bind_review"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") == "interaction_required"
+    assert (result.get("prepare") or {}).get("host_step_kind") == "primary_review"
+    step = result.get("host_step") or {}
+    assert step.get("kind") == "primary_review"
+    assert "PASS" in str(step.get("message_zh") or result.get("message_zh") or "")
+
+
+def test_drive_continues_when_primary_review_rework(monkeypatch, tmp_path: Path):
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-init", "phase": "bind", "status": "running"}
+    prepared: list[str] = []
+
+    def describe_next(_root: Path):
+        if "bind_review" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {
+                    "id": "bind_init",
+                    "reason": "pipeline_incomplete",
+                },
+            }
+        return {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "bind_review",
+                "reason": "pipeline_incomplete",
+            },
+        }
+
+    def action_by_id(_workflow_id: str, action_id: str, **_kwargs):
+        if action_id == "bind_review":
+            return {
+                "id": "bind_review",
+                "execution_mode": "primary_review",
+                "agent_id": "ascendc-pilot",
+                "role_id": "controller",
+            }
+        return {
+            "id": action_id,
+            "execution_mode": "subagent",
+            "agent_id": "tg-analyst",
+            "role_id": "producer",
+        }
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(state_mod, "describe_next", describe_next)
+    monkeypatch.setattr(workflows_mod, "action_by_id", action_by_id)
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        return {
+            "ok": True,
+            "continue_drive": True,
+            "rework": ["bind"],
+            "message_zh": "裁判未通过，只重开 bind 切片。",
+        }
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["bind_review"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") == "interaction_required"
+    assert (result.get("next") or {}).get("action_id") == "bind_init"
+    assert (result.get("next") or {}).get("execution_kind") == "subagent"
+
+
+def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: Path):
+    """plan_narrate capture must drain plan_promote in the same turn."""
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-plan", "phase": "fuse", "status": "running"}
+    prepared: list[str] = []
+
+    def describe_next(_root: Path):
+        if "plan_promote" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {"id": None, "reason": "pipeline_complete"},
+            }
+        if "plan_narrate" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {
+                    "id": "plan_promote",
+                    "reason": "pipeline_incomplete",
+                },
+            }
+        return {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "plan_narrate",
+                "reason": "pipeline_incomplete",
+            },
+        }
+
+    def action_by_id(_workflow_id: str, action_id: str, **_kwargs):
+        if action_id == "plan_narrate":
+            return {
+                "id": "plan_narrate",
+                "execution_mode": "primary_review",
+                "agent_id": "ascendc-pilot",
+                "role_id": "controller",
+            }
+        return {
+            "id": action_id,
+            "execution_mode": "deterministic",
+            "agent_id": "deterministic-tg-engine",
+            "role_id": "deterministic_engine",
+        }
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(state_mod, "describe_next", describe_next)
+    monkeypatch.setattr(workflows_mod, "action_by_id", action_by_id)
+    monkeypatch.setattr(
+        workflows_mod,
+        "get_workflow",
+        lambda *_args, **_kwargs: {
+            "transitions": [],
+            "terminal_ready_states": ["fuse"],
+        },
+    )
+    monkeypatch.setattr(
+        state_mod,
+        "complete_workflow",
+        lambda _root: {"ok": True, "state": {**state, "status": "passed"}},
+    )
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        if action_id == "plan_narrate":
+            return {
+                "ok": True,
+                "auto_finalize": True,
+                "message_zh": "plan_narrate 三节散文已捕获，继续 plan_promote。",
+            }
+        return {"ok": True, "auto_finalize": True}
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["plan_narrate", "plan_promote"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") == "workflow_complete"
+    assert (result.get("host_step") or {}).get("kind") != "primary_review"
+
+
 def test_drive_primary_interactive_stops_with_ask(monkeypatch, tmp_path: Path):
     import ascendc_pilot.state as state_mod
     import ascendc_pilot.workflows as workflows_mod

@@ -33,6 +33,46 @@ def is_predicate(expr: Any) -> bool:
     return isinstance(expr, dict) and str(expr.get("op") or "").lower() in KNOWN_OPS
 
 
+def predicate_fields(expr: Any) -> list[str]:
+    """Collect field names referenced by a structured predicate."""
+    if not isinstance(expr, dict):
+        return []
+    out: list[str] = []
+    op = str(expr.get("op") or "").lower()
+    if op == "mod_eq":
+        for key in ("left", "field"):
+            raw = expr.get(key)
+            if isinstance(raw, str) and raw.strip():
+                out.append(raw.strip())
+                break
+        right = expr.get("right")
+        if isinstance(right, str) and right.strip() and not _numeric_text(right):
+            out.append(right.strip())
+    else:
+        raw = expr.get("field") or expr.get("left")
+        if isinstance(raw, str) and raw.strip():
+            out.append(raw.strip())
+    for child in expr.get("args") or []:
+        out.extend(predicate_fields(child))
+    for key in ("arg", "when", "then"):
+        if expr.get(key) is not None:
+            out.extend(predicate_fields(expr.get(key)))
+    return out
+
+
+def _numeric_text(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text or text.lower() in {"inf", "+inf", "-inf", "nan"}:
+        return False
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
+
+
 def validate_predicate(expr: Any, *, path: str = "predicate") -> list[str]:
     errors: list[str] = []
     if not isinstance(expr, dict):
@@ -53,6 +93,31 @@ def validate_predicate(expr: Any, *, path: str = "predicate") -> list[str]:
     elif op in {"implies", "requires"}:
         errors.extend(validate_predicate(expr.get("when"), path=f"{path}.when"))
         errors.extend(validate_predicate(expr.get("then"), path=f"{path}.then"))
+    elif op in {"eq", "ne"}:
+        if not str(expr.get("field") or expr.get("left") or "").strip():
+            errors.append(f"{path} {op} requires field")
+        if "value" not in expr:
+            errors.append(f"{path} {op} requires value")
+    elif op in {"in", "not_in"}:
+        if not str(expr.get("field") or "").strip():
+            errors.append(f"{path} {op} requires field")
+        values = expr.get("values")
+        if not isinstance(values, list) or not values:
+            errors.append(f"{path} {op} requires nonempty values list")
+    elif op in {"lt", "le", "gt", "ge"}:
+        if not str(expr.get("field") or expr.get("left") or "").strip():
+            errors.append(f"{path} {op} requires field")
+        if "value" not in expr:
+            errors.append(f"{path} {op} requires value")
+    elif op in {"is_null", "is_present"}:
+        if not str(expr.get("field") or "").strip():
+            errors.append(f"{path} {op} requires field")
+    elif op == "mod_eq":
+        if not str(expr.get("left") or expr.get("field") or "").strip():
+            errors.append(f"{path} mod_eq requires left/field")
+        has_right = isinstance(expr.get("right"), str) and str(expr.get("right")).strip()
+        if not has_right and expr.get("divisor") is None and expr.get("right") is None:
+            errors.append(f"{path} mod_eq requires right field or divisor")
     return errors
 
 
@@ -95,16 +160,33 @@ def _lookup(expr: dict[str, Any], values: dict[str, Any]) -> tuple[bool, Any]:
     return False, None
 
 
-def _as_number(value: Any) -> tuple[bool, float]:
+def _as_number(value: Any) -> tuple[bool, float | int]:
     if isinstance(value, bool):
-        return False, 0.0
-    if isinstance(value, (int, float)):
-        return True, float(value)
+        return False, 0
+    if isinstance(value, int):
+        return True, value
+    if isinstance(value, float):
+        if value in (float("inf"), float("-inf")) or value != value:
+            return False, 0.0
+        return True, value
     if isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.lower() in {"inf", "+inf", "-inf", "nan"}:
+            return False, 0.0
+        sign = text[0] in "+-"
+        digits = text[1:] if sign else text
+        if digits.isdigit():
+            try:
+                return True, int(text)
+            except ValueError:
+                return False, 0.0
         try:
-            return True, float(value.strip())
+            parsed = float(text)
         except ValueError:
             return False, 0.0
+        if parsed in (float("inf"), float("-inf")) or parsed != parsed:
+            return False, 0.0
+        return True, parsed
     return False, 0.0
 
 
@@ -168,7 +250,10 @@ def evaluate(expr: Any, values: dict[str, Any] | None = None) -> Evaluation:
         ok_v, expect = _as_number(expr.get("value") if expr.get("value") is not None else 0)
         if not ok_l or not ok_r or not ok_v or right == 0:
             return Evaluation(Truth.UNSUPPORTED, {"op": op, "reason": "mod_domain"})
-        matched = int(left) % int(right) == int(expect)
+        if isinstance(left, int) and isinstance(right, int) and isinstance(expect, int):
+            matched = left % right == expect
+        else:
+            matched = int(left) % int(right) == int(expect)
         return Evaluation(
             Truth.TRUE if matched else Truth.FALSE,
             {"op": op, "left": left, "right": right, "value": expect},

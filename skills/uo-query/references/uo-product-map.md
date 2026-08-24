@@ -24,7 +24,7 @@
 | 模板能否编过 / kernel 是否注册 | `Dim=V` | 维名见无参数索引 | 运行时日志解读 |
 | 卡死 / Host schedule | 标识符（Host 调用点在卡片上） | 无参数索引看 launch 阶段 | happens-before、测量 |
 | 多阶段 launch | 无参数索引 | 跟 PIPE 名再查 | 把内层函数名当阶段 |
-| 从已知位点扩邻居 | `--file --line` | 卡片 `next` | Git / PR |
+| 从已知位点看语句 | `--file --line`（语句窗） | 卡片 `next` | Git / PR |
 | UT / 白盒线索 | `Dim=V` + 字段名 | 无参数索引的 gaps 计数 | 生成完整 ST 矩阵 |
 
 Worked example（**non-normative**）：`examples/uo-query-splitaxis/`。

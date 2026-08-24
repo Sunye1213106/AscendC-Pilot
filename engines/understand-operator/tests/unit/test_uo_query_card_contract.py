@@ -346,3 +346,255 @@ inline void Launch() {
     entry = index.get("entry") or {}
     assert str(entry.get("name") or "") == "Launch"
     assert "source_scope" not in str(entry.get("name") or "")
+
+
+def test_function_snippet_keeps_tail_assignment(tmp_path: Path) -> None:
+    rel = "op_host/split.cpp"
+    lines = [f"    stmt_{i}();" for i in range(1, 80)]
+    lines[0] = "void SetSplitAxis() {"
+    lines[64] = "    fBaseParams.splitAxis = SplitAxisEnum::BN2;"
+    lines[69] = "}"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_split",
+            kind=EntityKind.FUNCTION,
+            name="SetSplitAxis",
+            attrs={"source_definition": True},
+            file=rel,
+            line_start=1,
+            line_end=70,
+            status="confirmed",
+        )
+    )
+    other = cm.upsert(
+        EntityKind.FUNCTION,
+        "CheckAttenMaskShape",
+        eid="FN_mask",
+        file=rel,
+        line=90,
+        status="confirmed",
+    )
+    written = cm.upsert(
+        EntityKind.VARIABLE,
+        "bnLimit",
+        eid="VAR_bn",
+        file=rel,
+        line=10,
+        status="confirmed",
+    )
+    cm.link(RelationKind.FLOWS_TO, "FN_split", other.id, attrs={"file": rel, "line": 2})
+    cm.link(RelationKind.WRITES, "FN_split", written.id, attrs={"file": rel, "line": 10})
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="SetSplitAxis")
+    card = next(row for row in (out.get("cards") or []) if row.get("kind") == "FUNCTION")
+    snippet = str(card.get("snippet") or "")
+    assert "splitAxis" in snippet
+    assert "void SetSplitAxis" in snippet
+    nxt = [str(n) for n in (out.get("next") or [])]
+    assert "CheckAttenMaskShape" not in nxt
+    assert "bnLimit" in nxt
+
+
+def test_field_card_snippet_prefers_value_write(tmp_path: Path) -> None:
+    rel = "op_host/arch35/td.cpp"
+    body = ["// pad"] * 20
+    body[11] = "    fBaseParams.enablePreSfmg = deterSupportPreSfmg && presfmgLimit;"
+    body[17] = "    td.enablePreSfmg = fBaseParams.enablePreSfmg;"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TDF_pre",
+            kind=EntityKind.TILING_FIELD,
+            name="enablePreSfmg",
+            attrs={
+                "source_declared": True,
+                "write_sites": [
+                    {
+                        "file": rel,
+                        "line": 12,
+                        "rhs": "deterSupportPreSfmg && presfmgLimit",
+                    }
+                ],
+            },
+            file="op_kernel/td.h",
+            line_start=4,
+            status="confirmed",
+        )
+    )
+    packer = cm.upsert(
+        EntityKind.FUNCTION,
+        "InitTilingData",
+        eid="FN_pack",
+        file=rel,
+        line=18,
+        status="confirmed",
+    )
+    cm.link(
+        RelationKind.WRITES,
+        packer.id,
+        "TDF_pre",
+        attrs={"file": rel, "line": 18, "rhs": "fBaseParams.enablePreSfmg"},
+        status="confirmed",
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="enablePreSfmg")
+    card = next(
+        row
+        for row in (out.get("cards") or [])
+        if str(row.get("kind") or "") in {"TILING_FIELD", "FIELD", "TILING_KEY"}
+    )
+    snippet = str(card.get("snippet") or "")
+    assert "deterSupportPreSfmg" in snippet
+    writes = ((card.get("edges") or {}).get("WRITES") or {}).get("neighbors") or []
+    assert writes
+    assert int(writes[0].get("line") or 0) == 12
+    nxt = [str(n) for n in (out.get("next") or [])]
+    assert "deterSupportPreSfmg" in nxt or "presfmgLimit" in nxt
+
+
+def test_tiling_key_skips_false_decl_for_snippet(tmp_path: Path) -> None:
+    rel = "op_host/arch35/td.cpp"
+    body = ["// pad"] * 20
+    body[5] = "    bool templateSupportCond = condA && false;"
+    body[10] = "    tndBaseInfo.isTndSwizzle = fBaseParams.enableSwizzle && templateSupportCond;"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="KEY_sw",
+            kind=EntityKind.TILING_KEY,
+            name="IsTndSwizzle",
+            attrs={
+                "source_declared": True,
+                "packing_value_sites": [
+                    {
+                        "file": "op_host/arch35/td.h",
+                        "line": 3,
+                        "kind": "declaration",
+                        "rhs": "false",
+                    },
+                    {
+                        "file": rel,
+                        "line": 11,
+                        "kind": "assignment",
+                        "rhs": "fBaseParams.enableSwizzle && templateSupportCond",
+                    },
+                ],
+            },
+            file="op_kernel/key.h",
+            line_start=8,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="isTndSwizzle")
+    card = (out.get("cards") or [{}])[0]
+    snippet = str(card.get("snippet") or "")
+    assert "templateSupportCond" in snippet
+    nxt = [str(n) for n in (out.get("next") or [])]
+    assert "templateSupportCond" in nxt
+
+
+def test_around_is_statement_window(tmp_path: Path) -> None:
+    import json
+
+    rel = "op_host/h.cpp"
+    body = "\n".join(f"line {i}" for i in range(1, 80)) + "\n"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    fn = cm.upsert(
+        EntityKind.FUNCTION,
+        "FnEnclose",
+        eid="FN_enclose",
+        attrs={"layer": "host"},
+        file=rel,
+        line=10,
+        line_end=40,
+        status="confirmed",
+    )
+    field = cm.upsert(
+        EntityKind.FIELD,
+        "owner.fldInner",
+        eid="FLD_inner",
+        attrs={"layer": "host"},
+        file=rel,
+        line=20,
+        status="confirmed",
+    )
+    cm.link(RelationKind.WRITES, fn.id, field.id, attrs={"file": rel, "line": 20})
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(file=rel, line=20)
+    snippet = str(out.get("snippet") or "")
+    assert "20:" in snippet
+    assert "line 20" in snippet
+    assert len((out.get("seeds") or [])) <= 1
+    assert (out.get("neighbors") or []) == []
+    assert len(json.dumps(out, ensure_ascii=False)) < 8000
+    assert str((out.get("seeds") or [{}])[0].get("name") or "") == "FnEnclose"
+
+
+def test_cover_legal_key_count_not_confused_with_blocks(tmp_path: Path, monkeypatch) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TK_alpha",
+            kind=EntityKind.TILING_KEY,
+            name="DimAlpha",
+            attrs={
+                "source_declared": True,
+                "decl_order": 0,
+                "bit_width": 1,
+                "bit_lo": 0,
+                "bit_hi": 0,
+                "value_domain": ["0", "1"],
+                "allowed_values": ["0", "1"],
+                "decl_kind": "UINT",
+                "kind_tpl": "UINT",
+                "provenance": "source_tpl_args_decl",
+            },
+            file="op_kernel/template_tiling_key.h",
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="TPL_0",
+            kind=EntityKind.TEMPLATE,
+            name="ARGS_SEL_0",
+            attrs={
+                "tpl_role": "args_sel_group",
+                "sel_group_index": 0,
+                "fixed_fields": {"DimAlpha": "0"},
+                "field_domains": {},
+                "provenance": "source_tpl_args_sel",
+            },
+            file="op_kernel/template_tiling_key.h",
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    monkeypatch.setattr(
+        q,
+        "legal_key_query",
+        lambda **_kwargs: {"ok": True, "total_matched": 32, "count": 32},
+    )
+    out = q.agent_query(pattern="DimAlpha=0")
+    assert int(out.get("matching_block_count") or 0) == 1
+    assert int(out.get("total_matched") or -1) == 1
+    assert int(out.get("legal_key_count") or 0) == 32

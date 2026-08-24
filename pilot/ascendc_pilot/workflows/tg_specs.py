@@ -371,7 +371,7 @@ def _build(
             _tr("construct", "replay"),
             _tr("replay", "analyze"),
             _tr("analyze", "certify"),
-            _tr("analyze", "construct", kind="rework", reason_codes=["REWORK_CONSTRUCT", "OPEN_REMAINING"]),
+            _tr("analyze", "construct", kind="rework", reason_codes=["REWORK_CONSTRUCT", "OPEN_REMAINING", "CASE_REFINABLE"]),
             _tr("certify", "construct", kind="rework", reason_codes=["OPEN_NONEMPTY"]),
         ],
         "phase_gates": {

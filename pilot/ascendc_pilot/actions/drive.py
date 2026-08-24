@@ -1,10 +1,13 @@
 """Deterministic workflow drain for Host adapters.
 
 The Host/LLM chooses a workflow once.  After that, Pilot owns action ordering.
-This helper executes only deterministic actions returned by ``acp next`` and
-advances only across unconditional forward edges.  It stops before any LLM
-subagent or primary-interactive action so the Host never has to guess whether
-an engine or an agent should run next.
+This helper executes deterministic actions returned by ``acp next`` and
+advances only across unconditional forward edges.  Subagent actions stay
+unprepared so the Host can dispatch them.  ``primary_interactive`` and
+``primary_review`` are prepared at the boundary; if that prepare
+auto-finalizes (PASS) or sets ``continue_drive`` (REWORK), the drain
+continues so the next deterministic action (e.g. ``bind_promote``) runs
+in the same turn.
 """
 
 from __future__ import annotations
@@ -236,33 +239,63 @@ def drive_until_interaction(
                     }
                 )
             descriptor = _execution_descriptor(action)
-            if descriptor["execution_kind"] != "deterministic":
-                if descriptor["execution_kind"] == "primary_interactive":
+            exec_kind = str(descriptor["execution_kind"] or "")
+            if exec_kind != "deterministic":
+                if exec_kind in {"primary_interactive", "primary_review"}:
+                    _progress(f"run {action_id} (phase={phase} {phase_label})")
                     result = prepare(root, action_id)
                     executed.append(
                         {
                             "action_id": action_id,
                             "actor_id": descriptor["actor_id"],
-                            "execution_kind": "primary_interactive",
+                            "execution_kind": exec_kind,
                             "ok": bool(result.get("ok")),
                             "auto_finalize": bool(result.get("auto_finalize")),
+                            "continue_drive": bool(result.get("continue_drive")),
                             "error": str(result.get("error") or ""),
                         }
                     )
                     if result.get("ok") and (
-                        result.get("auto_finalize") or result.get("auto_skip_human_gate")
+                        result.get("auto_finalize")
+                        or result.get("auto_skip_human_gate")
+                        or result.get("continue_drive")
                     ):
+                        _progress(f"{action_id} ok")
                         continue
+                    if exec_kind == "primary_review" and not result.get("ok"):
+                        _progress(f"{action_id} FAIL")
+                        return _done(
+                            {
+                                "ok": False,
+                                "stopped": True,
+                                "stop_reason": "primary_review_failed",
+                                "workflow_id": workflow_id,
+                                "phase": phase,
+                                "status": status,
+                                "failed_action": action_id,
+                                "prepare": result,
+                                "next": descriptor,
+                                "executed": executed,
+                                "error": str(result.get("error") or "primary_review_failed"),
+                                "message_zh": str(
+                                    result.get("message_zh")
+                                    or f"主控裁判 `{action_id}` 未完成。"
+                                ),
+                            }
+                        )
                     ask = result.get("ask_question")
                     if not isinstance(ask, dict):
                         eng = result.get("engine") if isinstance(result.get("engine"), dict) else {}
                         ask = eng.get("ask_question") if isinstance(eng.get("ask_question"), dict) else None
+                    needs_human = exec_kind == "primary_interactive" or bool(
+                        result.get("needs_human_decision") or ask
+                    )
                     return _done(
                         {
                             "ok": True,
                             "stopped": True,
                             "stop_reason": "interaction_required",
-                            "needs_human_decision": True,
+                            "needs_human_decision": needs_human,
                             "ask_question": ask,
                             "prepare": result,
                             "workflow_id": workflow_id,

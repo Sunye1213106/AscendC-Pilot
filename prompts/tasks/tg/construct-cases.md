@@ -13,5 +13,5 @@
 
 **最终消息正文必须就是 YAML 全文**，Host 只读最终消息，中间消息取不到；不要只交摘要或写「见上文」。
 
-行值类型对齐 `init.yaml` 的 `domains.<col>.profile.inferred_type`：`int` 列交数字不加引号，`enum-string` 列交字符串。从 case 表挑行当基底时 CSV 读出来是字符串，必须转换后再交 —— 引擎 `eq`/`in` 严格比较，`'4' == 4` 为假，类型不对义务会静默 MISS。
+行值类型对齐 `init.yaml` 的 `domains.<col>.profile.inferred_type`：`int` 列交数字不加引号，`enum-string` 列交字符串。从 case 表挑行当基底时 CSV 读出来是字符串，转换后再交更稳妥 —— 引擎 `eq`/`in` 会把 `4` 和 `"4"` 当成同一个值。大整数不要指望 float 归一。
 </output>

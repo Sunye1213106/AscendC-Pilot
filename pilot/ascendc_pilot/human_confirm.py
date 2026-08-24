@@ -474,10 +474,54 @@ def _materialize_plan_approve(
             "error": "TEST_HARNESS_GAP_PENDING",
             "message_zh": "test_harness_gap 未落地，禁止批准规划。先按说明书 /ce-apply 测试脚本仓（可补脚本、改列或随机数生成器）再 /tg-init。",
         }
-    from testcase_agent.products import is_plan_approved
+    from testcase_agent.products import (
+        column_names,
+        is_plan_approved,
+        load_init,
+        mapping_as_dict,
+        semantic_plan_hash,
+        validate_plan_fence,
+        validate_plan_prose,
+    )
+
+    try:
+        init_doc = load_init(tg)
+        raw_map = init_doc.get("mapping")
+        init_mapping = mapping_as_dict(raw_map) if raw_map is not None else None
+        observe_fields = None
+        try:
+            from testcase_agent import product_uo
+
+            observe_fields = product_uo.replay_observe_fields(
+                project_root,
+                op_name=str(state.get("op_name") or ""),
+                architecture=str(state.get("architecture") or ""),
+            )
+        except Exception:  # noqa: BLE001
+            observe_fields = None
+        errors = validate_plan_fence(
+            fence,
+            init_columns=column_names(init_doc),
+            init_mapping=init_mapping,
+            observe_fields=observe_fields,
+        )
+        errors.extend(validate_plan_prose(text))
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "PLAN_INVALID",
+            "message_zh": str(exc)[:400],
+        }
+    if errors:
+        return {
+            "ok": False,
+            "error": "PLAN_INVALID",
+            "message_zh": "; ".join(str(e) for e in errors[:8]),
+        }
 
     if is_plan_approved(fence):
         return {"ok": True, "path": path, "backups": backups, "identity": identity, "already_approved": True}
+    fence["plan_hash"] = semantic_plan_hash(fence)
     fence["approved"] = True
     fence["decision"] = "approve"
     fence["approved_at"] = now

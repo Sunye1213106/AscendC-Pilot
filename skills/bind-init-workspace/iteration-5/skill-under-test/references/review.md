@@ -18,7 +18,7 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 
 对每条 `confidence: confirmed` 的列抽查，不要只看格子填了。任一项失败就 REWORK。
 
-1. **`uo.id` 指对了闭合链上的符号。** CSV → runtime → Host/Tiling 整条可追。只碰到相似 UO 符号应是 `uo.candidate` + `unresolved`，不得标 `confirmed`。开关维 / `*TemplateNum` / 张量操作数不是 dtype / shape / layout 列的身份。尺寸列应是 tiling 字段短名，不要绑派生 kwargs。
+1. **`uo.id` 指对了闭合链上的符号。** CSV → runtime → Host/Tiling 整条可追。只碰到相似 UO 符号应是 `uo.candidate` + `unresolved`，不得标 `confirmed`。开关维不是 dtype / shape / layout 列的身份。尺寸列不要绑派生 kwargs。
 2. **`relation` 描述 CSV→runtime API。** `direct` = identity / 平凡转换；`derived` = 非 identity 脚本变换；张量用 `tensor_shape` / `tensor_dtype` / `presence`。分不清应空 relation + `unresolved`。`Input_Layout → IsTnd` 写在 `domains.projection`。
 3. **`call_args` 的 `sources[]` 对得上这条 confirmed 列。** 张量多源必须分条。两列不得共用一个 `uo.id`。
 4. **domains 拆开。** `applicability` / `value` / `projection` 分开写。`domains.profile` 引用 scan profile。`operator` 空却 `compare=match` → `REWORK bind`。
@@ -48,7 +48,7 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 | 现象 | 下一发 |
 | --- | --- |
 | confirmed 行的 `uo.id` 不是闭合链上的实现状态 | `REWORK bind` |
-| 两列共 `uo.id` / 开关维或 TemplateNum 当 dtype/shape 身份 / 尺寸列绑操作数名 / kwargs 列大量空 `uo.id` | `REWORK bind` |
+| 两列共 `uo.id` / 开关维当 dtype 身份 / kwargs 列大量空 `uo.id` | `REWORK bind` |
 | 确定性列标 metadata | `REWORK bind` |
 | 精度口径与 argparse 不符 / 编了阈值 / golden-only 当精度 | `REWORK harness` |
 | 无仓却写成 script_repo，或两边叙事打架 | `REWORK harness,bind` |

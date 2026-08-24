@@ -27,9 +27,9 @@
 
 `requirement.text` 必须逐符号标注本次新增 vs 既有，不要并列成「新增 X、Y、Z」。
 
-谓词字面量类型对齐 `init.yaml` 的 `domains.<col>.profile.inferred_type`：`int` 列写数字不加引号（`value: 4`），`enum-string` 列写字符串。引擎 `eq`/`in` 是严格比较，类型写错义务会全部 MISS 且不报错。
+谓词字面量类型对齐 `init.yaml` 的 `domains.<col>.profile.inferred_type`：`int` 列写数字不加引号（`value: 4`），`enum-string` 列写字符串。引擎 `eq`/`in` 会把 `4` 和 `"4"` 当成同一个值。字面量仍按 `inferred_type` 写：`int` 列不要加引号。
 
-`case.*` / `replay.*` / `probe.*` **只有两段**。TilingData 在源码里是嵌套结构，但解码器展平且不带 struct 名，写成 `replay.<struct>.<field>` 会让该 Target 永远 `UNKNOWN`（不报错，但义务永远闭合不了）。字段名查 UO `kernel_tiling_view` stub 的叶子名。
+`case.*` / `replay.*` / `probe.*` **只有两段**。TilingData 在源码里是嵌套结构，但解码器展平且不带 struct 名，写成 `replay.<struct>.<field>` 会被 `plan_validate` 打回。字段名查 UO `kernel_tiling_view` stub 的叶子名。
 
 若主行为门禁全部落在非 confirmed 列上：只交付能用 confirmed 列观测的次级 Target（如新字段在既有路径上的默认值 / 布局对齐），其余进 `untestable` + `test_harness_gap`。诚实的小 plan 优于指向不可达 Target 的大 plan。
 </method>

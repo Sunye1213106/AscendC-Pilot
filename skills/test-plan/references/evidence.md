@@ -44,7 +44,7 @@ case.sparse_mode                  ✅  init.yaml 的列名
 replay.s1s2BNGS1S2BaseParams.deterBandScheduleMode   ❌ 多了子结构前缀
 ```
 
-源码里 TilingData 是嵌套结构，但解码器把所有字段**展平**、且**不带 struct 名**，观察包再把它们提到 `replay` 顶层。多写一层 struct 前缀不会报错，只会让该 Target 永远 `UNKNOWN`、义务永远闭合不了 —— 和写错字段名一样致命，但更难发现。
+源码里 TilingData 是嵌套结构，但解码器把所有字段**展平**、且**不带 struct 名**，观察包再把它们提到 `replay` 顶层。多写一层 struct 前缀会被 `plan_validate` 拒绝。
 
 拿不准字段叫什么，就查 UO 的 `kernel_tiling_view` stub 里的**叶子字段名**，别抄它的结构路径。
 

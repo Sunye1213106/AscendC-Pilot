@@ -1077,7 +1077,10 @@ def _complete_bind_review_prepare(
         result["auto_finalize"] = True
         result["finalize"] = fin
         result["ok"] = bool(fin.get("ok"))
-        result["message_zh"] = "主控裁判已放行。"
+        result["message_zh"] = (
+            "主控裁判已放行，本轮继续 `bind_promote` 写出 `tg/init.yaml`，再 `validate_init`。"
+            "不要 `pilot_run(tg-plan)`：tg-init 尚未结束，init.yaml 还不存在。"
+        )
         return result
     if parsed and parsed.get("incomplete"):
         result["ok"] = False
@@ -1140,7 +1143,8 @@ def _complete_bind_review_prepare(
     result["message_zh"] = (
         "请通读 harness.yaml 与 bind.yaml（不要只做字段差集）。"
         "不要写文件、不要问用户。parts 已齐时禁止 force_new。"
-        "没问题：下一发 `pilot_run(tg-init)` intent=`PASS`。"
+        "没问题：下一发 `pilot_run(tg-init)` intent=`PASS`；"
+        "放行后同一轮会继续 bind_promote / validate_init，init.yaml 落盘前不要改跑 tg-plan。"
         "有问题：intent=`REWORK bind` 或 `REWORK harness,bind`，后面跟原因。"
         "必须点名 harness 和/或 bind，不要只写 REWORK。"
     )

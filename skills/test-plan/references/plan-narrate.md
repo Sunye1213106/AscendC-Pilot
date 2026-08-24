@@ -30,6 +30,4 @@ fuse 的 YAML 里**有** `test_harness_gap` 块（且未闭合）时，三节之
 # test_harness_gap
 ```
 
-底下用一两句说清缺什么、要补哪个仓。**这个标题就是阻塞开关**：`solve_precheck` 靠「散文里有该标题」+「YAML 块未闭合」共同判定要不要停住 solve。漏了标题，fuse 登记的缺口会静默失效，solve 会带着造不出的义务往下跑。
-
-fuse 没交 `test_harness_gap` 块时，**不要**自己加这个标题 —— 会无条件阻塞 solve。
+底下用一两句说清缺什么、要补哪个仓。**阻塞开关只看 YAML 围栏里的 `test_harness_gap.done`**，这个标题只是给人看的解释。fuse 写了 gap 块却漏了标题，solve 仍会停；YAML 已 `done: true` 时标题留着也不会挡。fuse 没交 `test_harness_gap` 块时不要自己加这个标题。

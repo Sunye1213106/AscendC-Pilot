@@ -155,6 +155,9 @@ def test_code_review_capability_does_not_invent_workflows() -> None:
 
 def test_auto_alias_and_slash_preserved() -> None:
     assert resolve_workflow_id("auto") == "goal-intake"
+    assert resolve_workflow_id("/auto") == "goal-intake"
+    assert resolve_workflow_id("/uo-init") == "uo-init"
+    assert resolve_workflow_id("uo-init") == "uo-init"
     users = list_user_workflows()
     for wid in ("uo-init", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-plan", "ce-apply"):
         assert wid in users

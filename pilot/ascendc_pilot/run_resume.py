@@ -27,6 +27,8 @@ _DECISION_ALIASES = {
     "reuse": "continue",
     "继续": "continue",
     "继续上次": "continue",
+    "stay": "stay",
+    "resume_active": "stay",
     "开始": "continue",
     "reinit": "reinit",
     "reset": "reinit",
@@ -242,8 +244,10 @@ def normalize_decision(raw: str) -> str | None:
     if not key:
         return None
     low = key.lower()
-    if low in {"continue", "reinit", "query"}:
+    if low in {"continue", "reinit", "query", "stay"}:
         return low
+    if str(raw or "").strip().startswith("继续当前"):
+        return "stay"
     if str(raw or "").strip().startswith("开始"):
         return "continue"
     if str(raw or "").strip().startswith("去查询"):
@@ -851,9 +855,15 @@ def build_run_resume_summary(
 
     has_uo = bool(discover_uo_products(root))
     del uo
-    artifacts = _artifact_checklist(agent, workflow_id) if has_uo or workflow_id != "uo-init" else []
+    state_wid = str((state or {}).get("workflow_id") or "")
+    checklist_wid = state_wid or workflow_id
+    artifacts = (
+        _artifact_checklist(agent, checklist_wid)
+        if has_uo or checklist_wid != "uo-init"
+        else []
+    )
     if not artifacts and agent.is_dir():
-        artifacts = _artifact_checklist(agent, workflow_id)
+        artifacts = _artifact_checklist(agent, checklist_wid)
     complete_arts = [a for a in artifacts if a.get("complete")]
     missing_arts = [a for a in artifacts if not a.get("complete")]
 
@@ -883,7 +893,6 @@ def build_run_resume_summary(
 
     phase = str((state or {}).get("phase") or "")
     status = str((state or {}).get("status") or "")
-    state_wid = str((state or {}).get("workflow_id") or "")
     active_wid = state_wid or workflow_id
     last_complete = {
         "phase": phase if "scope_receipt" in passed_gates or receipts else "",
@@ -906,7 +915,7 @@ def build_run_resume_summary(
         "missing_artifacts": [a["path"] for a in missing_arts[:12]],
     }
 
-    next_hint = _resolve_resume_next_action(root) if state_wid == workflow_id else ""
+    next_hint = _resolve_resume_next_action(root) if state_wid else ""
     if not next_hint and active.get("status") == "prepared":
         next_hint = str(active.get("action_id") or "")
     if not next_hint:
@@ -962,7 +971,15 @@ def build_run_resume_summary(
         active_label = _workflow_label(active_wid)
         ask_opts = [
             {
-                "label": f"开始 {wf_label} (Recommended)",
+                "label": f"继续当前 {active_label} (Recommended)",
+                "description": (
+                    f"先把占锁的 {active_wid} 跑完（下一步 {next_hint or 'pilot_run'}），"
+                    f"不要改跑 {workflow_id}"
+                ),
+                "value": "stay",
+            },
+            {
+                "label": f"开始 {wf_label}",
                 "description": (
                     f"结束当前 {active_label} 产物族锁（保留 uo / tg / ce），开始 {wf_label}"
                 ),
@@ -972,6 +989,7 @@ def build_run_resume_summary(
         ]
         question_body = (
             f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致。"
+            f"推荐继续当前 {active_wid}（下一步 {next_hint or 'pilot_run'}）。"
             f"「开始 {wf_label}」会释放该产物族锁并 start {workflow_id}（不删正式产物）。"
             f"「删除重开」会按 {wf_label} 策略清理后 start。\n\n"
             + "\n".join(lines)
@@ -1013,7 +1031,7 @@ def build_run_resume_summary(
         "invalid_receipts": list(classified.get("invalid_receipts") or []),
         "missing_receipts": list(classified.get("missing_receipts") or []),
         "artifacts": artifacts,
-        "action_owned_artifacts": action_owned_artifacts(workflow_id),
+        "action_owned_artifacts": action_owned_artifacts(checklist_wid),
         "last_complete": last_complete,
         "interrupted_at": interrupted,
         "resume_next_action": next_hint,
@@ -1025,6 +1043,7 @@ def build_run_resume_summary(
         },
         "decision_values": {o["label"]: o["value"] for o in ask_opts},
         "commands": {
+            "stay": f"pilot_run workflow={active_wid} decision=stay",
             "continue": f"pilot_run workflow={workflow_id} decision=continue",
             "reinit": f"pilot_run workflow={workflow_id} decision=reinit",
         },
@@ -1346,8 +1365,8 @@ def apply_resume_decision(
         return {
             "ok": False,
             "error": "invalid_decision",
-            "allowed": ["continue", "reinit", "query"],
-            "message_zh": f"无效决策 {decision!r}；请用 AskQuestion 选项 continue|reinit|query",
+            "allowed": ["stay", "continue", "reinit", "query"],
+            "message_zh": f"无效决策 {decision!r}；请用 AskQuestion 选项 stay|continue|reinit|query",
         }
 
     if require_receipt:
@@ -1390,6 +1409,24 @@ def apply_resume_decision(
             ),
             "run_summary": summary,
         }
+
+    if choice == "stay":
+        live = load_state(root)
+        active_wid = str((live or {}).get("workflow_id") or "")
+        if not active_wid or str((live or {}).get("status") or "") not in RUNNING_LIKE:
+            return {
+                "ok": False,
+                "error": "no_resumable_run",
+                "message_zh": "没有可继续的活动 run；请改选开始请求的工作流或删除重开",
+                "run_summary": summary,
+            }
+        return apply_resume_decision(
+            root,
+            active_wid,
+            "continue",
+            require_receipt=False,
+            start_kwargs=kwargs,
+        )
 
     if choice == "continue":
         if cross:
@@ -1532,6 +1569,15 @@ def existing_run_decision_payload(
         message_zh = (
             "上一场建库已经完成，产物锁已释放。新会话可以直接查询，不必再 /uo-init。"
             "选「去查询」保留 CodeMap；只有要推倒重来才选「删除重开」。"
+        )
+    elif summary.get("cross_workflow"):
+        error = "EXISTING_RUN_NEEDS_DECISION"
+        active = str(summary.get("workflow_id") or "")
+        nxt = str(summary.get("resume_next_action") or "pilot_run")
+        message_zh = (
+            f"当前占锁的是 {active}，还没结束；不要改跑 {workflow_id}。"
+            f"推荐：继续当前 {active}（下一步 {nxt}）。"
+            "只有确认要放弃当前 run 才选开始请求的工作流或删除重开。"
         )
     else:
         error = "EXISTING_RUN_NEEDS_DECISION"

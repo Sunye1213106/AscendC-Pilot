@@ -289,6 +289,7 @@ export function normalizeResumeDecision(raw: string): string {
     low === "continue" ||
     low === "reinit" ||
     low === "query" ||
+    low === "stay" ||
     low === "uo-init" ||
     low === "source"
   ) {
@@ -299,6 +300,8 @@ export function normalizeResumeDecision(raw: string): string {
     reuse: "continue",
     继续: "continue",
     继续上次: "continue",
+    stay: "stay",
+    resume_active: "stay",
     reset: "reinit",
     "force-new": "reinit",
     force_new: "reinit",
@@ -313,6 +316,7 @@ export function normalizeResumeDecision(raw: string): string {
   }
   if (aliases[key]) return aliases[key]
   if (aliases[low]) return aliases[low]
+  if (key.startsWith("继续当前")) return "stay"
   if (key.startsWith("开始") || key.includes("继续")) return "continue"
   if (key.includes("删除") || key.includes("重开")) return "reinit"
   if (key.includes("源码")) return "source"
@@ -890,7 +894,7 @@ export function extractKbAnswer(text: string): string {
 }
 
 export function canonicalWorkflowId(wf: string): string {
-  const w = String(wf || "").trim()
+  const w = String(wf || "").trim().replace(/^\/+/, "")
   return w === "auto" ? "goal-intake" : w
 }
 
@@ -1558,7 +1562,7 @@ export async function runPilotDriver(
   if (!args || typeof args !== "object") {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
   }
-  let workflow = String(args.workflow || "").trim()
+  let workflow = canonicalWorkflowId(String(args.workflow || "").trim())
   let project = String(args.project || "").trim()
     ? resolve(String(args.project || "").trim())
     : ""
@@ -2089,13 +2093,13 @@ export function createPilotRunTool(
   return {
     pilot_run: {
       description:
-        "运行 AscendC-Pilot 当前 Todo 格。workflow=当前 slash，或仅「获取 PR 代码」用 auto。禁止 uo-query。" +
+        "运行 AscendC-Pilot 当前 Todo 格。workflow=uo-init（无前导 /），或仅「获取 PR 代码」用 auto。禁止 uo-query。" +
         "返回 dispatch_subagent 时，Task 正文用 task_prompt_stub 原文。",
       args: {
         workflow: {
           type: "string",
           description:
-            "当前格 slash，或仅「获取 PR 代码」用 auto。禁止 uo-query。显式 slash 用已有 id。",
+            "当前格工作流 id：uo-init / tg-init / ce-review 等，不要前导 /。仅「获取 PR 代码」用 auto。禁止 uo-query。",
         },
         project: {
           type: "string",

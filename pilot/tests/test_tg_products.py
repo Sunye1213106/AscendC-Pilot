@@ -167,8 +167,8 @@ def _v3_fence(**overrides: object) -> dict:
                 "target": "T-dispatch",
                 "controls": ["B"],
                 "partitions": [
-                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.dtype", "value": "fp16"}},
-                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.dtype", "value": "bf16"}},
+                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.B", "value": 1}},
+                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.B", "value": 2}},
                 ],
             }
         ],
@@ -188,8 +188,8 @@ def test_plan_rejects_td_mode_and_unknown_column() -> None:
                 "target": "T-dispatch",
                 "controls": ["Missing"],
                 "partitions": [
-                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.dtype", "value": "fp16"}},
-                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.dtype", "value": "bf16"}},
+                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.B", "value": 1}},
+                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.B", "value": 2}},
                 ],
             }
         ],

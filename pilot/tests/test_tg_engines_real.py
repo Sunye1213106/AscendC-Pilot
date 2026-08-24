@@ -123,8 +123,8 @@ dimensions:
   target: T-dispatch
   controls: [B]
   partitions:
-  - {id: fp16, predicate: {op: eq, field: case.dtype, value: fp16}}
-  - {id: bf16, predicate: {op: eq, field: case.dtype, value: bf16}}
+  - {id: fp16, predicate: {op: eq, field: case.B, value: 1}}
+  - {id: bf16, predicate: {op: eq, field: case.B, value: 2}}
 coverage:
   L0: {dimensions: [D-dtype]}
   L1: {combinations: []}
@@ -159,8 +159,8 @@ dimensions:
   target: T-dispatch
   controls: [B]
   partitions:
-  - {id: fp16, predicate: {op: eq, field: case.dtype, value: fp16}}
-  - {id: bf16, predicate: {op: eq, field: case.dtype, value: bf16}}
+  - {id: fp16, predicate: {op: eq, field: case.B, value: 1}}
+  - {id: bf16, predicate: {op: eq, field: case.B, value: 2}}
 coverage:
   L0: {dimensions: [D-dtype]}
   L1: {combinations: []}
@@ -425,7 +425,8 @@ def test_analyze_promote_merges_capture_into_ledger(tmp_path: Path) -> None:
     )
     _write_capture(root, run_id, "analyze_round", text="refinement:\n  miss:\n    - obligation: O1\n")
     out = run_analyze_promote(root, {"architecture": _ARCH, "run_id": run_id})
-    assert out.get("ok") is True, out
+    assert out.get("ok") is False, out
+    assert out.get("reason_code") == "OPEN_REMAINING"
     text = (tg / "worklog.md").read_text(encoding="utf-8")
     assert "O1" in text
     assert "schema: tg-worklog/v2" in text or "tg-worklog/v2" in text
@@ -447,6 +448,25 @@ def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:
     promoted = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert promoted.get("ok") is True, promoted
     tg = tg_root(root, arch=_ARCH)
+    from testcase_agent.products import INIT_SCHEMA, dump_init
+
+    dump_init(
+        tg,
+        {
+            "schema": INIT_SCHEMA,
+            "kind": "script_repo",
+            "table_kind": "csv",
+            "columns": [{"name": "B"}],
+            "mapping": {
+                "B": {
+                    "control": {"status": "active"},
+                    "relation": "direct",
+                    "confidence": "confirmed",
+                    "uo": {"id": "b", "candidate": ""},
+                }
+            },
+        },
+    )
     out = run_compile_obligations(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
     assert (tg / "worklog.md").is_file()

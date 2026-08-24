@@ -51,23 +51,39 @@ def _typed(value: Any, spec: dict[str, Any]) -> tuple[bool, Any]:
     return False, value
 
 
-def _as_number(value: Any) -> float | None:
+def _as_number(value: Any) -> float | int | None:
     """Numeric view of a scalar, or None when it is not a clean number.
 
     ``bool`` is excluded on purpose so ``True`` never compares equal to ``1``.
+    Integer spellings stay integers so values above 2^53 do not round through float.
+    inf / nan are rejected.
     """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value in (float("inf"), float("-inf")) or value != value:
+            return None
+        return value
     if isinstance(value, str):
         text = value.strip()
-        if not text:
+        if not text or text.lower() in {"inf", "+inf", "-inf", "nan"}:
             return None
+        sign = text[0] in "+-"
+        digits = text[1:] if sign else text
+        if digits.isdigit():
+            try:
+                return int(text)
+            except ValueError:
+                return None
         try:
-            return float(text)
+            parsed = float(text)
         except ValueError:
             return None
+        if parsed in (float("inf"), float("-inf")) or parsed != parsed:
+            return None
+        return parsed
     return None
 
 
@@ -84,7 +100,9 @@ def _scalar_equal(actual: Any, expected: Any) -> bool:
         return True
     left, right = _as_number(actual), _as_number(expected)
     if left is not None and right is not None:
-        return left == right
+        if isinstance(left, int) and isinstance(right, int):
+            return left == right
+        return float(left) == float(right)
     if isinstance(actual, str) and isinstance(expected, str):
         return actual.strip() == expected.strip()
     return False

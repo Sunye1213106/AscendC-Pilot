@@ -781,10 +781,11 @@ def main(argv: list[str] | None = None) -> int:
             normalize_decision,
         )
         from ascendc_pilot.state import start_workflow
-        from ascendc_pilot.workflows import get_workflow
+        from ascendc_pilot.workflows import get_workflow, resolve_workflow_id
 
+        args.workflow_id = resolve_workflow_id(args.workflow_id)
         get_workflow(args.workflow_id)  # validate
-        if str(args.workflow_id or "").strip() == "uo-query":
+        if args.workflow_id == "uo-query":
             print_json(
                 {
                     "ok": False,

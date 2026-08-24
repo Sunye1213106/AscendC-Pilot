@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .predicate import Truth, evaluate, flatten_observe
+from .predicate import Truth, evaluate, flatten_observe, predicate_fields
+from .contract import CASE_REFINABLE, CONTROL_GAP, OBSERVATION_GAP, PLAN_INVALID, case_column
 
 HIT = "HIT"
 MISS = "MISS"
@@ -186,3 +187,88 @@ def evaluate_obligation(
         "guards": guard_got,
         "signature": signature,
     }
+
+
+def classify_eval_failure(
+    plan: dict[str, Any],
+    obligation: dict[str, Any],
+    result: dict[str, Any],
+    observe: dict[str, Any] | None,
+) -> str:
+    """Classify a non-CLOSED obligation. Only CASE_REFINABLE may return to construct."""
+    del obligation
+    status = str(result.get("status") or "")
+    if status in {"CLOSED", "REDUNDANT"}:
+        return ""
+    if status == "GUARD_LEAK":
+        return "GUARD_LEAK"
+    doc = observe if isinstance(observe, dict) else {}
+    values = flatten_observe(doc)
+    replay = doc.get("replay") if isinstance(doc.get("replay"), dict) else {}
+    ran = bool(replay) or bool(doc.get("probe")) or bool(doc.get("case"))
+
+    targets = {
+        str(row.get("id") or "").strip(): row
+        for row in (plan.get("targets") or [])
+        if isinstance(row, dict)
+    }
+    dimensions = {
+        str(row.get("id") or "").strip(): row
+        for row in (plan.get("dimensions") or [])
+        if isinstance(row, dict)
+    }
+
+    for tid, got in (result.get("targets") or {}).items():
+        if not isinstance(got, dict):
+            continue
+        if got.get("matched"):
+            return PLAN_INVALID
+        if str(got.get("status") or "") != UNKNOWN:
+            continue
+        evidence = (targets.get(str(tid)) or {}).get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        field = str(evidence.get("field") or "").strip()
+        if field and field not in values:
+            if case_column(field):
+                return CASE_REFINABLE if ran else CONTROL_GAP
+            if ran:
+                return OBSERVATION_GAP
+            return CASE_REFINABLE
+
+    for did, got in (result.get("dimensions") or {}).items():
+        if not isinstance(got, dict):
+            continue
+        if got.get("matched"):
+            return PLAN_INVALID
+        if got.get("status") != UNKNOWN and got.get("partition") is not None:
+            continue
+        dim = dimensions.get(str(did)) or {}
+        classifier = dim.get("classifier") if isinstance(dim.get("classifier"), dict) else {}
+        for raw in classifier.get("requires") or []:
+            req = str(raw or "").strip()
+            if req and req not in values and not case_column(req) and ran:
+                return OBSERVATION_GAP
+        if str(got.get("status") or "") == UNKNOWN and ran:
+            missing_case = False
+            missing_obs = False
+            for part in dim.get("partitions") or []:
+                if not isinstance(part, dict):
+                    continue
+                for field in predicate_fields(part.get("predicate")):
+                    if field in values:
+                        continue
+                    if case_column(field):
+                        missing_case = True
+                    else:
+                        missing_obs = True
+            if missing_obs:
+                return OBSERVATION_GAP
+            if missing_case:
+                return CASE_REFINABLE
+            return PLAN_INVALID
+
+    if status == "MISS":
+        return CASE_REFINABLE
+    if status == "UNKNOWN" and ran:
+        return OBSERVATION_GAP
+    return CASE_REFINABLE

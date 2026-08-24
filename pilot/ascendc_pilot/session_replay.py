@@ -386,6 +386,7 @@ def scenario_tg_solve_routing(workflow_id: str, project: Path) -> dict[str, Any]
         "REWORK_CONSTRUCT": "construct",
         "OPEN_REMAINING": "construct",
         "OPEN_NONEMPTY": "construct",
+        "CASE_REFINABLE": "construct",
     }
     for code in TG_SOLVE_REWORK_CODES:
         from_phase = "analyze" if code != "OPEN_NONEMPTY" else "certify"

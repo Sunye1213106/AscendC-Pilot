@@ -233,6 +233,8 @@ def test_normalize_decision_labels() -> None:
     assert normalize_decision("继续上次 (Recommended)") == "continue"
     assert normalize_decision("开始 uo-query (Recommended)") == "continue"
     assert normalize_decision("删除重开") == "reinit"
+    assert normalize_decision("stay") == "stay"
+    assert normalize_decision("继续当前 tg-init (Recommended)") == "stay"
     assert normalize_decision("bogus") is None
 
 
@@ -533,3 +535,33 @@ def test_continue_scrubs_failed_verify_session_marker(tmp_path: Path) -> None:
     assert "verify" in scrubbed
     assert not (state_root(tmp_path, arch="arch35") / "active_action.yaml").is_file()
     assert load_state(tmp_path)["status"] == "running"
+
+
+def test_tg_family_conflict_summary_uses_active_next_hint(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    summary = build_run_resume_summary(tmp_path, workflow_id="tg-plan")
+    assert summary.get("cross_workflow")
+    assert summary.get("workflow_id") == "tg-init"
+    assert summary.get("requested_workflow_id") == "tg-plan"
+    nxt = str(summary.get("resume_next_action") or "")
+    assert nxt != "plan_promote"
+    assert "继续时下一步: plan_promote" not in str(summary.get("summary_text_zh") or "")
+    opts = (summary.get("ask_question") or {}).get("options") or []
+    assert opts and opts[0].get("value") == "stay"
+    assert any(o.get("value") == "continue" for o in opts)
+
+
+def test_stay_resumes_occupying_workflow(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "tg-init", architecture="arch35")
+    out = apply_resume_decision(
+        tmp_path,
+        "tg-plan",
+        "stay",
+        require_receipt=False,
+        start_kwargs={"architecture": "arch35"},
+    )
+    assert out.get("ok") is True
+    assert not out.get("switched_from")
+    live = load_state(tmp_path)
+    assert live["workflow_id"] == "tg-init"
+    assert live["run_id"] == state["run_id"]

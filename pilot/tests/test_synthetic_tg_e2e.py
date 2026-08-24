@@ -718,6 +718,8 @@ def test_bind_review_pass_from_intent_writes_engine_verdict(synthetic_root: Path
         intent="PASS",
     )
     assert out.get("auto_finalize") is not False
+    assert "bind_promote" in str(out.get("message_zh") or "")
+    assert "tg-plan" in str(out.get("message_zh") or "")
     assert (sdir / "verdict.yaml").is_file()
     assert "ok: true" in (sdir / "verdict.yaml").read_text(encoding="utf-8")
     assert not (sdir / "referee.yaml").is_file()

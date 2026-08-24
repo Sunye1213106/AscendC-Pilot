@@ -63,6 +63,12 @@ def test_state_machine_and_no_progress(tmp_path: Path):
     assert st["status"] == "blocked"
 
 
+def test_start_accepts_slash_prefixed_workflow_id(tmp_path: Path):
+    st = start_workflow(tmp_path, "/uo-init", architecture="arch35")
+    assert st["workflow_id"] == "uo-init"
+    assert st["phase"] == "prepare"
+
+
 def test_start_rejects_arbitrary_phase(tmp_path: Path):
     with pytest.raises(RuntimeError, match="entry_state"):
         start_workflow(tmp_path, "uo-init", phase="analyze", architecture="arch35")

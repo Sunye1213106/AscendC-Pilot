@@ -97,7 +97,8 @@ WORKFLOWS = _normalize_execution_registry(_SPEC_WORKFLOWS)
 
 def resolve_workflow_id(workflow_id: str) -> str:
     seen: set[str] = set()
-    wid = str(workflow_id or "").strip()
+    # Chat slash is `/uo-init`; workflow id / pilot_run.workflow is `uo-init`.
+    wid = str(workflow_id or "").strip().lstrip("/")
     while wid and wid not in seen:
         seen.add(wid)
         meta = WORKFLOWS.get(wid)

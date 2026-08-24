@@ -98,8 +98,9 @@ def route(text: str) -> dict[str, Any]:
         return dict(CE_NOT_IMPLEMENTED)
 
     slash_map = _slash_map()
-    if first in slash_map:
-        wid = slash_map[first]
+    slash_key = first if first.startswith("/") else f"/{first}"
+    if first in slash_map or slash_key in slash_map:
+        wid = slash_map.get(first) or slash_map[slash_key]
         return {
             "ok": True,
             "workflow_id": wid,
@@ -107,9 +108,10 @@ def route(text: str) -> dict[str, Any]:
             "method": "slash",
         }
 
-    if first in WORKFLOWS and (WORKFLOWS[first].get("slash") and not WORKFLOWS[first].get("reserved")):
-        meta = WORKFLOWS[first]
-        wid = str(meta.get("alias_of") or first)
+    bare = first.lstrip("/")
+    if bare in WORKFLOWS and (WORKFLOWS[bare].get("slash") and not WORKFLOWS[bare].get("reserved")):
+        meta = WORKFLOWS[bare]
+        wid = str(meta.get("alias_of") or bare)
         return {
             "ok": True,
             "workflow_id": wid,

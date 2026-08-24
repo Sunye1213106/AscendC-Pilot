@@ -49,6 +49,9 @@ from uo_init.source_locator import locations_from_attr_sites
 
 SNIPPET_LINES = 40
 SNIPPET_BEFORE = 3
+FUNC_HEAD_LINES = 8
+STATEMENT_BEFORE = 8
+STATEMENT_AFTER = 8
 BRANCH_OUTER_BEFORE = 16
 PRIMARY_CANDIDATES = 3
 MAX_PAYLOAD_CHARS = 24_000
@@ -61,6 +64,7 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "dim_coverage",
         "nearby",
         "matching_block_count",
+        "legal_key_count",
         "phases",
         "first_query",
         "answer_contract",
@@ -75,12 +79,61 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "shape",
         "total_matched",
         "edges",
+        "snippet",
+        "seeds",
     }
 )
 PACKING_RHS_TRIM = 400
 _GET_OFFSET_RE = re.compile(r"\bGet\w*Offset\b")
 _DATA_MOVE_RE = re.compile(r"\bDataCopy(?:Pad)?\b|\bLoadData\b")
 _TRIVIAL_RHS_RE = re.compile(r"^(?:true|false|0|1|nullptr)?$", re.IGNORECASE)
+_DECISION_RHS_RE = re.compile(r"&&|\|\||==|!=|>=|<=|>(?!=)|<(?!=)")
+_NEXT_EDGE_PRIORITY = (
+    "WRITES",
+    "READS",
+    "CALLS",
+    "BINDS",
+    "DERIVES",
+    "RETURNS",
+    "GUARDED_BY",
+    "SELECTS",
+    "CONTROLS",
+)
+_NEXT_EDGE_SKIP = frozenset(
+    {
+        "FLOWS_TO",
+        "PRECEDES",
+        "DECLARES",
+        "ACTIVE_UNDER",
+        "CONTAINS",
+        "LAUNCHES",
+    }
+)
+_FOCUS_SKIP_IDENTS = frozenset(
+    {
+        "true",
+        "false",
+        "bool",
+        "auto",
+        "const",
+        "static_cast",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "int",
+        "int32_t",
+        "int64_t",
+        "void",
+        "static",
+        "nullptr",
+        "this",
+        "if",
+        "else",
+        "return",
+        "ge",
+    }
+)
 NEIGHBOR_REL_KINDS = (
     "SELECTS",
     "CONTROLS",
@@ -1114,6 +1167,169 @@ def _read_line_range(path: Path, start: int, end: int) -> list[str]:
     return out
 
 
+def _numbered_lines(start: int, rows: Sequence[str]) -> list[str]:
+    return [f"{int(start) + i}:{rows[i]}" for i in range(len(rows))]
+
+
+def _statement_window(
+    op_root: Path | None,
+    file: str,
+    line: int,
+    *,
+    before: int = STATEMENT_BEFORE,
+    after: int = STATEMENT_AFTER,
+) -> tuple[str, bool]:
+    """Centered ~16-line window around a statement. Not a neighborhood dump."""
+    if not file or int(line or 0) <= 0:
+        return "", False
+    path = _resolve_source_path(op_root, file)
+    if path is None:
+        return "", False
+    centre = int(line)
+    start = max(1, centre - int(before))
+    end = centre + int(after)
+    chosen = _read_line_range(path, start, end)
+    if not chosen:
+        return "", False
+    return "\n".join(_numbered_lines(start, chosen)), False
+
+
+def _is_trivial_decl(row: dict[str, Any]) -> bool:
+    kind = str(row.get("kind") or "")
+    rhs = str(row.get("rhs") or "").strip()
+    return kind == "declaration" and bool(_TRIVIAL_RHS_RE.match(rhs))
+
+
+def _rhs_looks_decision(rhs: str) -> bool:
+    return bool(_DECISION_RHS_RE.search(str(rhs or "")))
+
+
+def _focus_value_write(extras: dict[str, Any] | None) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in (extras or {}).get("value_writes") or []
+        if isinstance(row, dict)
+    ]
+    decision = [
+        row
+        for row in rows
+        if not _is_trivial_decl(row) and _rhs_looks_decision(str(row.get("rhs") or ""))
+    ]
+    if not decision:
+        return None
+
+    def _rank(row: dict[str, Any]) -> tuple[int, int]:
+        file = str(row.get("file") or "").replace("\\", "/").lower()
+        cpp = 0 if file.endswith(".cpp") else 1
+        return (cpp, int(row.get("line") or 0))
+
+    return sorted(decision, key=_rank)[0]
+
+
+def _focus_idents(rhs: str, needle: str) -> list[str]:
+    needle_l = _last_ident(needle).lower()
+    preferred: list[str] = []
+    rest: list[str] = []
+    for tok in _TOKEN_RE.findall(str(rhs or "")):
+        low = tok.lower()
+        if low in _FOCUS_SKIP_IDENTS or low == needle_l:
+            continue
+        if tok.isupper() or (tok[:1].isdigit()):
+            continue
+        if tok.startswith(("fBase", "tndBase", "context")):
+            continue
+        mixed = any(ch.isupper() for ch in tok[1:]) and any(ch.islower() for ch in tok)
+        tagged = tok.endswith(("Cond", "Limit", "Support")) or any(
+            part in tok for part in ("Cond", "Limit", "Support")
+        )
+        if tagged:
+            if tok not in preferred:
+                preferred.append(tok)
+        elif mixed and tok not in rest and tok not in preferred:
+            rest.append(tok)
+        if len(preferred) >= 3:
+            break
+    return (preferred + rest)[:3]
+
+
+def _overlay_value_write(
+    grouped: dict[str, Any],
+    focus: dict[str, Any],
+    needle: str,
+) -> dict[str, Any]:
+    grouped = dict(grouped)
+    writes = dict(grouped.get("WRITES") or {"count": 0, "neighbors": []})
+    rhs = str(focus.get("rhs") or "")
+    idents = _focus_idents(rhs, needle)
+    name = str(focus.get("function") or (idents[0] if idents else needle) or "")
+    focus_row = {
+        "name": name,
+        "kind": "FUNCTION",
+        "file": str(focus.get("file") or ""),
+        "line": int(focus.get("line") or 0),
+    }
+    loc = (focus_row["file"].replace("\\", "/"), focus_row["line"])
+    rest: list[dict[str, Any]] = []
+    for row in list(writes.get("neighbors") or []):
+        other = (str(row.get("file") or "").replace("\\", "/"), int(row.get("line") or 0))
+        if other == loc:
+            continue
+        rest.append(row)
+    writes["neighbors"] = [focus_row] + rest[: max(0, EDGES_PER_KIND - 1)]
+    writes["count"] = max(int(writes.get("count") or 0), len(writes["neighbors"]))
+    grouped["WRITES"] = writes
+    return grouped
+
+
+def _append_next_name(
+    names: list[str],
+    seen: set[str],
+    self_names: set[str],
+    candidate: str,
+    *,
+    limit: int = 12,
+) -> bool:
+    other = str(candidate or "").strip()
+    if (
+        not other
+        or other.lower() in self_names
+        or other.lower() in seen
+        or other.startswith("ARGS_SEL")
+    ):
+        return False
+    seen.add(other.lower())
+    names.append(other)
+    return len(names) >= limit
+
+
+def _extend_next_from_edges(
+    names: list[str],
+    seen: set[str],
+    self_names: set[str],
+    grouped: dict[str, Any],
+    *,
+    limit: int = 12,
+) -> None:
+    def _from_group(group: Any) -> bool:
+        if not isinstance(group, dict):
+            return False
+        for row in list(group.get("neighbors") or []):
+            if _append_next_name(
+                names, seen, self_names, str(row.get("name") or ""), limit=limit
+            ):
+                return True
+        return False
+
+    for rel in _NEXT_EDGE_PRIORITY:
+        if _from_group(grouped.get(rel)):
+            return
+    for rel, group in grouped.items():
+        if rel in _NEXT_EDGE_PRIORITY or rel in _NEXT_EDGE_SKIP:
+            continue
+        if _from_group(group):
+            return
+
+
 def _disk_window(
     op_root: Path | None,
     file: str,
@@ -1147,6 +1363,28 @@ def _disk_window(
         start = max(1, centre - SNIPPET_BEFORE)
     truncated = False
     recorded_span = span_end > centre
+    if (
+        kind_u
+        in {
+            EntityKind.METHOD.value,
+            EntityKind.FUNCTION.value,
+            EntityKind.KERNEL.value,
+        }
+        and recorded_span
+        and (span_end - start + 1) > SNIPPET_LINES
+    ):
+        head_end = min(span_end, start + FUNC_HEAD_LINES - 1)
+        tail_budget = max(1, SNIPPET_LINES - FUNC_HEAD_LINES)
+        tail_start = max(head_end + 1, span_end - tail_budget + 1)
+        head = _read_line_range(path, start, head_end)
+        tail = _read_line_range(path, tail_start, span_end)
+        if not head and not tail:
+            return "", False
+        parts = _numbered_lines(start, head)
+        if tail_start > head_end + 1:
+            parts.append("# ... omitted ...")
+        parts.extend(_numbered_lines(tail_start, tail))
+        return "\n".join(parts), True
     if recorded_span:
         if span_end - start + 1 > SNIPPET_LINES:
             end = start + SNIPPET_LINES - 1
@@ -1161,7 +1399,7 @@ def _disk_window(
     chosen = _read_line_range(path, start, end)
     if not chosen:
         return "", False
-    return "\n".join(f"{start + i}:{chosen[i]}" for i in range(len(chosen))), truncated
+    return "\n".join(_numbered_lines(start, chosen)), truncated
 
 
 def _disk_snippet(
@@ -4254,27 +4492,32 @@ class UoSqlQuery:
                     for row in readers[:EDGES_PER_KIND]
                 ]
                 grouped["READS"]["count"] = max(int(grouped["READS"].get("count") or 0), len(readers))
+            focus = _focus_value_write(extras)
+            if focus:
+                window, _win_cut = _statement_window(
+                    self._op_root,
+                    str(focus.get("file") or ""),
+                    int(focus.get("line") or 0),
+                )
+                if window:
+                    card["snippet"] = window
+                    card["file"] = str(focus.get("file") or card.get("file") or "")
+                    card["line"] = int(focus.get("line") or 0)
+                    if _snippet_covers_line(window, int(focus.get("line") or 0)):
+                        card.pop("truncated", None)
+                grouped = _overlay_value_write(grouped, focus, needle)
+                for ident in _focus_idents(str(focus.get("rhs") or ""), needle):
+                    if _append_next_name(next_names, seen_next, self_names, ident):
+                        break
             card["edges"] = grouped
             if extras:
                 card["extras"] = extras
             card["canonical"] = extras.get("canonical") or name
             cards.append(card)
-            for group in grouped.values():
-                for row in list(group.get("neighbors") or []):
-                    other = str(row.get("name") or "").strip()
-                    if (
-                        not other
-                        or other.lower() in self_names
-                        or other.lower() in seen_next
-                        or other.startswith("ARGS_SEL")
-                    ):
-                        continue
-                    seen_next.add(other.lower())
-                    next_names.append(other)
-                    if len(next_names) >= 12:
-                        break
-                if len(next_names) >= 12:
-                    break
+            if len(next_names) < 12:
+                _extend_next_from_edges(
+                    next_names, seen_next, self_names, grouped, limit=12
+                )
         coverage = _hits_coverage(cards_src, total=len(hits), needle=needle)
         if definition_sites:
             coverage["definition_sites_count"] = max(
@@ -4758,6 +5001,8 @@ class UoSqlQuery:
         matched = int(match.get("matching_block_count") or 0)
         coverage = dict(match.get("coverage") or {})
         dim_coverage = coverage.get("dim_coverage") or match.get("dim_coverage") or {}
+        legal_n = int(legal.get("total_matched") or legal.get("count") or 0)
+        coverage["legal_key_count"] = legal_n
         payload: dict[str, Any] = {
             "ok": bool(match.get("ok") or legal.get("ok") or dim_coverage),
             "shape": "cover",
@@ -4766,7 +5011,8 @@ class UoSqlQuery:
             "dim_coverage": dim_coverage,
             "matching_block_count": matched,
             "nearby": list(match.get("nearby") or [])[: int(limit)],
-            "total_matched": int(legal.get("total_matched") or legal.get("count") or 0),
+            "total_matched": matched,
+            "legal_key_count": legal_n,
             "coverage": coverage,
             "count": int(match.get("count") or matched),
             "answerable": bool((match.get("coverage") or {}).get("answerable")),
@@ -4942,20 +5188,24 @@ class UoSqlQuery:
                 "error": "around_needs_file_line",
                 "hint": "Pass --file and --line from a previous card.",
             }
+        window, _win_cut = _statement_window(self._op_root, path, start)
         seed_cap = AROUND_SEED_LIMIT
         seeds = self._around_seed_hits(path, start, end or start, limit=seed_cap)
-        compact_seeds = [_compact_around_hit(hit, snippet=True) for hit in seeds]
         enclosing = [hit for hit in seeds if _encloses_line(hit, start)]
-        hop_from = enclosing[:1] if enclosing else seeds[:1]
-        neighbors = self._around_one_hop([str(hit.get("id") or "") for hit in hop_from])
+        if enclosing:
+            seeds = enclosing[:1]
+        else:
+            seeds = seeds[:1]
+        compact_seeds = [_compact_around_hit(hit, snippet=False) for hit in seeds]
         payload = {
-            "ok": bool(seeds),
+            "ok": bool(window or seeds),
             "shape": "around",
             "file": path,
             "line": start,
             "line_end": end or start,
+            "snippet": window,
             "seeds": compact_seeds,
-            "neighbors": neighbors,
+            "neighbors": [],
             "hits": compact_seeds,
             "count": len(seeds),
             "truncated": False,

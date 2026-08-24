@@ -22,7 +22,7 @@
 
 | # | 规则 | 判定 |
 | --- | --- | --- |
-| H1 | **controls 只能用 `confirmed` + `active` 列** | `controls` 与 `construct_hint.columns` 里每一列，在 `init.yaml` 里必须 `confidence: confirmed` 且 `control.status: active`。`partial` / `unresolved` / 非 `active` 一律不许出现 |
+| H1 | **controls 只能用 `confirmed` + `active` 列** | `controls` 与 `construct_hint.columns` 里每一列，以及 partition / guard 谓词里的每个 `case.*` 字段，在 `init.yaml` 里必须 `confidence: confirmed` 且 `control.status: active`。谓词用到的 `case.*` 还必须写进该 Dimension/Guard 的 `controls`。`partial` / `unresolved` / 非 `active` 一律不许出现 |
 | H2 | **每个 Target 至少被一个 Dimension 指向** | 必须是 **Dimension** 的 `target` 指向（Guard 的 `target` **不算**）。没有就删掉它，或降级进 `untestable`。孤儿 Target 只会产出永久 UNKNOWN |
 | H2b | **`untestable` 与 `targets` 不得重叠** | 一个东西要么是 Target（可 HIT、有 Dimension 指向），要么在 `untestable` 里（**不出现在 `targets` 列表**）。不可达的状态**不要**先声明成 Target 再补一条 `untestable` —— 那还是孤儿 Target，义务照样产出，永远 UNKNOWN |
 | H3 | **门禁项控不到 → `untestable` + `needs_binding`** | scope 的门禁合取项里，凡是由 `partial`/`unresolved` 列或「非列」（平台常量、环境值、内部派生量）决定的，逐项写进 `untestable`，并在 `test_harness_gap.needs_binding` 里点名要提级的列。不要绕过，也不要假装可控 |
@@ -68,13 +68,13 @@ eq  ne  in  not_in  lt  le  gt  ge  mod_eq  is_null  is_present  and  or  not
 
 字段只能是 `case.*` / `replay.*` / `probe.*` 或可解析的裸 symbol。自由文本谓词不得进 YAML。
 
-**字段只有两段。** `replay.<字段名>`、`case.<列名>`。TilingData 在源码里是嵌套结构，但解码器展平且不带 struct 名，所以**不要**写 `replay.<struct>.<field>` —— 多一层前缀不报错，只会让该 Target 永远 `UNKNOWN`。详见 `refs/test-plan/evidence.md` 的「字段粒度」。
+**字段只有两段。** `replay.<字段名>`、`case.<列名>`。TilingData 在源码里是嵌套结构，但解码器展平且不带 struct 名，所以**不要**写 `replay.<struct>.<field>` —— `plan_validate` 会打回。详见 `refs/test-plan/evidence.md` 的「字段粒度」。
 
 **字面量类型必须对齐 `init.yaml`。** 查 `domains.<col>.profile.inferred_type`：
 - `int` / 数值型 → 写数字字面量，**不加引号**：`value: 4`、`values: [5, 6]`
 - `enum-string` / 字符串型 → 写字符串：`value: BNSD`
 
-引擎的 `eq` / `in` 是**严格比较**，`"4" == 4` 为假。类型写错不会报错，但义务会全部 MISS —— 这是最难查的一类错。
+引擎的 `eq` / `in` 会把数字和数字字符串当成同一个值（`4` 与 `"4"` 相等）。**仍然按 `init.yaml` 的 `inferred_type` 写字面量**：`int` 列不要加引号。大整数不要指望 float 归一。
 
 `evidence.field` 不能是 oracle 量（含 `precision`、以 `md5` 结尾等）——那些进 `oracle`，不是 Target 观测点。
 

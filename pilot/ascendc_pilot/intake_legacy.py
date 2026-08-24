@@ -1002,7 +1002,9 @@ def prepare_workflow_start(
     - ok True → ``architecture`` is ready for Host ``pilot_run``
     - ok False → AskQuestion / needs_human_decision payload
     """
-    wf = (workflow_id or "").strip()
+    from ascendc_pilot.workflows import resolve_workflow_id
+
+    wf = resolve_workflow_id(workflow_id)
     root = Path(project).expanduser().resolve()
     arch = (architecture or "").strip() or architecture_from_env()
     intent_text = str(intent or "").strip()

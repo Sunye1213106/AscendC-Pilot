@@ -684,3 +684,131 @@ def test_attach_host_step_projects_existing_ask_without_reentering_drive(
     )
     step = out.get("host_step") or {}
     assert step.get("kind") == "ask_human"
+
+
+def test_attach_host_step_reuses_primary_review_prepare_without_reentering_drive(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("must not reenter drive or re-prepare")
+
+    monkeypatch.setattr("ascendc_pilot.actions.drive.drive_until_interaction", boom)
+    monkeypatch.setattr("ascendc_pilot.actions.runtime.prepare_action", boom)
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "next": {
+                "execution_kind": "primary_review",
+                "action_id": "bind_review",
+                "actor_id": "ascendc-pilot",
+            },
+            "prepare": {
+                "ok": True,
+                "host_step_kind": "primary_review",
+                "harness_path": "h.yaml",
+                "bind_path": "b.yaml",
+                "message_zh": "请通读 harness.yaml 与 bind.yaml。下一发 PASS。",
+            },
+        },
+        reenter_drive=False,
+    )
+    step = out.get("host_step") or {}
+    assert step.get("kind") == "primary_review"
+    assert "PASS" in str(step.get("message_zh") or "")
+
+
+def test_attach_host_step_bind_review_pass_drains_even_without_reenter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    drained = {"n": 0}
+
+    def fake_drive(_root, prepare=None, **_kwargs):
+        drained["n"] += 1
+        return {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "host_step": {"kind": "done", "message_zh": "init.yaml 已写出"},
+        }
+
+    def fake_prep(_root, action_id: str):
+        assert action_id == "bind_review"
+        return {
+            "ok": True,
+            "auto_finalize": True,
+            "action_id": "bind_review",
+            "harness_path": "h.yaml",
+            "bind_path": "b.yaml",
+            "message_zh": "主控裁判已放行，本轮继续 bind_promote。",
+        }
+
+    monkeypatch.setattr("ascendc_pilot.actions.drive.drive_until_interaction", fake_drive)
+    monkeypatch.setattr("ascendc_pilot.actions.runtime.prepare_action", fake_prep)
+    monkeypatch.setattr(
+        "ascendc_pilot.state.load_state",
+        lambda *_args, **_kwargs: {"run_id": "R", "workflow_id": "tg-init"},
+    )
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "next": {
+                "execution_kind": "primary_review",
+                "action_id": "bind_review",
+                "actor_id": "ascendc-pilot",
+            },
+        },
+        reenter_drive=False,
+    )
+    assert drained["n"] == 1
+    assert (out.get("host_step") or {}).get("kind") == "done"
+
+
+def test_attach_host_step_existing_pass_prep_drains_without_reprepare(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    drained = {"n": 0}
+
+    def fake_drive(_root, prepare=None, **_kwargs):
+        drained["n"] += 1
+        return {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "host_step": {"kind": "done", "message_zh": "init.yaml 已写出"},
+        }
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("must not re-prepare bind_review after PASS")
+
+    monkeypatch.setattr("ascendc_pilot.actions.drive.drive_until_interaction", fake_drive)
+    monkeypatch.setattr("ascendc_pilot.actions.runtime.prepare_action", boom)
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "next": {
+                "execution_kind": "primary_review",
+                "action_id": "bind_review",
+                "actor_id": "ascendc-pilot",
+            },
+            "prepare": {
+                "ok": True,
+                "auto_finalize": True,
+                "message_zh": "主控裁判已放行，本轮继续 bind_promote。",
+            },
+        },
+        reenter_drive=False,
+    )
+    assert drained["n"] == 1
+    assert (out.get("host_step") or {}).get("kind") == "done"

@@ -29,6 +29,7 @@ TG_SOLVE_REWORK_CODES: tuple[str, ...] = (
     "REWORK_CONSTRUCT",
     "OPEN_REMAINING",
     "OPEN_NONEMPTY",
+    "CASE_REFINABLE",
 )
 
 
@@ -312,6 +313,7 @@ def check_tg_solve_routing(meta: dict[str, Any] | None = None) -> list[str]:
         "REWORK_CONSTRUCT": "construct",
         "OPEN_REMAINING": "construct",
         "OPEN_NONEMPTY": "construct",
+        "CASE_REFINABLE": "construct",
     }
     for code, want in expected.items():
         targets = {to for _frm, to in reason_map.get(code, [])}

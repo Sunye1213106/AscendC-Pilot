@@ -32,6 +32,7 @@ def test_tg_solve_routing_codes_declared() -> None:
         "REWORK_CONSTRUCT",
         "OPEN_REMAINING",
         "OPEN_NONEMPTY",
+        "CASE_REFINABLE",
     }
 
 

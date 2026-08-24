@@ -40,6 +40,10 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     reject = driver_core.split('if (workflow === "uo-query")')[1].split("const parentSessionId")[0]
     assert "acp uo-query --project" not in reject
     assert "pilot_cli" in reject
+    assert 'replace(/^\\/+/, "")' in driver_core.split("export function canonicalWorkflowId")[1].split(
+        "export function resumeActiveGoal"
+    )[0]
+    assert "canonicalWorkflowId(String(args.workflow" in driver_core
     assert "readDispatchFor" in driver_facade
     assert "currentHostSessionHint" in driver_facade
     assert "uo-query" not in driver_core.split("args: {")[1].split("project:")[0] or (

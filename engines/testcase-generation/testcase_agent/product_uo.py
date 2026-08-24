@@ -73,6 +73,31 @@ def legal_key_rows(project_root: Path | str, *, op_name: str = "", architecture:
     return [row for row in rows if isinstance(row, dict)]
 
 
+def replay_observe_fields(project_root: Path | str, *, op_name: str = "", architecture: str = "") -> set[str] | None:
+    """Known Replay/TilingData leaf names, or None when the UO view is unavailable."""
+    names = {"tiling_key", "key", "ok", "reject"}
+    try:
+        doc = view(project_root, "views/tilingdata.yaml", op_name=op_name, architecture=architecture)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(doc, dict):
+        return None
+    structs = doc.get("structs") or []
+    if not isinstance(structs, list):
+        return names
+    for struct in structs:
+        if not isinstance(struct, dict):
+            continue
+        for field in struct.get("fields") or []:
+            if isinstance(field, dict):
+                name = str(field.get("name") or "").strip()
+            else:
+                name = str(field or "").strip()
+            if name:
+                names.add(name)
+    return names
+
+
 def declared_keys(project_root: Path | str, *, op_name: str = "", architecture: str = "") -> set[int]:
     out: set[int] = set()
     for row in legal_key_rows(project_root, op_name=op_name, architecture=architecture):

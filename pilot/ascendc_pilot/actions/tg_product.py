@@ -829,6 +829,45 @@ def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _open_failure_reason(ledger: dict[str, Any]) -> str:
+    from testcase_agent.coverage.contract import CASE_REFINABLE, CONTROL_GAP, OBSERVATION_GAP, PLAN_INVALID
+    from testcase_agent.coverage.ledger import open_ids
+
+    rows = ledger.get("obligations") if isinstance(ledger.get("obligations"), dict) else {}
+    classes: list[str] = []
+    for oid in open_ids(ledger):
+        row = rows.get(oid) if isinstance(rows.get(oid), dict) else {}
+        classes.append(str(row.get("failure_class") or CASE_REFINABLE).strip() or CASE_REFINABLE)
+    for code in (PLAN_INVALID, CONTROL_GAP, OBSERVATION_GAP):
+        if code in classes:
+            return code
+    if classes:
+        return CASE_REFINABLE
+    return ""
+
+
+def _observe_fields(project_root: Path, ctx: dict[str, Any]) -> set[str] | None:
+    try:
+        from testcase_agent import product_uo
+        from ascendc_pilot.actions.engines import _resolve_tg_ctx
+
+        tg_ctx = _resolve_tg_ctx(project_root, ctx)
+        return product_uo.replay_observe_fields(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or ""),
+            architecture=str(tg_ctx.get("architecture") or ""),
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _init_mapping(init_doc: dict[str, Any]) -> dict[str, Any] | None:
+    """None when init has no mapping — skip confirmed+active. Empty {} still checks."""
+    if "mapping" not in init_doc or init_doc.get("mapping") is None:
+        return None
+    return products.mapping_as_dict(init_doc.get("mapping"))
+
+
 def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     try:
@@ -838,11 +877,13 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         return {"ok": False, "engine": "plan_validate", "error": str(exc), "ask": exc.ask}
     from ascendc_pilot.change_contract import allow_legal_keys
 
+    semantic = products.semantic_plan_hash(fence)
     errors = products.validate_plan_fence(
         fence,
         init_columns=products.column_names(init_doc),
-        init_mapping=products.mapping_as_dict(init_doc.get("mapping")),
+        init_mapping=_init_mapping(init_doc),
         allow_legal_keys=allow_legal_keys(project_root),
+        observe_fields=_observe_fields(project_root, ctx),
     )
     errors.extend(products.validate_plan_prose(text))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
@@ -856,17 +897,25 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "ok": ok,
             "errors": errors,
             "plan_hash": products.plan_hash(text),
+            "semantic_plan_hash": semantic,
             "test_harness_gap_pending": products.pending_test_harness_gap(text, fence),
         },
     )
-    return {"ok": ok, "engine": "plan_validate", "errors": errors, "receipt": receipt.as_posix()}
+    return {
+        "ok": ok,
+        "engine": "plan_validate",
+        "errors": errors,
+        "receipt": receipt.as_posix(),
+        "reason_code": "" if ok else "PLAN_INVALID",
+        "semantic_plan_hash": semantic,
+    }
 
 
 def run_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     try:
         text, fence = products.load_plan(tg)
-        products.load_init(tg)
+        init_doc = products.load_init(tg)
     except products.ProductError as exc:
         return {"ok": False, "engine": "solve_precheck", "error": str(exc), "ask": exc.ask}
     if not products.is_plan_approved(fence):
@@ -876,6 +925,7 @@ def run_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "error": "plan.md is not approved",
             "ask": "plan_required",
             "next": "/tg-plan",
+            "reason_code": "PLAN_INVALID",
         }
     if products.pending_test_harness_gap(text, fence):
         return {
@@ -883,20 +933,73 @@ def run_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "engine": "solve_precheck",
             "error": "test_harness_gap is pending; CE-apply the test-script repo then /tg-init",
             "ask": "test_harness_gap_pending",
+            "reason_code": "HARNESS_CONTROL_GAP",
         }
-    receipt = _receipt(project_root, ctx, "solve_precheck.yaml", {"ok": True, "plan_hash": products.plan_hash(text)})
+    current = products.semantic_plan_hash(fence)
+    stamped = str(fence.get("plan_hash") or "").strip()
+    if stamped and stamped != current:
+        return {
+            "ok": False,
+            "engine": "solve_precheck",
+            "error": "plan.md changed after approve; re-run /tg-plan validate+approve",
+            "ask": "plan_required",
+            "next": "/tg-plan",
+            "reason_code": "PLAN_INVALID",
+        }
+    from ascendc_pilot.change_contract import allow_legal_keys
+
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=products.column_names(init_doc),
+        init_mapping=_init_mapping(init_doc),
+        allow_legal_keys=allow_legal_keys(project_root),
+        observe_fields=_observe_fields(project_root, ctx),
+    )
+    if errors:
+        return {
+            "ok": False,
+            "engine": "solve_precheck",
+            "error": "approved plan failed executability contract",
+            "errors": errors,
+            "reason_code": "PLAN_INVALID",
+        }
+    receipt = _receipt(
+        project_root,
+        ctx,
+        "solve_precheck.yaml",
+        {"ok": True, "plan_hash": products.plan_hash(text), "semantic_plan_hash": current},
+    )
     return {"ok": True, "engine": "solve_precheck", "receipt": receipt.as_posix()}
 
 
 def run_compile_obligations(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from testcase_agent.coverage.compile import compile_obligations
+    from testcase_agent.coverage.compile import PlanCompileError, compile_obligations
+    from testcase_agent.coverage.contract import obligation_identity
     from testcase_agent.coverage.ledger import dump_worklog, parse_worklog_fence, seed_ledger
 
     tg = _tg(project_root, ctx)
     try:
         _text, fence = products.load_plan(tg)
+        init_doc = products.load_init(tg)
     except products.ProductError as exc:
         return {"ok": False, "engine": "compile_obligations", "error": str(exc), "ask": exc.ask}
+    from ascendc_pilot.change_contract import allow_legal_keys
+
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=products.column_names(init_doc),
+        init_mapping=_init_mapping(init_doc),
+        allow_legal_keys=allow_legal_keys(project_root),
+        observe_fields=_observe_fields(project_root, ctx),
+    )
+    if errors:
+        return {
+            "ok": False,
+            "engine": "compile_obligations",
+            "error": "PLAN_INVALID",
+            "errors": errors,
+            "reason_code": "PLAN_INVALID",
+        }
     legal_keys = None
     cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
     if str(cov.get("enumerate") or "").strip() == "legal_keys":
@@ -913,15 +1016,25 @@ def run_compile_obligations(project_root: Path, ctx: dict[str, Any]) -> dict[str
             )
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "engine": "compile_obligations", "error": f"legal_keys unavailable: {exc}"}
-    obligations = compile_obligations(fence, legal_keys=legal_keys)
+    try:
+        obligations = compile_obligations(fence, legal_keys=legal_keys)
+    except PlanCompileError as exc:
+        return {
+            "ok": False,
+            "engine": "compile_obligations",
+            "error": "PLAN_INVALID",
+            "errors": exc.errors,
+            "reason_code": "PLAN_INVALID",
+        }
     path = products.worklog_path(tg)
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
     old = parse_worklog_fence(existing)
     old_rows = old.get("obligations") if isinstance(old.get("obligations"), dict) else {}
     ledger = seed_ledger(obligations)
     for oid, row in (ledger.get("obligations") or {}).items():
+        row["identity"] = obligation_identity(row)
         prev = old_rows.get(oid) if isinstance(old_rows.get(oid), dict) else {}
-        if prev.get("status"):
+        if prev.get("status") and str(prev.get("identity") or "") == row["identity"]:
             row["status"] = prev.get("status")
             if prev.get("signature"):
                 row["signature"] = prev.get("signature")
@@ -1320,7 +1433,8 @@ def _try_inject_probes(project_root: Path, ctx: dict[str, Any], fields: list[str
 
 
 def run_coverage_eval(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from testcase_agent.coverage.eval import evaluate_obligation
+    from testcase_agent.coverage.eval import classify_eval_failure, evaluate_obligation
+    from testcase_agent.coverage.contract import CASE_REFINABLE, CONTROL_GAP, OBSERVATION_GAP, PLAN_INVALID
     from testcase_agent.coverage.ledger import dump_worklog, ledger_closed, parse_worklog_fence, upsert_obligation
 
     tg = _tg(project_root, ctx)
@@ -1361,7 +1475,14 @@ def run_coverage_eval(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             result = evaluate_obligation(obl, fence, observe, seen_signatures=seen)
             if result["status"] == "REDUNDANT":
                 continue
-            upsert_obligation(ledger, oid, status=result["status"], signature=result.get("signature"))
+            failure_class = classify_eval_failure(fence, obl, result, observe)
+            upsert_obligation(
+                ledger,
+                oid,
+                status=result["status"],
+                signature=result.get("signature"),
+                failure_class=failure_class,
+            )
             if result["status"] == "CLOSED":
                 seen.add(str(result.get("signature") or ""))
                 row = (observe.get("case") if isinstance(observe.get("case"), dict) else {}) or {}
@@ -1380,18 +1501,22 @@ def run_coverage_eval(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     kept.extend(witnesses)
     _dump_yaml(cache / "witnesses.yaml", {"witnesses": kept})
     closed, problems = ledger_closed(ledger)
+    reason = "GUARD_LEAK" if leak else _open_failure_reason(ledger)
+    blocking = reason in {"GUARD_LEAK", "PLAN_INVALID", "HARNESS_CONTROL_GAP", "HARNESS_OBSERVATION_GAP"}
     return {
-        "ok": not leak,
+        "ok": not blocking,
         "engine": "coverage_eval",
         "closed": closed,
         "problems": problems,
         "guard_leak": leak,
+        "reason_code": reason or (CASE_REFINABLE if not closed else ""),
         "artifact": worklog.as_posix(),
     }
 
 
 def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from testcase_agent.coverage.ledger import merge_prose, parse_worklog_fence
+    from testcase_agent.coverage.ledger import merge_prose, open_ids, parse_worklog_fence
+    from testcase_agent.coverage.contract import CASE_REFINABLE
 
     tg = _tg(project_root, ctx)
     text = _captured_text(project_root, ctx, "analyze_round")
@@ -1404,9 +1529,22 @@ def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         return {"ok": False, "engine": "analyze_promote", "error": "missing worklog ledger"}
     isolation.assert_tg_write_path(path)
     path.write_text(merge_prose(existing, ledger, extra_prose=text), encoding="utf-8")
-    from testcase_agent.coverage.ledger import open_ids
-
-    return {"ok": True, "engine": "analyze_promote", "artifact": path.as_posix(), "open": open_ids(ledger)}
+    remaining = open_ids(ledger)
+    reason = _open_failure_reason(ledger)
+    if remaining:
+        blocking = reason in {"PLAN_INVALID", "HARNESS_CONTROL_GAP", "HARNESS_OBSERVATION_GAP"}
+        code = reason if blocking else (reason or CASE_REFINABLE)
+        if code == CASE_REFINABLE:
+            code = "OPEN_REMAINING"
+        return {
+            "ok": False,
+            "engine": "analyze_promote",
+            "artifact": path.as_posix(),
+            "open": remaining,
+            "reason_code": code,
+            "error": code,
+        }
+    return {"ok": True, "engine": "analyze_promote", "artifact": path.as_posix(), "open": remaining}
 
 
 def run_solve_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1420,13 +1558,23 @@ def run_solve_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     ledger = parse_worklog_fence(text)
     closed, problems = ledger_closed(ledger)
     if not closed:
+        reason = _open_failure_reason(ledger) or "OPEN_NONEMPTY"
+        if reason == "CASE_REFINABLE":
+            reason = "OPEN_NONEMPTY"
         receipt = _receipt(
             project_root,
             ctx,
             "solve_certify.yaml",
-            {"ok": False, "problems": problems, "worklog": path.as_posix()},
+            {"ok": False, "problems": problems, "worklog": path.as_posix(), "reason_code": reason},
         )
-        return {"ok": False, "engine": "solve_certify", "problems": problems, "receipt": receipt.as_posix()}
+        return {
+            "ok": False,
+            "engine": "solve_certify",
+            "problems": problems,
+            "receipt": receipt.as_posix(),
+            "reason_code": reason,
+            "error": reason,
+        }
     init_doc = products.load_init(tg)
     kind = str(init_doc.get("table_kind") or "csv")
     cases = products.cases_path(tg, kind)

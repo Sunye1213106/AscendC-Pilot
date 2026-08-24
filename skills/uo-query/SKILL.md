@@ -17,10 +17,10 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 
 ## 步骤
 
-1. **选最短形态。** 名字 / 定义 / 写读 → 标识符。某维合法集 → `Dim=<维名>`。某组能否编过 → `Name=Value`。已知位点扩 1 跳 → `--file --line`（路径只从上一张卡复制）。多阶段 launch 先看无参数索引的 PIPE 名。
+1. **选最短形态。** 名字 / 定义 / 写读 → 标识符。某维合法集 → `Dim=<维名>`。某组能否编过 → `Name=Value`。已知位点要语句窗 → `--file --line`（路径只从上一张卡复制；返回该行附近语句，不是一跳邻域）。多阶段 launch 先看无参数索引的 PIPE 名。
 2. **调用 `uo-query`，卡片即窗口。** 有 `file:line` + snippet 视为已读；只要截断之外还需要行，才按卡片路径开最小窗口。
 3. **`count:0` 缩短再查。** 跟 `hint` / `canonical`。仍空：只对已 citation 文件做 `pilot_cli` `ro-search`。然后 PARTIAL / UNKNOWN。
-4. **列表结论引用覆盖字段。** `dim_coverage` / `edges` 的 `count` / `total_matched`。第一页 snippet 不是全集。
+4. **列表结论引用覆盖字段。** `dim_coverage` / `edges` 的 `count` / `matching_block_count`（与 `total_matched` 同义，= SEL 命中块数）。笛卡尔合法键数看 `legal_key_count`。第一页 snippet 不是全集。
 5. **问哪一层答哪一层。** Host 不产生 ≠ 模板不接纳；Host 分支 ≠ Kernel 分支。锁当前 architecture。差分题先 verdict 后证据。
 
 ## 常驻判断
@@ -48,7 +48,7 @@ Host 失败码标识符打到 `ge.graphStatus` 根：拒单入口，不是 Kerne
 | 没有标识符 | 无参数索引，跟 `next` |
 | 这个名字是什么 / 谁写谁读 | 标识符 |
 | 这维会不会编过 / 有没有 kernel | `Dim=V` |
-| 已有 `file:line`，要邻居 | `--file --line` |
+| 已有 `file:line`，要该行语句 | `--file --line` |
 | `count:0` | 按 `hint` 缩短再查；不是「不存在」 |
 | 第一页没看到某维 | `dim_coverage`，不是 snippet |
 | 卡片已有 snippet | 视为已读 |

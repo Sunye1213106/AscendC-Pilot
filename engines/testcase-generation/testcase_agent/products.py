@@ -482,21 +482,14 @@ def load_plan(tg_root: Path) -> tuple[str, dict[str, Any]]:
 
 
 def pending_test_harness_gap(text: str, fence: dict[str, Any]) -> bool:
-    if fence.get("test_harness_gap_pending") is True or fence.get("harness_intent_pending") is True:
-        return True
-    heading = re.search(
-        r"^#\s*(test_harness_gap|harness_intent)\b", text, re.MULTILINE | re.IGNORECASE
-    )
-    if not heading:
-        return False
-    if fence.get("test_harness_gap_done") is True or fence.get("harness_intent_done") is True:
-        return False
+    """Fence YAML is the only gate. Prose headings are explanation, not state."""
+    del text
     block = fence.get("test_harness_gap")
     if not isinstance(block, dict) or not block:
         block = fence.get("harness_intent")
-    if isinstance(block, dict) and block:
-        return not bool(block.get("done"))
-    return True
+    if not isinstance(block, dict) or not block:
+        return False
+    return not bool(block.get("done"))
 
 
 def pending_harness_intent(text: str, fence: dict[str, Any]) -> bool:
@@ -526,9 +519,14 @@ def _check_observe_field(field: str, *, owner: str) -> str | None:
     lowered = name.lower()
     if bare in _ORACLE_EVIDENCE_FIELDS or "precision" in lowered or lowered.endswith("md5"):
         return f"{owner}: evidence.field {name!r} is an oracle, not a Target observe field"
-    if name.startswith(_OBSERVE_PREFIXES) or "." not in name:
+    if "." not in name:
         return None
-    return f"{owner}: observe field {name!r} must be case.*|replay.*|probe.* or a bare symbol"
+    if not name.startswith(_OBSERVE_PREFIXES):
+        return f"{owner}: observe field {name!r} must be case.*|replay.*|probe.* or a bare symbol"
+    parts = name.split(".")
+    if len(parts) != 2 or not parts[1]:
+        return f"{owner}: observe field {name!r} must have exactly two segments (replay.field)"
+    return None
 
 
 def _check_controls(row: dict[str, Any], *, owner: str, allowed: set[str]) -> list[str]:
@@ -586,6 +584,7 @@ def validate_plan_fence(
     init_columns: list[str],
     init_mapping: Any = None,
     allow_legal_keys: bool = False,
+    observe_fields: set[str] | None = None,
 ) -> list[str]:
     from testcase_agent.coverage.predicate import validate_predicate
 
@@ -655,7 +654,9 @@ def validate_plan_fence(
             errors.append(f"duplicate dimension id {did}")
         dim_ids.add(did)
         tgt = str(row.get("target") or "").strip()
-        if tgt and tgt not in target_ids:
+        if not tgt:
+            errors.append(f"{did}: target required")
+        elif tgt not in target_ids:
             errors.append(f"{did}: target {tgt!r} is not a declared Target")
         controls = [str(c).strip() for c in (row.get("controls") or []) if str(c).strip()]
         if not controls:
@@ -751,12 +752,27 @@ def validate_plan_fence(
                 for did in ids:
                     if did not in dim_ids:
                         errors.append(f"coverage.L1 unknown dimension {did}")
+                if ids and (len(ids) != 2 or len(set(ids)) != 2):
+                    errors.append(
+                        f"coverage.L1 must name exactly two unique Dimensions, got {ids}"
+                    )
                 if isinstance(combo, dict) and ids and not str(combo.get("reason") or "").strip():
                     errors.append("coverage.L1 combination missing reason")
-        for item in (cov.get("L2") or []) if not isinstance(cov.get("L2"), dict) else (cov.get("L2") or {}).get("tuples") or []:
-            for did in _dim_refs(item):
+        l2_block = cov.get("L2")
+        l2_items = (
+            (l2_block.get("tuples") or l2_block.get("combinations") or [])
+            if isinstance(l2_block, dict)
+            else (l2_block or [])
+        )
+        for item in l2_items:
+            ids = _dim_refs(item)
+            for did in ids:
                 if did not in dim_ids:
                     errors.append(f"coverage.L2 unknown dimension {did}")
+            if ids and (len(ids) < 3 or len(set(ids)) != len(ids)):
+                errors.append(
+                    f"coverage.L2 must name unique Dimensions (len>=3), got {ids}"
+                )
         for gid in _dim_refs(cov.get("L3")):
             if gid not in guard_ids:
                 errors.append(f"coverage.L3 unknown guard {gid}")
@@ -775,11 +791,50 @@ def validate_plan_fence(
                 continue
             if not str(row.get("reason") or "").strip():
                 errors.append(f"untestable[{idx}] missing reason")
+    from testcase_agent.coverage.contract import validate_executability
+
+    bound_mapping = mapping_as_dict(init_mapping) if init_mapping is not None else None
+    errors.extend(
+        validate_executability(
+            fence,
+            init_columns=list(init_columns),
+            mapping=bound_mapping,
+            observe_fields=observe_fields,
+        )
+    )
     return errors
+
+
+_APPROVAL_META = frozenset(
+    {
+        "approved",
+        "approved_at",
+        "decision",
+        "plan_hash",
+        "run_id",
+        "workflow_id",
+        "phase",
+        "action_id",
+        "actor_id",
+        "role_id",
+        "action_session_id",
+        "lease_id",
+        "prepare_nonce_hash",
+    }
+)
 
 
 def plan_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def semantic_plan_hash(fence: dict[str, Any]) -> str:
+    """Hash Plan semantics, excluding approval stamps so validate/approve can bind."""
+    import yaml
+
+    payload = {k: v for k, v in (fence or {}).items() if k not in _APPROVAL_META}
+    blob = yaml.safe_dump(payload, allow_unicode=True, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def is_plan_approved(fence: dict[str, Any]) -> bool:

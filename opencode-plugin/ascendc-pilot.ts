@@ -303,7 +303,8 @@ function canonicalizeQuestionValue(raw: string): string {
   const key = String(raw || "").trim()
   if (!key) return ""
   const low = key.toLowerCase()
-  if (low === "continue" || low === "reinit" || low === "query") return low
+  if (low === "continue" || low === "reinit" || low === "query" || low === "stay") return low
+  if (key.startsWith("继续当前")) return "stay"
   if (key.startsWith("开始") || key.includes("继续")) return "continue"
   if (key.includes("删除") || key.includes("重开")) return "reinit"
   if (key.includes("查询")) return "query"

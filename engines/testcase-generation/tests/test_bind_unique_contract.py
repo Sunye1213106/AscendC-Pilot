@@ -38,11 +38,11 @@ def _v3_fence(controls: list[str], *, relation_eq: bool = True) -> dict:
                 "partitions": [
                     {
                         "id": "p0",
-                        "predicate": {"op": "eq", "field": "case.x", "value": 0},
+                        "predicate": {"op": "eq", "field": f"case.{controls[0]}", "value": 0},
                     },
                     {
                         "id": "p1",
-                        "predicate": {"op": "eq", "field": "case.x", "value": 1},
+                        "predicate": {"op": "eq", "field": f"case.{controls[0]}", "value": 1},
                     },
                 ],
             }

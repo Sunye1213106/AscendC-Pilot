@@ -31,9 +31,7 @@
 - `int` / 数值型 → 交数字，**不加引号**：`sparse_mode: 4`
 - `enum-string` / 字符串型 → 交字符串：`Input_Layout: BNSD`
 
-引擎的 `eq` / `in` 是**严格比较**，`'4' == 4` 为假。从现有 case 表挑行当基底时，
-CSV / xls 读出来的都是字符串，**必须按上面的类型转换后再交**。类型不对不会报错，
-但对应义务会静默 MISS，worklog 永远闭合不了。
+引擎的 `eq` / `in` 会把数字和数字字符串当成同一个值（`4` 与 `"4"` 相等）。行值类型仍以 `init.yaml` 的 `domains.<col>.profile.inferred_type` 为准：`int` 列交数字不加引号。
 
 ## 常驻判断
 
