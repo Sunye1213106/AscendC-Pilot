@@ -112,7 +112,7 @@ def _build(
                         "artifact": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
                         "other": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
                         "allow_write": True,
-                        "focus": "parts/harness.yaml（golden / compare / modes / generate_inputs / call / findings）",
+                        "focus": "parts/harness.yaml",
                     },
                     {
                         "id": "bind",
@@ -126,7 +126,7 @@ def _build(
                         "allow_write": True,
                         "chunk_by": "columns",
                         "chunk_size": 20,
-                        "focus": "parts/bindN.yaml（call / mapping / domains；每路 ≤20 列，引擎合并为 bind.yaml）",
+                        "focus": "parts/bindN.yaml",
                     },
                 ],
             ),

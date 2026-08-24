@@ -8,7 +8,7 @@
 
 ## 规则
 
-1. 角色、sink、条件由 Relation 派生。LLM 只确认关系，不得直接选择最终 extract-plan role。
+1. 角色、sink、条件由 Relation 派生。LLM 只确认关系，不得直接选择最终角色。
 
 2. 所有语义表面从 input root 派生。中间局部变量不是根。条件 / 分支 / 模板 / KEY 维必须经 `GROUNDED_IN`（或等价推导链）接到 input_root；否则保持 `unsolved` / `needs_binding`，不得进入可测 coverage。
 

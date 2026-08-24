@@ -542,6 +542,34 @@ def _check_controls(row: dict[str, Any], *, owner: str, allowed: set[str]) -> li
     return errors
 
 
+def _state_flip_columns(row: dict[str, Any]) -> list[str]:
+    cols = [str(c).strip() for c in (row.get("controls") or []) if str(c).strip()]
+    hint = row.get("construct_hint") if isinstance(row.get("construct_hint"), dict) else {}
+    cols.extend(str(c).strip() for c in (hint.get("columns") or []) if str(c).strip())
+    return cols
+
+
+def _require_bound_controls(
+    row: dict[str, Any],
+    *,
+    owner: str,
+    allowed: set[str],
+    mapping: dict[str, Any] | None,
+) -> list[str]:
+    """Any column that claims to flip implementation state must be a bound control."""
+    errors = _check_controls(row, owner=owner, allowed=allowed)
+    if mapping is None:
+        return errors
+    for col in _state_flip_columns(row):
+        mrow = _mapping_row_for(mapping, col)
+        if not is_bound_control(mrow):
+            errors.append(
+                f"{owner}: control {col!r} is not confirmed+active; "
+                "mark untestable + needs_binding"
+            )
+    return errors
+
+
 def _mapping_row_for(mapping: dict[str, Any], col: str) -> Any:
     if col in mapping:
         return mapping[col]
@@ -632,16 +660,12 @@ def validate_plan_fence(
         controls = [str(c).strip() for c in (row.get("controls") or []) if str(c).strip()]
         if not controls:
             errors.append(f"{did}: controls required")
-        errors.extend(_check_controls(row, owner=did, allowed=allowed))
-        if init_mapping is not None:
-            mapping = mapping_as_dict(init_mapping)
-            for col in controls:
-                mrow = _mapping_row_for(mapping, col)
-                if not is_bound_control(mrow):
-                    errors.append(
-                        f"{did}: control {col!r} is not confirmed+active; "
-                        "mark untestable + needs_binding"
-                    )
+        bound_mapping = mapping_as_dict(init_mapping) if init_mapping is not None else None
+        errors.extend(
+            _require_bound_controls(
+                row, owner=did, allowed=allowed, mapping=bound_mapping
+            )
+        )
         parts = row.get("partitions") or []
         if not isinstance(parts, list) or len(parts) < 2:
             errors.append(f"{did}: need >=2 partitions")
@@ -681,7 +705,12 @@ def validate_plan_fence(
             errors.append(f"{gid}: must bind to a declared Target")
         if not (row.get("controls") or []):
             errors.append(f"{gid}: controls required")
-        errors.extend(_check_controls(row, owner=gid, allowed=allowed))
+        bound_mapping = mapping_as_dict(init_mapping) if init_mapping is not None else None
+        errors.extend(
+            _require_bound_controls(
+                row, owner=gid, allowed=allowed, mapping=bound_mapping
+            )
+        )
         errors.extend(validate_predicate(row.get("predicate"), path=f"{gid}.predicate"))
         if not isinstance(row.get("negate_hint"), dict) or not row.get("negate_hint"):
             errors.append(f"{gid}: negate_hint required")

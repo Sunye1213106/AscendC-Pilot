@@ -154,8 +154,18 @@ def drive_until_interaction(
         try:
             from ascendc_pilot.actions.dispatch import attach_host_step
 
-            return attach_host_step(root, attached)
-        except Exception:  # noqa: BLE001
+            return attach_host_step(root, attached, reenter_drive=False)
+        except Exception as exc:  # noqa: BLE001
+            if not (
+                isinstance(attached.get("host_step"), dict)
+                and str(attached["host_step"].get("kind") or "").strip()
+            ):
+                attached["host_step"] = {
+                    "kind": "failed",
+                    "message_zh": f"host_step 装配失败：{type(exc).__name__}",
+                    "error_detail": str(exc)[:400],
+                }
+            attached.setdefault("error", "HOST_STEP_ATTACH_FAILED")
             return attached
 
     for _ in range(max_steps):
@@ -227,6 +237,51 @@ def drive_until_interaction(
                 )
             descriptor = _execution_descriptor(action)
             if descriptor["execution_kind"] != "deterministic":
+                if descriptor["execution_kind"] == "primary_interactive":
+                    result = prepare(root, action_id)
+                    executed.append(
+                        {
+                            "action_id": action_id,
+                            "actor_id": descriptor["actor_id"],
+                            "execution_kind": "primary_interactive",
+                            "ok": bool(result.get("ok")),
+                            "auto_finalize": bool(result.get("auto_finalize")),
+                            "error": str(result.get("error") or ""),
+                        }
+                    )
+                    if result.get("ok") and (
+                        result.get("auto_finalize") or result.get("auto_skip_human_gate")
+                    ):
+                        continue
+                    ask = result.get("ask_question")
+                    if not isinstance(ask, dict):
+                        eng = result.get("engine") if isinstance(result.get("engine"), dict) else {}
+                        ask = eng.get("ask_question") if isinstance(eng.get("ask_question"), dict) else None
+                    return _done(
+                        {
+                            "ok": True,
+                            "stopped": True,
+                            "stop_reason": "interaction_required",
+                            "needs_human_decision": True,
+                            "ask_question": ask,
+                            "prepare": result,
+                            "workflow_id": workflow_id,
+                            "phase": phase,
+                            "status": status,
+                            "next": descriptor,
+                            "recommended_command": "pilot_run",
+                            "executed": executed,
+                            "message_zh": str(
+                                result.get("message_zh")
+                                or (ask or {}).get("question")
+                                or (
+                                    f"确定性步骤已自动执行到交互边界；下一步 `{action_id}` "
+                                    f"由 `{descriptor['actor_id']}` 执行。"
+                                    "请先按 todo.todo_sync 同步 Todo，再派发交互 Action。"
+                                )
+                            ),
+                        }
+                    )
                 return _done(
                     {
                         "ok": True,

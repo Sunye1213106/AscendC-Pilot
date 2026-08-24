@@ -51,6 +51,45 @@ def _typed(value: Any, spec: dict[str, Any]) -> tuple[bool, Any]:
     return False, value
 
 
+def _as_number(value: Any) -> float | None:
+    """Numeric view of a scalar, or None when it is not a clean number.
+
+    ``bool`` is excluded on purpose so ``True`` never compares equal to ``1``.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _scalar_equal(actual: Any, expected: Any) -> bool:
+    """Compare one observed value against one expected literal.
+
+    Case tables carry every column as text while plan predicates spell numeric
+    columns as numbers, so equality must not depend on which side happened to be
+    quoted. This only *adds* two normalisations on top of plain equality —
+    numeric strings and surrounding whitespace. A non-numeric string never
+    matches a number, and ``bool`` never takes part in numeric normalisation.
+    """
+    if actual == expected:
+        return True
+    left, right = _as_number(actual), _as_number(expected)
+    if left is not None and right is not None:
+        return left == right
+    if isinstance(actual, str) and isinstance(expected, str):
+        return actual.strip() == expected.strip()
+    return False
+
+
 def _field(expr: dict[str, Any], values: dict[str, Any]) -> tuple[Truth | None, Any, str]:
     field = expr.get("field")
     if not isinstance(field, str) or not field:
@@ -79,7 +118,10 @@ def evaluate(expr: Any, values: dict[str, Any]) -> Evaluation:
         expected = expr.get("value") if op in {"eq", "ne", "compile_time_fixed"} else expr.get("values")
         if op in {"in", "not_in"} and not isinstance(expected, list):
             return Evaluation(Truth.UNSUPPORTED, {"op": op, "reason": "values_not_list"})
-        matched = actual in expected if op in {"in", "not_in"} else actual == expected
+        if op in {"in", "not_in"}:
+            matched = any(_scalar_equal(actual, item) for item in expected)
+        else:
+            matched = _scalar_equal(actual, expected)
         if op in {"ne", "not_in"}:
             matched = not matched
         return Evaluation(Truth.TRUE if matched else Truth.FALSE, {"op": op, "field": expr["field"], "actual": actual, "expected": expected})

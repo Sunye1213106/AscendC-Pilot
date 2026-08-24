@@ -277,6 +277,32 @@ def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: st
     return True
 
 
+def _confirm_already_recorded(
+    project_root: Path, action_id: str, state: dict[str, Any]
+) -> bool:
+    """True iff the confirm artifact already satisfies this action's post-gate."""
+    if action_id == "plan_approve":
+        try:
+            from testcase_agent.products import is_plan_approved, load_plan
+
+            _text, fence = load_plan(tg_root(project_root, arch=_arch(state)))
+            return bool(is_plan_approved(fence))
+        except Exception:  # noqa: BLE001
+            return False
+    if action_id == "human_confirm":
+        try:
+            from testcase_agent.init_status import require_init_confirmed
+
+            require_init_confirmed(
+                project_root,
+                str((state or {}).get("op_name") or Path(project_root).name),
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+    return False
+
+
 def hosted_confirm_should_ask(
     project_root: Path, state: dict[str, Any], *, action_id: str = ""
 ) -> bool:
@@ -448,6 +474,10 @@ def _materialize_plan_approve(
             "error": "TEST_HARNESS_GAP_PENDING",
             "message_zh": "test_harness_gap 未落地，禁止批准规划。先按说明书 /ce-apply 测试脚本仓（可补脚本、改列或随机数生成器）再 /tg-init。",
         }
+    from testcase_agent.products import is_plan_approved
+
+    if is_plan_approved(fence):
+        return {"ok": True, "path": path, "backups": backups, "identity": identity, "already_approved": True}
     fence["approved"] = True
     fence["decision"] = "approve"
     fence["approved_at"] = now
@@ -741,6 +771,13 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         project_root, state, action_id=action_id
     )
     if skip_gate:
+        host_owned = action_id in {"human_confirm", "plan_approve"}
+        if host_owned and not _confirm_already_recorded(project_root, action_id, state):
+            return {
+                "ok": False,
+                "error": "HUMAN_DECISION_RECEIPT_REQUIRED",
+                "message_zh": "Host 确认尚未落收据；禁止无收据写入批准。",
+            }
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         identity = _identity(session)
         identity["human_decision_request_id"] = "auto-skip-no-material"

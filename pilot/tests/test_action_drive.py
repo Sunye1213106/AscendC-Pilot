@@ -147,6 +147,112 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
     assert called is False
 
 
+def test_drive_continues_when_primary_interactive_autofinalizes(monkeypatch, tmp_path: Path):
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-plan", "phase": "approve", "status": "running"}
+    prepared: list[str] = []
+
+    def describe_next(_root: Path):
+        if "plan_approve" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {"id": None, "reason": "pipeline_complete"},
+            }
+        return {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "plan_approve",
+                "reason": "pipeline_incomplete",
+            },
+        }
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(state_mod, "describe_next", describe_next)
+    monkeypatch.setattr(
+        workflows_mod,
+        "action_by_id",
+        lambda *_args, **_kwargs: {
+            "id": "plan_approve",
+            "execution_mode": "primary_interactive",
+            "agent_id": "ascendc-pilot",
+            "role_id": "controller",
+        },
+    )
+    monkeypatch.setattr(
+        workflows_mod,
+        "get_workflow",
+        lambda *_args, **_kwargs: {
+            "transitions": [],
+            "terminal_ready_states": ["approve"],
+        },
+    )
+    monkeypatch.setattr(
+        state_mod,
+        "complete_workflow",
+        lambda _root: {"ok": True, "state": {**state, "status": "passed"}},
+    )
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        return {"ok": True, "auto_finalize": True, "auto_skip_human_gate": True}
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["plan_approve"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") in {"workflow_complete", "interaction_required"}
+
+
+def test_drive_primary_interactive_stops_with_ask(monkeypatch, tmp_path: Path):
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {"workflow_id": "tg-plan", "phase": "approve", "status": "running"}
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(
+        state_mod,
+        "describe_next",
+        lambda _root: {
+            "ok": True,
+            "recommended_next_action": {
+                "id": "plan_approve",
+                "reason": "pipeline_incomplete",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        workflows_mod,
+        "action_by_id",
+        lambda *_args, **_kwargs: {
+            "id": "plan_approve",
+            "execution_mode": "primary_interactive",
+            "agent_id": "ascendc-pilot",
+            "role_id": "controller",
+        },
+    )
+
+    def prepare(_root: Path, _action_id: str):
+        return {
+            "ok": True,
+            "needs_human_decision": True,
+            "ask_question": {
+                "header": "批准规划？",
+                "options": [{"label": "批准", "value": "approve"}],
+            },
+        }
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert result["ok"] is True
+    assert result["stop_reason"] == "interaction_required"
+    assert result.get("ask_question", {}).get("options", [{}])[0].get("value") == "approve"
+    step = result.get("host_step") or {}
+    if step:
+        assert step.get("kind") == "ask_human"
+
+
 def test_drive_surfaces_engine_error_on_failed_action(monkeypatch, tmp_path: Path):
     import ascendc_pilot.state as state_mod
     import ascendc_pilot.workflows as workflows_mod

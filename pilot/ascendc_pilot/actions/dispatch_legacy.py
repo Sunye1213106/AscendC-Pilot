@@ -6,10 +6,13 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+
+_ATTACH_DEPTH = threading.local()
 
 try:
     import yaml
@@ -1012,9 +1015,35 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
     return hint
 
 
-def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[str, Any]:
+def attach_host_step(
+    project_root: Path,
+    drive_payload: dict[str, Any],
+    *,
+    reenter_drive: bool = True,
+) -> dict[str, Any]:
     """Augment drive_until_interaction output with structured host_step + ticket."""
+    depth = int(getattr(_ATTACH_DEPTH, "n", 0) or 0)
+    if depth > 0:
+        reenter_drive = False
+    _ATTACH_DEPTH.n = depth + 1
+    try:
+        return _attach_host_step_body(
+            project_root, drive_payload, reenter_drive=reenter_drive
+        )
+    finally:
+        _ATTACH_DEPTH.n = depth
+
+
+def _attach_host_step_body(
+    project_root: Path,
+    drive_payload: dict[str, Any],
+    *,
+    reenter_drive: bool,
+) -> dict[str, Any]:
     out = dict(drive_payload or {})
+    existing = out.get("host_step")
+    if isinstance(existing, dict) and str(existing.get("kind") or "").strip():
+        return out
     stop = str(out.get("stop_reason") or "")
     status = str(out.get("status") or "")
 
@@ -1232,15 +1261,44 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
         from ascendc_pilot.actions.runtime import prepare_action
         from ascendc_pilot.state import load_state
 
+        existing_prep = out.get("prepare") if isinstance(out.get("prepare"), dict) else {}
+        existing_ask = out.get("ask_question") if isinstance(out.get("ask_question"), dict) else None
+        if not existing_ask and isinstance(existing_prep.get("ask_question"), dict):
+            existing_ask = existing_prep.get("ask_question")
+        if kind == "primary_interactive" and (existing_ask or existing_prep.get("needs_human_decision")):
+            out["host_step"] = build_host_step(
+                kind="ask_human",
+                project_root=project_root,
+                action_id=action_id,
+                actor_id=actor_id or str(existing_prep.get("actor_id") or ""),
+                prepare=existing_prep or None,
+                ask_question=existing_ask,
+                message_zh=str(
+                    out.get("message_zh")
+                    or existing_prep.get("message_zh")
+                    or "primary interactive"
+                ),
+            )
+            if existing_prep:
+                out["prepare"] = existing_prep
+            return out
+
+        def _drive_again() -> dict[str, Any] | None:
+            if not reenter_drive:
+                return None
+            from ascendc_pilot.actions.drive import drive_until_interaction
+
+            return drive_until_interaction(project_root, prepare=prepare_action)
+
         run_id = str((load_state(project_root) or {}).get("run_id") or "").strip()
         live = find_dispatch_ticket_for_action(
             project_root, run_id=run_id, action_id=action_id
         )
         live_status = str((live or {}).get("status") or "")
         if live and live_status == "consumed":
-            from ascendc_pilot.actions.drive import drive_until_interaction
-
-            return drive_until_interaction(project_root, prepare=prepare_action)
+            again = _drive_again()
+            if again is not None:
+                return again
         if live and live_status in {"processing", "blocked_repeat_failure"}:
             out["dispatch_ticket"] = str(live.get("ticket_id") or "")
             out["prepare"] = {"run_id": run_id, "action_id": action_id, "reused_ticket": True}
@@ -1290,14 +1348,14 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             return out
 
         if prep.get("auto_skip_human_gate") and prep.get("auto_finalize"):
-            from ascendc_pilot.actions.drive import drive_until_interaction
-
-            return drive_until_interaction(project_root, prepare=prepare_action)
+            again = _drive_again()
+            if again is not None:
+                return again
 
         if prep.get("continue_drive"):
-            from ascendc_pilot.actions.drive import drive_until_interaction
-
-            return drive_until_interaction(project_root, prepare=prepare_action)
+            again = _drive_again()
+            if again is not None:
+                return again
 
         if prep.get("reuse_host_step") and isinstance(prep.get("host_step"), dict):
             out["host_step"] = prep["host_step"]
@@ -1305,9 +1363,9 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             return out
 
         if kind == "primary_review" and prep.get("auto_finalize"):
-            from ascendc_pilot.actions.drive import drive_until_interaction
-
-            return drive_until_interaction(project_root, prepare=prepare_action)
+            again = _drive_again()
+            if again is not None:
+                return again
 
         if kind == "primary_review" or str(prep.get("host_step_kind") or "") == "primary_review":
             extra_review = {
@@ -1363,9 +1421,9 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                     result_text="harvest",
                     slice_id="",
                 )
-            from ascendc_pilot.actions.drive import drive_until_interaction
-
-            return drive_until_interaction(project_root, prepare=prepare_action)
+            again = _drive_again()
+            if again is not None:
+                return again
 
         tasks = _compact_dispatch_tasks(prep.get("dispatch_tasks"))
         ticket = issue_dispatch_ticket(

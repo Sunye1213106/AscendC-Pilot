@@ -329,3 +329,31 @@ def test_plan_rejects_oracle_fields_as_evidence() -> None:
         init_mapping={"B": _confirmed(uo_id="b")},
     )
     assert any("md5" in e or "oracle" in e for e in errors)
+
+
+def test_plan_rejects_unconfirmed_guard_control() -> None:
+    fence = _v3_fence(["B"])
+    fence["guards"] = [
+        {
+            "id": "G-flag",
+            "target": "T-dispatch",
+            "controls": ["flag"],
+            "predicate": {"op": "eq", "field": "case.flag", "value": True},
+            "negate_hint": {"flag": 0},
+        }
+    ]
+    fence["coverage"]["L3"] = {"guards": ["G-flag"]}
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["B", "flag"],
+        init_mapping={
+            "B": _confirmed(uo_id="b"),
+            "flag": {
+                "control": {"status": "metadata"},
+                "relation": "",
+                "confidence": "unresolved",
+                "uo": {"candidate": "FlagKind"},
+            },
+        },
+    )
+    assert any("G-flag" in e and ("untestable" in e or "needs_binding" in e) for e in errors)

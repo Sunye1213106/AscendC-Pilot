@@ -29,14 +29,14 @@ description: 证明或反驳程序命题。要证某维只能取某值、某组�
    - `Dim=<维>` → `declared` 对 `product`（须 `completeness=coverage_checked`）
    - `<维>=V` 或 `A=1,B=2` → `matching_block_count`。**>0：模板接纳，必须转 host。=0 且 `completeness=coverage_checked`：才是 template 排除。`coverage_checked` 只表示宇宙已扫完，与命中数无关。**
    - Host 状态码根（`catalog=ge.graphStatus`）上的边是拒单入口（该路径活不到后续 Host 产出）。存在失败根 ≠ 某维永不产生；命题是否被这条 guard 覆盖仍要读站点。
-   - 标识符 → packing writers + 赋值函数。第一张卡可能是错 kind（`IsRope` 会先落到 TilingData 字段）。跟 `next` / 全部 kind，不要只信第一页。
+   - 标识符 → packing writers + 赋值函数。第一张卡可能是错 kind（标识符会先落到 TilingData 字段）。跟 `next` / 全部 kind，不要只信第一页。
 
 3. **卡片只是入口。** snippet 截断处按卡片 `file:line` 打开**函数剩下的正文**。`GRAPH_FAILED`、后续赋值、析取例外（PREFIX / 改写 layout）不在第一页就不能关。`--file --line` 会拌进邻近字段，不够就按定义 span 读完该函数。查询方法见 `skills/uo-query/SKILL.md`，关法见 `references/proof-obligations.md`。
 
 4. **按层关义务。**
    - template：只引用覆盖字段。第一页 SEL 不是全集。
-   - host：谁调用、赋值函数的全部写点、packing 读的是否同一字段、有没有后续覆盖、替代路径。`DetermineMode` 写出某值，后面仍可能被 `ProcessQuantInfo` 拒掉——写出 ≠ 能活到 `GetTilingKey`。
-   - writers 列表经常只有 packing 点，不是 Host 字段的写点全集。字段赋值要另查 `fBaseParams.<field>`。
+   - host：谁调用、赋值函数的全部写点、packing 读的是否同一字段、有没有后续覆盖、替代路径。赋值函数写出某值，后面仍可能被后续拒绝点拒掉——写出 ≠ 能活到 packing 出口。
+   - writers 列表经常只有 packing 点，不是 Host 字段的写点全集。字段赋值要另查宿主字段块。
 
 5. **反例。** 其他入口、第一行分流、空 tensor SEL、宏隔离、别名写。假证见 `references/failure-patterns.md`。**cover 命中的组合是 template 反例，不是 host 反例。** 其他层的事实不当本层反例。
 
@@ -52,7 +52,7 @@ lemma 是产物名词（已形成的 P⇒Q 规则），不是另一个 Skill。�
 
 - 没钉层就证「只能是 / 没有」
 - 用 cover>0 当 Host 可达，或用 cover=0 当 Host 不可达
-- 把 `DetermineMode` 赋值当成已发出的 Key
+- 把赋值函数的写出当成已发出的 Key
 - 把 Replay reject 当源码证明
 - 跨 arch 借命中
 
@@ -64,10 +64,10 @@ lemma 是产物名词（已形成的 P⇒Q 规则），不是另一个 Skill。�
 | 组合 cover>0 | 模板接纳；引理若是「不可达」必须走 host |
 | 组合 cover=0 且 completeness=coverage_checked | 模板层已扫完的空集；host 另证 |
 | 查到失败码 catalog 根 | 只证明存在 Host 拒单入口；覆盖哪条路径要读站点 |
-| 函数卡截在 `if (dtype==FP8)` | 还没看到 `return`，不得 PROVED |
-| packing writers 只有 `GetTilingKey` | 去查 `fBaseParams.xxx` 的赋值函数 |
-| `IsRope` 第一张是 TilingData | 看同名 TILING_KEY 卡 |
-| `hasRope` 查到 kernel 分支 | 换 `IsRope` / `fBaseParams.hasRope` |
+| 函数卡截在 dtype 分支、尚未 `return` | 还没看到 `return`，不得 PROVED |
+| packing writers 只有 packing 出口 | 去查宿主字段块的赋值函数 |
+| 标识符第一张是 TilingData | 跟同名 key 卡 / 全部 kind |
+| kernel 侧标志落到 kernel 分支 | 换宿主字段 / packing 标识 |
 | Host 赋了 4 又 `GRAPH_FAILED` | host 层「活不到 packing」 |
 
 ## 完成勾选

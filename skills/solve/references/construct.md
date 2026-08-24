@@ -23,6 +23,18 @@
 5. **全量 legal keys。** plan 写了 `coverage.enumerate: legal_keys` 时只交 recipe，禁止列出 8000 行。
 6. **不可达。** `evidence.kind=source_proof` 时读 `skills/source-proof/SKILL.md`。`REFUSE` 不够当不可达。
 
+## 列值类型
+
+行值的类型必须和 `plan.md` 谓词字面量一致，两边都以 `init.yaml` 的
+`domains.<col>.profile.inferred_type` 为准：
+
+- `int` / 数值型 → 交数字，**不加引号**：`sparse_mode: 4`
+- `enum-string` / 字符串型 → 交字符串：`Input_Layout: BNSD`
+
+引擎的 `eq` / `in` 是**严格比较**，`'4' == 4` 为假。从现有 case 表挑行当基底时，
+CSV / xls 读出来的都是字符串，**必须按上面的类型转换后再交**。类型不对不会报错，
+但对应义务会静默 MISS，worklog 永远闭合不了。
+
 ## 常驻判断
 
 ```text
@@ -48,6 +60,8 @@ accuracy PASS 但 Target MISS ≠ 已覆盖
 
 - [ ] 只打 OPEN 义务，没有盲铺笛卡尔
 - [ ] 显式行填满 init 列
+- [ ] 每列值的类型对齐 `init.yaml` 的 `domains.<col>.profile.inferred_type`（`int` 列不加引号）
+- [ ] 逐条 OPEN 义务核对过：本轮交的行里，至少有一行能让它的 partition 谓词为真
 - [ ] 全量 key 未枚举行
 - [ ] 没有 Write 磁盘
 

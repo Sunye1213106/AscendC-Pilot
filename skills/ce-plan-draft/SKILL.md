@@ -5,7 +5,7 @@ description: 把改码需求写成可被 apply 逐条执行的命名计划。自
 
 # 写出计划
 
-边查边问，当场写入 `ce/plan/{slug}_plan.md`。形状见 `examples/deter-band-schedule_plan.md`。一次 apply 做一个 `- [ ]`。本步只写计划：不改码、不审 diff、不写 CE yaml。
+边查边问，当场写入本 Action 的 staging 草稿（`runs/**/actions/plan_draft/**`）。canonical `ce/plan/` 由引擎提升，本角色不得直写。形状见 `examples/`。一次 apply 做一个 `- [ ]`。本步只写计划：不改码、不审 diff、不写 CE yaml。
 
 ## 输入 / 输出 / 停
 
@@ -68,7 +68,7 @@ description: 把改码需求写成可被 apply 逐条执行的命名计划。自
 
 ## 输出形状
 
-一份 `ce/plan/{slug}_plan.md`：
+一份 staging 计划 markdown（引擎提升后才是 canonical `ce/plan/`）：
 
 ```text
 ## 实现分析

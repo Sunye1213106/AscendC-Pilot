@@ -114,7 +114,7 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     bind_axis = next(a for a in axes if a.get("id") == "bind")
     assert bind_axis.get("chunk_size") == 20
     assert bind_axis.get("chunk_by") == "columns"
-    assert "bind.yaml" in str(bind_axis.get("focus") or "")
+    assert str(bind_axis.get("focus") or "") == "parts/bindN.yaml"
     columns = (Path(__file__).resolve().parents[2] / "skills" / "bind-init" / "references" / "columns.md").read_text(
         encoding="utf-8"
     )

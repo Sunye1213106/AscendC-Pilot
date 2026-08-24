@@ -21,3 +21,15 @@
 3. **怎么判定**：对照 fuse 的 Target evidence / classifier，说 Replay 看什么。
 
 未 `confirmed` 的轴写「未证实 / untestable」，不要升级成确定性 classifier。
+
+## 阻塞标题
+
+fuse 的 YAML 里**有** `test_harness_gap` 块（且未闭合）时，三节之后再加一个一级标题小节：
+
+```text
+# test_harness_gap
+```
+
+底下用一两句说清缺什么、要补哪个仓。**这个标题就是阻塞开关**：`solve_precheck` 靠「散文里有该标题」+「YAML 块未闭合」共同判定要不要停住 solve。漏了标题，fuse 登记的缺口会静默失效，solve 会带着造不出的义务往下跑。
+
+fuse 没交 `test_harness_gap` 块时，**不要**自己加这个标题 —— 会无条件阻塞 solve。

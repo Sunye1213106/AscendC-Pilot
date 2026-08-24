@@ -652,11 +652,35 @@ def test_parse_acp_stdout_ignores_stderr_heartbeat() -> None:
     parsed = json.loads(text[text.index("{") :])
     assert parsed["ok"] is True
     assert parsed["host_step"]["kind"] == "done"
-    # Old buggy concat would fail:
-    broken = f"{stdout}\n{stderr}"
-    try:
-        json.loads(broken[broken.index("{") :])
-        concat_ok = True
-    except json.JSONDecodeError:
-        concat_ok = False
-    assert concat_ok is False
+
+
+def test_attach_host_step_projects_existing_ask_without_reentering_drive(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("must not reenter drive or re-prepare")
+
+    monkeypatch.setattr("ascendc_pilot.actions.drive.drive_until_interaction", boom)
+    monkeypatch.setattr("ascendc_pilot.actions.runtime.prepare_action", boom)
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "next": {
+                "execution_kind": "primary_interactive",
+                "action_id": "plan_approve",
+                "actor_id": "ascendc-pilot",
+            },
+            "ask_question": {
+                "header": "批准规划？",
+                "options": [{"label": "批准", "value": "approve"}],
+            },
+            "needs_human_decision": True,
+        },
+        reenter_drive=False,
+    )
+    step = out.get("host_step") or {}
+    assert step.get("kind") == "ask_human"
