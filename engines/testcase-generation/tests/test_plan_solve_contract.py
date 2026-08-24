@@ -119,6 +119,21 @@ def test_observe_nested_replay_field_rejected() -> None:
     assert any("two segments" in e for e in errors)
 
 
+def test_replay_field_list_expected_rejected() -> None:
+    fence = _plan()
+    fence["targets"][0]["evidence"]["expected"] = [1, 2, 3]
+    errors = products.validate_plan_fence(fence, init_columns=["A", "B"])
+    assert any("scalar" in e and "derived" in e for e in errors)
+
+
+def test_constraint_eq_rejects_mapping_field() -> None:
+    errors = validate_predicate(
+        {"op": "eq", "left": {"field": "probe.blockOuter"}, "right": {"field": "environment.aicNum"}},
+        path="constraints.c",
+    )
+    assert any("field" in e or "value" in e for e in errors)
+
+
 def test_predicate_eq_requires_field_and_value() -> None:
     errors = validate_predicate({"op": "eq"}, path="p")
     assert any("field" in e for e in errors)

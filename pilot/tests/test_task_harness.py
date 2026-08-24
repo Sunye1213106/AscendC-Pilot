@@ -893,7 +893,7 @@ def test_authorize_denies_uncited_operator_source_when_uo_exists(tmp_path: Path)
     deny_p = authorize(op, tool="read", path=str(src), agent="ascendc-pilot")
     assert deny_p.get("decision") == "allow"
     deny_tg = authorize(
-        op, tool="read", path=str(src), agent="tg-analyst", action="plan_fuse"
+        op, tool="read", path=str(src), agent="tg-analyst", action="plan_ingest"
     )
     assert deny_tg.get("decision") == "allow"
     allow_q = authorize(

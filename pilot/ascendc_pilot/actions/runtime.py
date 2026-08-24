@@ -303,22 +303,6 @@ def _capture_return_value(
     return {"text": str(text or ""), "doc": doc or {}}
 
 
-def _scope_answer_for_fuse(captured: dict[str, Any]) -> str:
-    """plan_scope is uo-query-like: natural language only. Prefer captured text."""
-    body = str((captured or {}).get("text") or "").strip()
-    if body:
-        return body
-    doc = (captured or {}).get("doc")
-    if isinstance(doc, dict) and doc:
-        try:
-            import yaml as _yaml
-
-            return str(_yaml.safe_dump(doc, allow_unicode=True, sort_keys=False) or "").strip()
-        except Exception:  # noqa: BLE001
-            return str(doc).strip()
-    return ""
-
-
 def _load_tg_captured(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
     sdir = _session_dir(project_root, run_id, action_id)
     captured = _load(sdir / "captured.yaml")
@@ -1151,7 +1135,7 @@ def _complete_bind_review_prepare(
     return result
 
 
-def _complete_plan_narrate_prepare(
+def _complete_plan_ingest_prepare(
     project_root: Path,
     *,
     run_id: str,
@@ -1159,16 +1143,44 @@ def _complete_plan_narrate_prepare(
     result: dict[str, Any],
     intent: str = "",
 ) -> dict[str, Any]:
-    """Primary writes the three plan.md headings; next pilot_run captures them."""
-    from ascendc_pilot.actions.tg_product import _has_plan_prose
+    """Primary native-Tasks a Plan Owner; next pilot_run captures YAML. Host does not dispatch."""
+    from ascendc_pilot.actions.tg_product import _parse_captured_mapping
+    from testcase_agent import products
 
     turn = str(intent or current_turn_intent() or "").strip()
-    prompted = sdir / "narrate_prompted.yaml"
+    prompted = sdir / "ingest_prompted.yaml"
     result["dispatch_task"] = False
     result["needs_human_decision"] = False
     result["host_step_kind"] = "primary_review"
-    if _has_plan_prose(turn):
-        captured = {"text": turn, "doc": {}}
+    mapping = _parse_captured_mapping(turn, None)
+    schema = str((mapping or {}).get("schema") or "").strip()
+    if schema == "coverage-fragment/v1":
+        fid = str(mapping.get("id") or "").strip()
+        has_body = bool(
+            mapping.get("observations")
+            or mapping.get("expected_states")
+            or mapping.get("trigger")
+            or mapping.get("blockers")
+        )
+        if not fid or not has_body:
+            result["ok"] = False
+            result["error"] = "PLAN_FRAGMENT_REQUIRED"
+            result["message_zh"] = (
+                "FOCUS fragment 不能为空。写 coverage-fragment/v1（id + observations/expected_states），"
+                "再 ingest；禁止让 Owner 自己再扫一遍 PR。"
+            )
+            return result
+        frag_dir = sdir / "fragments"
+        frag_dir.mkdir(parents=True, exist_ok=True)
+        _dump(frag_dir / f"{fid}.yaml", mapping)
+        result["ok"] = True
+        result["message_zh"] = (
+            f"已收下 fragment `{fid}`。立刻派 Plan Owner Task 汇总这些 fragment；"
+            "Owner 不得再分析整份 PR。下一发 `pilot_run(tg-plan)` intent=Owner 的 tg-plan/v3 YAML。"
+        )
+        return result
+    if schema == products.PLAN_SCHEMA and (mapping.get("targets") or []):
+        captured = {"text": turn, "doc": mapping}
         _dump(sdir / "captured.yaml", captured)
         try:
             if prompted.is_file():
@@ -1177,27 +1189,42 @@ def _complete_plan_narrate_prepare(
             pass
         fin = finalize_action(
             project_root,
-            "plan_narrate",
-            engine_result={"ok": True, "text": turn, "result_text": turn},
+            "plan_ingest",
+            engine_result={"ok": True, "text": turn, "result_text": turn, "doc": mapping},
         )
         result["auto_finalize"] = True
         result["finalize"] = fin
         result["ok"] = bool(fin.get("ok"))
-        result["message_zh"] = "plan_narrate 三节散文已捕获，继续 plan_promote。"
+        result["message_zh"] = "Plan Owner YAML 已捕获，继续确定性 narrate / plan_promote。"
         return result
     if prompted.is_file() and not turn:
         result["ok"] = False
-        result["error"] = "NEED_PLAN_NARRATE"
+        result["error"] = "PLAN_INGEST_REQUIRED"
         result["message_zh"] = (
-            "需要三节散文：## 测什么 / ## 覆盖什么 / ## 怎么判定。"
-            "下一发 `pilot_run(tg-plan)` 把这三节作为 intent，不要空跑。"
+            "需要 Plan Owner 的 `schema: tg-plan/v3` YAML。"
+            "下一发 `pilot_run(tg-plan)` 把 YAML 作为 intent，不要空跑，不要自己 Write tg/plan.md。"
         )
         return result
-    _dump(prompted, {"schema": "tg-plan-narrate-prompted/v1"})
+    _dump(prompted, {"schema": "tg-plan-ingest-prompted/v1"})
+    packet = ""
+    try:
+        from ascendc_pilot.runs import receipts_dir
+
+        packet_path = receipts_dir(project_root, run_id) / "plan_scope_packet.yaml"
+        if packet_path.is_file():
+            packet = packet_path.as_posix()
+    except Exception:  # noqa: BLE001
+        packet = ""
+    packet_line = f"改动包：`{packet}`。" if packet else "改动包在 `runs/<run>/receipts/plan_scope_packet.yaml`。"
     result["ok"] = True
     result["message_zh"] = (
-        "读 plan_scope 回答与 plan_fuse YAML，写 ## 测什么 / ## 覆盖什么 / ## 怎么判定。"
-        "不要编覆盖模型，不要 Write plan.md。下一发 `pilot_run(tg-plan)` intent=这三节全文。"
+        "plan_precheck 已完成。" + packet_line
+        + " 按 intent-reasoning 梳理独立行为簇，立刻原生 `Task(agent=tg-analyst)`："
+        "简单一个 Plan Owner（正文即全部：FOCUS + packet 路径 + 只交 YAML）；"
+        "复杂同一轮最多 5 路 FOCUS fragment，再一个 Owner。"
+        "禁止 `dispatch_subagent` / 去读 session `prompt.md`。"
+        "Owner/fragment 禁止再派 Task。"
+        "下一发 `pilot_run(tg-plan)` intent=YAML 全文。禁止 Primary 自己 Write `tg/plan.md`。"
     )
     return result
 
@@ -2042,15 +2069,6 @@ def prepare_action(
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
-    if action_id == "plan_fuse":
-        captured = _load_tg_captured(project_root, run_id, "plan_scope")
-        body = _scope_answer_for_fuse(captured)
-        prompt_r = (
-            prompt_r.rstrip()
-            + "\n\n## Scope answer (not a file; Primary already read this)\n\n"
-            + (body or "(empty — Primary must state what to test before fuse)")
-            + "\n"
-        )
     user_question = str(state.get("intent") or "").strip()
     if (
         user_question
@@ -2753,6 +2771,23 @@ def prepare_action(
                         result["ok"] = True
                         result["message_zh"] = "已自动完成本步确认。"
                         return result
+                err = str(materialized.get("error") or "")
+                if err and err not in {
+                    "HUMAN_DECISION_RECEIPT_REQUIRED",
+                    "HUMAN_DECISION_RECEIPT_KIND_MISMATCH",
+                    "HUMAN_DECISION_RECEIPT_ACTION_MISMATCH",
+                    "PRIMARY_DECISION_SESSION_MISSING",
+                    "PRIMARY_DECISION_SESSION_MISMATCH",
+                    "NOT_HOSTED_CONFIRM_ACTION",
+                }:
+                    result["ok"] = False
+                    result["error"] = err
+                    result["message_zh"] = str(
+                        materialized.get("message_zh") or err
+                    )
+                    result["dispatch_task"] = False
+                    result["needs_human_decision"] = False
+                    return result
                 # Keep the prepared session (method.md already written). Real
                 # runs have init/plan products so auto-issue succeeds; unit
                 # prepares without those products still return a Host session.
@@ -2789,8 +2824,8 @@ def prepare_action(
         return result
 
     if execution_mode == EXECUTION_PRIMARY_REVIEW:
-        if action_id == "plan_narrate":
-            return _complete_plan_narrate_prepare(
+        if action_id == "plan_ingest":
+            return _complete_plan_ingest_prepare(
                 project_root,
                 run_id=run_id,
                 sdir=sdir,
@@ -2874,10 +2909,10 @@ def prepare_action(
                 f" Host `pilot_run` 完成本步（插件注入全文）；"
                 f" 禁止再手写 scratch yaml。"
             )
-            if action_id == "plan_scope":
+            if action_id == "plan_ingest":
                 result["message_zh"] += (
-                    " plan_scope 像 uo-query：子代理只把要测的东西说清楚；"
-                    "Primary 读回答即可，禁止写文件，不要等 targets.yaml。"
+                    " plan_ingest 不发 Host ticket：Primary 原生 Task(agent=tg-analyst)，"
+                    "Task 正文即全部；禁止去读 session prompt.md。"
                 )
         result["finalize_hint"] = "pilot_run"
         result["finalize_hint_fallback"] = ""
@@ -3679,10 +3714,10 @@ def finalize_action(
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
     }
-    if overall_ok and action_id == "plan_scope":
+    if overall_ok and action_id == "plan_ingest":
         result["message_zh"] = (
-            "plan_scope 已回答（无文件）。Primary 读回答、弄清要测什么后继续 plan_fuse；"
-            "不要写 targets.yaml / plan.md。"
+            "Plan Owner YAML 已捕获。Engine 会确定性 narrate 并写入 plan.md；"
+            "Primary 不要自己 Write tg/plan.md。"
         )
     if not overall_ok and not engine_ok and isinstance(engine_result, dict):
         from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint

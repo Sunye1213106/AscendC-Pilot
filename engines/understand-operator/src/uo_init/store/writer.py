@@ -525,6 +525,24 @@ def write_codemap(
         legal_blob = finalized.get("tiling/legal_key_index.jsonl")
         if isinstance(legal_blob, dict):
             _write_legal_key_tables(conn, compact_legal_key_blob(legal_blob))
+        try:
+            from uo_init.store.accel import (
+                build_name_leaf,
+                build_template_blocks,
+                patch_sel_lines,
+            )
+
+            build_name_leaf(conn)
+            op_root = None
+            try:
+                if dest.parents[2].name == ".ascendc-pilot":
+                    op_root = dest.parents[3]
+            except IndexError:
+                op_root = None
+            patch_sel_lines(conn, op_root)
+            build_template_blocks(conn)
+        except Exception:
+            pass
         conn.commit()
         vacuum = str(os.environ.get("UO_VACUUM_UO") or "").strip().lower() in {
             "1",

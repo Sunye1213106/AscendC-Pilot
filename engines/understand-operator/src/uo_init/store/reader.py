@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -16,12 +17,17 @@ _SHARED_CONN_MAX = 1
 
 
 def _configure_readonly(conn: sqlite3.Connection) -> sqlite3.Connection:
-    """Bound SQLite RAM: no mmap of the whole .uo, ~2MB page cache."""
+    """Read-only SQLite. Daemon holds one connection, so mmap is safe."""
     conn.row_factory = sqlite3.Row
+    daemon = str(os.environ.get("UO_QUERY_DAEMON") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     try:
         conn.execute("PRAGMA query_only = 1")
-        conn.execute("PRAGMA cache_size = -2000")
-        conn.execute("PRAGMA mmap_size = 0")
+        conn.execute("PRAGMA cache_size = -32000" if daemon else "PRAGMA cache_size = -8000")
+        conn.execute("PRAGMA mmap_size = 67108864" if daemon else "PRAGMA mmap_size = 8388608")
         conn.execute("PRAGMA temp_store = MEMORY")
     except sqlite3.Error:
         pass

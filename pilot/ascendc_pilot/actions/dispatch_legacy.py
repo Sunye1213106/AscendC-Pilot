@@ -1015,6 +1015,16 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
     return hint
 
 
+def _hosted_interaction_envelope(out: dict[str, Any]) -> dict[str, Any]:
+    """Prefer the envelope prepare already issued (plan_approve / confirm)."""
+    req = out.get("human_interaction_request")
+    if isinstance(req, dict) and str(req.get("request_id") or "").strip():
+        return req
+    prep = out.get("prepare") if isinstance(out.get("prepare"), dict) else {}
+    req = prep.get("human_interaction_request")
+    return req if isinstance(req, dict) else {}
+
+
 def attach_host_step(
     project_root: Path,
     drive_payload: dict[str, Any],
@@ -1212,15 +1222,32 @@ def _attach_host_step_body(
         )
         return out
 
-    if out.get("ask_question") or (
-        stop == "interaction_required"
-        and status in {
-            "human_required",
-            "waiting_for_confirmation",
-        }
+    nxt_preview = out.get("next") if isinstance(out.get("next"), dict) else {}
+    hosted_env = _hosted_interaction_envelope(out)
+    hosted_exec = str(nxt_preview.get("execution_kind") or "") in {
+        "primary_interactive",
+        "primary_review",
+    }
+    hosted_kind = str(hosted_env.get("kind") or "") in {
+        "primary_approve",
+        "primary_confirm",
+        "resume",
+    }
+    # Intake/harness AskQuestion only. Host-owned plan_approve already attached
+    # primary_approve in prepare; rewriting it as intake/test_script_root makes
+    # require_decision_receipt return HUMAN_DECISION_RECEIPT_KIND_MISMATCH.
+    if (not hosted_exec and not hosted_kind) and (
+        out.get("ask_question")
+        or (
+            stop == "interaction_required"
+            and status in {
+                "human_required",
+                "waiting_for_confirmation",
+            }
+        )
     ):
         ask = out.get("ask_question") if isinstance(out.get("ask_question"), dict) else None
-        nxt = out.get("next") if isinstance(out.get("next"), dict) else {}
+        nxt = nxt_preview
         if ask:
             from ascendc_pilot.human_interaction import attach_interaction_request
 
@@ -1266,6 +1293,16 @@ def _attach_host_step_body(
         if not existing_ask and isinstance(existing_prep.get("ask_question"), dict):
             existing_ask = existing_prep.get("ask_question")
         if kind == "primary_interactive" and (existing_ask or existing_prep.get("needs_human_decision")):
+            env = _hosted_interaction_envelope(out)
+            if env:
+                out["human_interaction_request"] = env
+            if env.get("request_id") and isinstance(existing_ask, dict):
+                existing_ask = dict(existing_ask)
+                existing_ask["request_id"] = str(env["request_id"])
+                out["ask_question"] = existing_ask
+            extra_hosted: dict[str, Any] = {}
+            if env.get("request_id"):
+                extra_hosted["request_id"] = str(env["request_id"])
             out["host_step"] = build_host_step(
                 kind="ask_human",
                 project_root=project_root,
@@ -1278,6 +1315,7 @@ def _attach_host_step_body(
                     or existing_prep.get("message_zh")
                     or "primary interactive"
                 ),
+                extra=extra_hosted or None,
             )
             if existing_prep:
                 out["prepare"] = existing_prep
@@ -1321,8 +1359,10 @@ def _attach_host_step_body(
                 "verdict_path": str(prep.get("verdict_path") or ""),
             }
             review_msg = str(prep.get("message_zh") or "")
-            if action_id == "plan_narrate":
-                review_msg = review_msg or "主控写三节散文；下一发 intent 交 ## 测什么 / ## 覆盖什么 / ## 怎么判定"
+            if action_id == "plan_ingest":
+                review_msg = review_msg or (
+                    "主控原生 Task 派 Plan Owner；下一发 intent 交 tg-plan/v3 YAML，不要自己写 plan.md"
+                )
             else:
                 review_msg = review_msg or "主控通读两路草稿；下一发 PASS 或 REWORK"
             out["host_step"] = build_host_step(

@@ -398,13 +398,13 @@ def test_drive_continues_when_primary_review_rework(monkeypatch, tmp_path: Path)
     assert (result.get("next") or {}).get("execution_kind") == "subagent"
 
 
-def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: Path):
-    """plan_narrate capture must drain plan_promote in the same turn."""
+def test_drive_continues_when_plan_ingest_autofinalizes(monkeypatch, tmp_path: Path):
+    """plan_ingest capture must drain plan_promote in the same turn."""
     import ascendc_pilot.state as state_mod
     import ascendc_pilot.workflows as workflows_mod
     from ascendc_pilot.actions.drive import drive_until_interaction
 
-    state = {"workflow_id": "tg-plan", "phase": "fuse", "status": "running"}
+    state = {"workflow_id": "tg-plan", "phase": "validate", "status": "running"}
     prepared: list[str] = []
 
     def describe_next(_root: Path):
@@ -413,7 +413,7 @@ def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: 
                 "ok": True,
                 "recommended_next_action": {"id": None, "reason": "pipeline_complete"},
             }
-        if "plan_narrate" in prepared:
+        if "plan_ingest" in prepared:
             return {
                 "ok": True,
                 "recommended_next_action": {
@@ -424,15 +424,15 @@ def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: 
         return {
             "ok": True,
             "recommended_next_action": {
-                "id": "plan_narrate",
+                "id": "plan_ingest",
                 "reason": "pipeline_incomplete",
             },
         }
 
     def action_by_id(_workflow_id: str, action_id: str, **_kwargs):
-        if action_id == "plan_narrate":
+        if action_id == "plan_ingest":
             return {
-                "id": "plan_narrate",
+                "id": "plan_ingest",
                 "execution_mode": "primary_review",
                 "agent_id": "ascendc-pilot",
                 "role_id": "controller",
@@ -452,7 +452,7 @@ def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: 
         "get_workflow",
         lambda *_args, **_kwargs: {
             "transitions": [],
-            "terminal_ready_states": ["fuse"],
+            "terminal_ready_states": ["validate"],
         },
     )
     monkeypatch.setattr(
@@ -463,16 +463,16 @@ def test_drive_continues_when_plan_narrate_autofinalizes(monkeypatch, tmp_path: 
 
     def prepare(_root: Path, action_id: str):
         prepared.append(action_id)
-        if action_id == "plan_narrate":
+        if action_id == "plan_ingest":
             return {
                 "ok": True,
                 "auto_finalize": True,
-                "message_zh": "plan_narrate 三节散文已捕获，继续 plan_promote。",
+                "message_zh": "Plan Owner YAML 已捕获，继续确定性 narrate / plan_promote。",
             }
         return {"ok": True, "auto_finalize": True}
 
     result = drive_until_interaction(tmp_path, prepare=prepare)
-    assert prepared == ["plan_narrate", "plan_promote"]
+    assert prepared == ["plan_ingest", "plan_promote"]
     assert result.get("ok") is True
     assert result.get("stop_reason") == "workflow_complete"
     assert (result.get("host_step") or {}).get("kind") != "primary_review"

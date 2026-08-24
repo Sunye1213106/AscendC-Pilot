@@ -404,6 +404,8 @@ def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header_ref: str) -> 
                 "provenance": "source_tpl_args_sel",
             },
             file=header_ref,
+            line=int(block.line_start or 0),
+            line_end=int(block.line_start or 0),
             status="confirmed",
         )
         for dim_name in list(block.fixed_fields) + list(block.field_domains):

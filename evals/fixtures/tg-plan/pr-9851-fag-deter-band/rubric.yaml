@@ -1,0 +1,74 @@
+schema: tg-plan-rubric/v1
+case: pr-9851-fag-deter-band
+product: tg/plan.md
+operator: FlashAttentionScoreGrad
+architecture: arch35
+
+notes: |
+  Semantic grading. IDs, token/S1/S2/B/D_V values, partition thresholds, and
+  which exact L1 pairs are free. Only the assertions below are scored.
+  Operator-specific facts live here; grade_plan.py is generic.
+
+# Fields this PR actually writes / overwrites.
+new_or_rewritten_fields:
+  - deterBandScheduleMode
+  - isSplitByBlockIdx
+  - deterMaxRound
+
+# Host locals that have `<name> =` and MUST NOT be declared opaque.
+probeable_names:
+  - canSplitByBlockIdx
+  - hybridBandCond
+  - rightDownBandCond
+  - useLowerCausal
+  - denseK
+  - bandBlocks
+  - tailRound
+  - colsPerBatch
+
+# Columns that are confirmed+active in init.yaml and may appear in controls.
+# Grader also reads init.yaml; this list is the allow-set used when init is absent.
+confirmed_columns:
+  - Input_Layout
+  - B
+  - N1
+  - N2
+  - S1
+  - S2
+  - D
+  - D_V
+  - Drop_Out_Possibility
+  - Pre_Tockens
+  - Next_Tockens
+  - sparse_mode
+  - PSE_type
+  - seqlens_list_q
+  - seqlens_list_kv
+  - eod
+  - same_as_input
+  - seed
+  - offset
+  - is_deter
+  - rope
+  - inner_drop
+  - prefix
+
+# unresolved columns that must NOT enter controls; must be control_gap if they
+# would have been a dimension.
+unresolved_must_gap:
+  - Dtype
+  - Atten_mask_shape
+
+# sparse_mode=3 is a legal witness only if the 182-187 early-return is negated
+# (odd B, or S1 below aicNum*128). aicNum=8 → 1024.
+rdc_early_return:
+  sparse_mode: 3
+  s1_gate: 1024
+
+scoring:
+  required_ids: [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12]
+  min_dimensions: 8
+  min_partitions: 20
+  min_guards: 4
+  require_l1: true
+  budget_seconds: 240

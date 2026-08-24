@@ -12,6 +12,26 @@ CASE_REFINABLE = "CASE_REFINABLE"
 CONTROL_GAP = "HARNESS_CONTROL_GAP"
 OBSERVATION_GAP = "HARNESS_OBSERVATION_GAP"
 PLAN_INVALID = "PLAN_INVALID"
+GUARD_TARGET_INCONSISTENT = "GUARD_TARGET_INCONSISTENT"
+PLAN_PROSE_CONTRACT_DRIFT = "PLAN_PROSE_CONTRACT_DRIFT"
+PRIMARY_BEHAVIOR_UNCOVERED = "PRIMARY_BEHAVIOR_UNCOVERED"
+
+_UNTESTABLE_KINDS = frozenset({"opaque", "control_gap", "harness_gap"})
+_DERIVED_OR_ENV_KINDS = frozenset({"derived", "constraint", "environment", "env", "fact"})
+_DERIVED_REASON_MARKERS = (
+    "非列",
+    "non-column",
+    "not a column",
+    "派生",
+    "platform constant",
+    "environment",
+    "aicnum",
+    "corenum",
+)
+_DEFAULT_EXPECTED = frozenset(
+    {0, "0", 0.0, False, "false", "False", "DISABLED", "disabled", "OFF", "off", "NONE", "none"}
+)
+_ACTIVE_VALUES = frozenset({1, "1", True, "true", "True", "ON", "on", "ENABLED", "enabled"})
 
 _OBSERVE_PREFIXES = ("case.", "replay.", "probe.")
 _REPLAY_ENVELOPE = frozenset({"tiling_key", "key", "ok", "reject"})
@@ -283,6 +303,30 @@ def validate_executability(
             for item in predicate_fields(pred):
                 errors.extend(_observe_vocab_error(item, owner=tid, observe_fields=observe_fields))
 
+    for idx, row in enumerate(fence.get("constraints") or []):
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("id") or "").strip() or f"constraints[{idx}]"
+        pred = row.get("predicate") if row.get("predicate") is not None else row.get("expr")
+        for col in _case_fields(pred):
+            if col.lower() not in allowed:
+                errors.append(
+                    f"{CONTROL_GAP}: {cid}: case field {col!r} is not an init.yaml column"
+                )
+            elif mapping is not None:
+                mrow = _mapping_row_for(mapping, col)
+                if not is_bound_control(mrow):
+                    errors.append(
+                        f"{CONTROL_GAP}: {cid}: case field {col!r} is not confirmed+active; "
+                        "mark untestable + needs_binding"
+                    )
+        for field in predicate_fields(pred):
+            err = _check_observe_field(field, owner=cid)
+            if err:
+                errors.append(err)
+            else:
+                errors.extend(_observe_vocab_error(field, owner=cid, observe_fields=observe_fields))
+
     cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
     l1 = cov.get("L1")
     combos = (l1.get("combinations") if isinstance(l1, dict) else l1) or []
@@ -308,6 +352,257 @@ def validate_executability(
                     f"{PLAN_INVALID}: coverage.L2 must name unique Dimensions (len>=3), got {ids}"
                 )
             errors.extend(_combo_target_and_h7(ids, dims, dim_case_fields, level="L2"))
+    return errors
+
+
+def validate_plan_semantics(
+    fence: dict[str, Any],
+    *,
+    primary_observations: set[str] | None = None,
+) -> list[str]:
+    """Semantic Plan contract. Static; does not run Replay."""
+    from testcase_agent.coverage.predicate import validate_predicate
+
+    errors: list[str] = []
+    errors.extend(_validate_constraints(fence, validate_predicate))
+    errors.extend(_validate_environment(fence))
+    errors.extend(_validate_untestable_kinds(fence))
+    errors.extend(_validate_guard_target_consistency(fence))
+    errors.extend(_validate_classifier_requires(fence))
+    errors.extend(_validate_primary_behavior(fence, primary_observations=primary_observations))
+    return errors
+
+
+def _validate_constraints(fence: dict[str, Any], validate_predicate: Any) -> list[str]:
+    rows = fence.get("constraints")
+    if rows is None:
+        return []
+    if not isinstance(rows, list):
+        return [f"{PLAN_INVALID}: constraints must be a list"]
+    errors: list[str] = []
+    seen: set[str] = set()
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            errors.append(f"{PLAN_INVALID}: constraints[{idx}] is not a mapping")
+            continue
+        cid = str(row.get("id") or "").strip()
+        if not cid:
+            errors.append(f"{PLAN_INVALID}: constraints[{idx}] missing id")
+        elif cid in seen:
+            errors.append(f"{PLAN_INVALID}: duplicate constraint id {cid}")
+        if cid:
+            seen.add(cid)
+        pred = row.get("predicate") if row.get("predicate") is not None else row.get("expr")
+        owner = cid or f"constraints[{idx}]"
+        if pred is None:
+            errors.append(f"{PLAN_INVALID}: {owner} missing predicate")
+        else:
+            errors.extend(validate_predicate(pred, path=f"constraints.{owner}"))
+    return errors
+
+
+def _validate_environment(fence: dict[str, Any]) -> list[str]:
+    env = fence.get("environment")
+    if env is None:
+        return []
+    if isinstance(env, dict):
+        return []
+    if not isinstance(env, list):
+        return [f"{PLAN_INVALID}: environment must be a list or mapping"]
+    errors: list[str] = []
+    for idx, row in enumerate(env):
+        if isinstance(row, dict):
+            label = str(row.get("id") or row.get("name") or row.get("fact") or "").strip()
+            if not label:
+                errors.append(f"{PLAN_INVALID}: environment[{idx}] missing id/name/fact")
+        elif not str(row or "").strip():
+            errors.append(f"{PLAN_INVALID}: environment[{idx}] empty")
+    return errors
+
+
+def _validate_untestable_kinds(fence: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for idx, row in enumerate(fence.get("untestable") or []):
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "").strip().lower()
+        reason = str(row.get("reason") or "")
+        owner = str(row.get("id") or "").strip() or f"untestable[{idx}]"
+        if kind in _DERIVED_OR_ENV_KINDS:
+            errors.append(
+                f"{PLAN_INVALID}: {owner} kind {kind!r} is derived/environment; "
+                "write constraints: or environment:, not untestable"
+            )
+            continue
+        if kind and kind not in _UNTESTABLE_KINDS:
+            errors.append(
+                f"{PLAN_INVALID}: {owner} kind {kind!r} must be opaque|control_gap|harness_gap"
+            )
+            continue
+        if not kind:
+            blob = f"{owner} {reason}".lower()
+            if any(marker.lower() in blob or marker in reason for marker in _DERIVED_REASON_MARKERS):
+                errors.append(
+                    f"{PLAN_INVALID}: {owner} looks derived/environment; "
+                    "write constraints: or environment:, not untestable"
+                )
+    return errors
+
+
+def _is_default_expected(expected: Any) -> bool:
+    if expected is None:
+        return False
+    if isinstance(expected, (list, tuple, set, dict)):
+        return False
+    if isinstance(expected, float) and expected == 0.0:
+        return True
+    return expected in _DEFAULT_EXPECTED
+
+
+def _target_asserts_default(target: dict[str, Any]) -> bool:
+    evidence = target.get("evidence") if isinstance(target.get("evidence"), dict) else {}
+    kind = str(evidence.get("kind") or "").strip()
+    if kind == "replay_field":
+        return _is_default_expected(evidence.get("expected"))
+    if kind == "derived":
+        pred = evidence.get("predicate") or evidence.get("expr")
+        if isinstance(pred, dict) and str(pred.get("op") or "").lower() == "eq":
+            return _is_default_expected(pred.get("value"))
+        return False
+    return False
+
+
+def _predicate_has_activation_eq(pred: Any) -> bool:
+    if not isinstance(pred, dict):
+        return False
+    op = str(pred.get("op") or "").lower()
+    if op == "eq":
+        field = str(pred.get("field") or "")
+        return field.startswith("case.") and pred.get("value") in _ACTIVE_VALUES
+    if op in {"and", "or"}:
+        return any(_predicate_has_activation_eq(item) for item in (pred.get("args") or []))
+    if op == "not":
+        return _predicate_has_activation_eq(pred.get("arg"))
+    return False
+
+
+def _validate_guard_target_consistency(fence: dict[str, Any]) -> list[str]:
+    """L3 Guard on an activation gate must not bind a Target whose expected is the default."""
+    targets = {
+        str(row.get("id") or "").strip(): row
+        for row in (fence.get("targets") or [])
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    guards = {
+        str(row.get("id") or "").strip(): row
+        for row in (fence.get("guards") or [])
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+    cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
+    l3_ids = [gid for gid in _dim_refs(cov.get("L3")) if gid]
+    errors: list[str] = []
+    for gid in l3_ids:
+        guard = guards.get(gid) or {}
+        tid = str(guard.get("target") or "").strip()
+        target = targets.get(tid) or {}
+        if not target:
+            continue
+        if _target_asserts_default(target) and _predicate_has_activation_eq(guard.get("predicate")):
+            errors.append(
+                f"{GUARD_TARGET_INCONSISTENT}: {gid} activates the Target path "
+                f"but {tid} expects the default/DISABLED value; invert the Target evidence"
+            )
+    return errors
+
+
+def _validate_classifier_requires(fence: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for did, dim in _dim_map(fence).items():
+        classifier = dim.get("classifier") if isinstance(dim.get("classifier"), dict) else {}
+        part_fields: set[str] = set()
+        for part in dim.get("partitions") or []:
+            if isinstance(part, dict):
+                part_fields.update(predicate_fields(part.get("predicate")))
+        for raw in classifier.get("requires") or []:
+            req = str(raw or "").strip()
+            if req.startswith("replay.") and req not in part_fields:
+                errors.append(
+                    f"{PLAN_INVALID}: {did}.classifier.requires {req!r} is Target evidence, "
+                    "not a partition field"
+                )
+    return errors
+
+
+def _target_covers_observation(target: dict[str, Any], obs: str) -> bool:
+    evidence = target.get("evidence") if isinstance(target.get("evidence"), dict) else {}
+    blob = json.dumps(
+        {
+            "id": target.get("id"),
+            "field": evidence.get("field"),
+            "expected": evidence.get("expected"),
+            "predicate": evidence.get("predicate") or evidence.get("expr"),
+        },
+        default=str,
+    )
+    if obs not in blob and obs not in str(evidence.get("field") or ""):
+        return False
+    if _target_asserts_default(target):
+        return False
+    return True
+
+
+def _blocking_test_harness_gap(fence: dict[str, Any]) -> bool:
+    block = fence.get("test_harness_gap")
+    if not isinstance(block, dict) or not block:
+        block = fence.get("harness_intent")
+    if not isinstance(block, dict) or not block:
+        return False
+    return not bool(block.get("done"))
+
+
+def _validate_primary_behavior(
+    fence: dict[str, Any],
+    *,
+    primary_observations: set[str] | None,
+) -> list[str]:
+    observations = {str(x).strip() for x in (primary_observations or set()) if str(x).strip()}
+    blocking = _blocking_test_harness_gap(fence)
+    untestable_blob = json.dumps(fence.get("untestable") or [], default=str)
+    targets = [row for row in (fence.get("targets") or []) if isinstance(row, dict)]
+
+    # Heuristic: a default-only Target plus untestable mentioning the same replay field
+    # is uncovered primary behavior even without an explicit observation list.
+    if not observations:
+        for target in targets:
+            if not _target_asserts_default(target):
+                continue
+            evidence = target.get("evidence") if isinstance(target.get("evidence"), dict) else {}
+            symbol = replay_symbol(str(evidence.get("field") or ""))
+            if not symbol:
+                continue
+            if symbol in untestable_blob and not blocking:
+                observations.add(symbol)
+
+    if not observations:
+        return []
+
+    errors: list[str] = []
+    for obs in sorted(observations):
+        if any(_target_covers_observation(target, obs) for target in targets):
+            continue
+        in_untestable = obs in untestable_blob
+        if in_untestable and blocking:
+            continue
+        if in_untestable:
+            errors.append(
+                f"{PRIMARY_BEHAVIOR_UNCOVERED}: {obs} is untestable without a blocking "
+                "test_harness_gap"
+            )
+            continue
+        errors.append(
+            f"{PRIMARY_BEHAVIOR_UNCOVERED}: {obs} has no executable Target "
+            "(non-default evidence) or blocking test_harness_gap"
+        )
     return errors
 
 

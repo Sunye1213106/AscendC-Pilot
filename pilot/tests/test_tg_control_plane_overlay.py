@@ -15,10 +15,9 @@ def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-init", "bind") == ["bind_init", "bind_review", "bind_promote"]
     assert phase_pipeline("tg-init", "validate") == ["validate_init"]
     assert phase_pipeline("tg-init", "confirm") == []
-    assert phase_pipeline("tg-plan", "gate") == ["plan_precheck"]
-    assert phase_pipeline("tg-plan", "scope") == ["plan_scope"]
-    assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_narrate", "plan_promote"]
-    assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
+    assert phase_pipeline("tg-plan", "prepare") == ["plan_precheck"]
+    assert phase_pipeline("tg-plan", "model") == ["plan_ingest"]
+    assert phase_pipeline("tg-plan", "validate") == ["plan_promote", "plan_validate"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
     assert phase_pipeline("tg-solve", "gate") == ["solve_precheck", "compile_obligations"]
     assert phase_pipeline("tg-solve", "construct") == ["construct_cases", "construct_promote"]
@@ -69,43 +68,30 @@ def test_tg_primary_actions_write_canonical_products() -> None:
 
 def test_staged_analyst_does_not_publish_canonical() -> None:
     bind = action_by_id("tg-init", "bind_init") or {}
-    fuse = action_by_id("tg-plan", "plan_fuse") or {}
+    ingest = action_by_id("tg-plan", "plan_ingest") or {}
     construct = action_by_id("tg-solve", "construct_cases") or {}
-    for row in (bind, fuse, construct):
-        assert row.get("agent_id") == "tg-analyst"
-        writes = row.get("allowed_write_paths") or []
-        assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
-    assert fuse.get("output_mode") == "return_value"
+    assert bind.get("agent_id") == "tg-analyst"
+    writes = bind.get("allowed_write_paths") or []
+    assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
     assert bind.get("output_mode") == "staged"
-    scope = action_by_id("tg-plan", "plan_scope") or {}
-    assert scope.get("agent_id") == "tg-analyst"
-    assert scope.get("skill_id") == "test-plan"
-    assert scope.get("method_ref") == "target-planning.md"
-    fuse = action_by_id("tg-plan", "plan_fuse") or {}
-    assert fuse.get("skill_id") == "test-plan"
-    assert fuse.get("method_ref") == "coverage-planning.md"
-    narrate = action_by_id("tg-plan", "plan_narrate") or {}
-    assert narrate.get("agent_id") == "ascendc-pilot"
-    assert narrate.get("execution_mode") == "primary_review"
-    assert narrate.get("output_mode") == "return_value"
-    assert narrate.get("skill_id") == "test-plan"
-    assert narrate.get("method_ref") == "plan-narrate.md"
-    assert list(narrate.get("allowed_write_paths") or []) == []
+    assert ingest.get("agent_id") == "ascendc-pilot"
+    assert ingest.get("execution_mode") == "primary_review"
+    assert ingest.get("output_mode") == "return_value"
+    assert ingest.get("skill_id") == "test-plan"
+    assert ingest.get("method_ref") == "coverage-planning.md"
+    assert ingest.get("task_prompt_id") == "tg/plan-owner"
+    assert list(ingest.get("allowed_write_paths") or []) == []
+    assert action_by_id("tg-plan", "plan_scope") is None
+    assert action_by_id("tg-plan", "plan_fuse") is None
+    assert action_by_id("tg-plan", "plan_narrate") is None
     construct = action_by_id("tg-solve", "construct_cases") or {}
     assert construct.get("skill_id") == "solve"
     assert construct.get("method_ref") == "construct.md"
     analyze = action_by_id("tg-solve", "analyze_round") or {}
     assert analyze.get("skill_id") == "solve"
     assert analyze.get("method_ref") == "analyze.md"
-    assert scope.get("output_mode") == "return_value"
-    assert scope.get("output_contract_id") == "tg-plan-scope-v1"
-    assert list(scope.get("produces") or []) == []
-    assert "不写文件" in str(scope.get("label_zh") or "")
-    assert list(scope.get("allowed_write_paths") or []) == []
-    assert list(fuse.get("allowed_write_paths") or []) == []
     assert list(construct.get("allowed_write_paths") or []) == []
     assert list(analyze.get("allowed_write_paths") or []) == []
-    assert all("tg/plan.md" not in p for p in (scope.get("allowed_write_paths") or []))
     axes = bind.get("fanout_axes") or []
     assert {a.get("id") for a in axes} == {"harness", "bind"}
     assert {a.get("task_prompt_id") for a in axes} == {"tg/bind-harness", "tg/bind-columns"}

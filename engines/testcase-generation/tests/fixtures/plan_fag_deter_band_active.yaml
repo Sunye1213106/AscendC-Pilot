@@ -1,0 +1,35 @@
+schema: tg-plan/v3
+requirement:
+  id: R-fag-deter-band
+  text: >
+    回归 deterBandScheduleMode（本次新增字段）在确定性调度下的 CAUSAL/DENSE/BAND 取值。
+targets:
+  - id: T-deter-active
+    evidence:
+      kind: derived
+      predicate: {op: in, field: replay.deterBandScheduleMode, values: [1, 2, 3]}
+dimensions:
+  - id: D-deter
+    target: T-deter-active
+    controls: [is_deter]
+    partitions:
+      - {id: on, predicate: {op: eq, field: case.is_deter, value: 1}}
+      - {id: deter_off, predicate: {op: eq, field: case.is_deter, value: 0}}
+guards:
+  - id: G-deter-on
+    target: T-deter-active
+    controls: [is_deter]
+    predicate: {op: eq, field: case.is_deter, value: 1}
+    negate_hint: {is_deter: 0}
+coverage:
+  L0: {dimensions: [D-deter]}
+  L1: []
+  L2: []
+  L3: {guards: [G-deter-on]}
+oracle: []
+constraints:
+  - id: C-g-square
+    predicate: {op: eq, field: case.N1, value: 0}
+environment:
+  aicNum: 24
+untestable: []

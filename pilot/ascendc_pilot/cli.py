@@ -1274,7 +1274,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if payload.get("ok") else 1
     if args.cmd == "uo-query":
         from uo_init.store.reader import find_uo_product
-        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
         op_name = str(getattr(args, "op_name", "") or "")
@@ -1326,17 +1325,39 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             print_json(payload)
             return 0
+        limit = int(args.limit or 8)
+        file = str(getattr(args, "file", "") or "")
+        line = int(getattr(args, "line", 0) or 0)
+        line_end = int(getattr(args, "line_end", 0) or 0)
+        try:
+            from uo_init.query_client import try_agent_query
+
+            daemon_payload = try_agent_query(
+                Path(product),
+                pattern=pattern,
+                file=file,
+                line=line,
+                line_end=line_end,
+                limit=limit,
+                architecture=architecture,
+            )
+        except Exception:  # noqa: BLE001
+            daemon_payload = None
         q = None
         try:
-            q = open_query(project, op_name=op_name, architecture=architecture)
-            limit = int(args.limit or 8)
-            payload = q.agent_query(
-                pattern=pattern,
-                file=str(getattr(args, "file", "") or ""),
-                line=int(getattr(args, "line", 0) or 0),
-                line_end=int(getattr(args, "line_end", 0) or 0),
-                limit=limit,
-            )
+            if daemon_payload is not None:
+                payload = daemon_payload
+            else:
+                from uo_init.uo_query import open_query
+
+                q = open_query(project, op_name=op_name, architecture=architecture)
+                payload = q.agent_query(
+                    pattern=pattern,
+                    file=file,
+                    line=line,
+                    line_end=line_end,
+                    limit=limit,
+                )
             payload["engine"] = "uo_init.uo_query"
             try:
                 from ascendc_pilot.occupancy import (

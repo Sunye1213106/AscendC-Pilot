@@ -54,9 +54,9 @@ kb_check [D] → repo_scan [D] → bind_init [S 1 harness + N bind，每路 ≤2
                                           ──gate: init_confirmed, uo_digest
 
 /tg-plan
-plan_precheck [D] → plan_scope [S 像 uo-query，不写文件] → plan_fuse [S YAML]
-    → plan_narrate [Primary 三节散文] → plan_promote [D 拼 plan.md]
-    → plan_validate [D] → plan_approve [H]
+plan_precheck [D 改动包] → host_step 回 Primary
+    → 原生 Task Plan Owner [S YAML] → plan_ingest [Primary 交 YAML]
+    → plan_promote [D 确定性散文 + plan.md] → plan_validate [D] → plan_approve [H]
                                           ──gate: plan_approved
 
 /tg-solve
@@ -66,7 +66,7 @@ solve_precheck [D] → compile_obligations [D]
     → analyze_round [S return_value] → analyze_promote [D]
     → solve_certify [D]
                                           ──gate: worklog_closed
-rework: analyze → construct；validate → fuse/bind
+rework: analyze → construct；validate → model/bind
 ```
 
 Host replay 基础设施（`HostOracle`、WSL replay）仍复用；不再写 `tg/closure/**` 证书森林。插桩只改 TG sandbox 拷贝，禁止改算子 git。

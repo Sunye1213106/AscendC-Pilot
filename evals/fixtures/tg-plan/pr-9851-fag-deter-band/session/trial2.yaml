@@ -1,0 +1,219 @@
+schema: tg-plan/v3
+requirement:
+  id: R-fag-deter-band
+  text: >
+    新增：DeterBandScheduleMode 枚举（DISABLED=0/CAUSAL=1/DENSE=2/BAND=3）与 TILING_FIELD replay.deterBandScheduleMode
+    （tiling_data_regbase.h:139）；Host SelectDeterBandSchedule（tiling_normal_regbase.cpp:83）按 round 比较在 BAND/DENSE/CAUSAL 间择优；
+    DetermineBlockSchedule→SelectBlockSchedule（:161-212）在 hybridBandCond 成立且未走 legacy 早退时写入 mode 并在 mode≠DISABLED 时强制 isSplitByBlockIdx=true（:209-210）。
+    既有：isSplitByBlockIdx 字段与 CalBandDeterIndex/CalDeterMaxLoopNum 读端；deterSparseType 由 GetDeterSparseTilingKey 从 sparse_mode+token 推导；is_deter 列驱动 isDeterministic。
+    到写点路径条件（含否定项）：isDeterministic（¬!is_deter=1）；layoutType≠TND（¬layout=TND）；splitAxis=BN2GS1S2；enableSwizzle=true（¬enableSwizzle=false）；
+    s1Inner·s1CvRatio=s2Inner·s2CvRatio；sparseType≠UNSUPPORTED；deterSparseType=DETER_BAND（¬DETER_DENSE/CAUSAL/OLD）；
+    g=1（N1=N2）；coreNum=aicNum·2；actualBatch>0；hybridBandCond=true（¬!hybridBandCond）；¬(rightDownBandCond∧legacy isSplitByBlockIdx) 才进入 SelectDeterBandSchedule；
+    SelectDeterBandSchedule 内 ¬(k≤0∨m≤0∨n≤0∨p≤0∨q≤0∨b≤0)；denseK==k∧min(denseK,n)≤m 否定项决定 DENSE 覆盖 BAND；useLowerCausal 否定项决定 CAUSAL 覆盖。
+    可达：BNSD+is_deter=1+sparse_mode=0+band token+enableSwizzle 可达 mode∈{1,2,3}；is_deter=0 或 TND 或 hybridBandCond=0 或 legacy RDC 早退保持 DISABLED=0。
+
+targets:
+  - id: T-deter-band-schedule-active
+    evidence:
+      kind: derived
+      predicate: {op: gt, field: replay.deterBandScheduleMode, value: 0}
+
+dimensions:
+  - id: D-is-deter
+    target: T-deter-band-schedule-active
+    controls: [is_deter]
+    classifier: {requires: [case.is_deter]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: case.is_deter, value: 1}}
+
+  - id: D-input-layout
+    target: T-deter-band-schedule-active
+    controls: [Input_Layout]
+    classifier: {requires: [case.Input_Layout]}
+    partitions:
+      - {id: p-bnsd, predicate: {op: eq, field: case.Input_Layout, value: BNSD}}
+      - {id: p-bsh, predicate: {op: eq, field: case.Input_Layout, value: BSH}}
+      - {id: p-sbh, predicate: {op: eq, field: case.Input_Layout, value: SBH}}
+
+  - id: D-sparse-mode-entry
+    target: T-deter-band-schedule-active
+    controls: [sparse_mode]
+    classifier: {requires: [case.sparse_mode]}
+    partitions:
+      - {id: p-no-mask, predicate: {op: eq, field: case.sparse_mode, value: 0}}
+
+  - id: D-schedule-mode
+    target: T-deter-band-schedule-active
+    controls: [is_deter, sparse_mode, Pre_Tockens, Next_Tockens, S1, S2, B, N2]
+    classifier: {requires: [replay.deterBandScheduleMode]}
+    partitions:
+      - {id: p-causal, predicate: {op: eq, field: replay.deterBandScheduleMode, value: 1}}
+      - {id: p-dense, predicate: {op: eq, field: replay.deterBandScheduleMode, value: 2}}
+      - {id: p-band, predicate: {op: eq, field: replay.deterBandScheduleMode, value: 3}}
+
+  - id: D-hybrid-band-gate
+    target: T-deter-band-schedule-active
+    controls: [is_deter, Input_Layout, sparse_mode, B, N1, N2, S1, S2]
+    classifier: {requires: [probe.hybridBandCond]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: probe.hybridBandCond, value: 1}}
+      - {id: p-off, predicate: {op: eq, field: probe.hybridBandCond, value: 0}}
+
+  - id: D-enable-swizzle
+    target: T-deter-band-schedule-active
+    controls: [B, N1, N2, S1, S2, D, D_V]
+    classifier: {requires: [probe.enableSwizzle]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: probe.enableSwizzle, value: 1}}
+      - {id: p-off, predicate: {op: eq, field: probe.enableSwizzle, value: 0}}
+
+  - id: D-can-split-block
+    target: T-deter-band-schedule-active
+    controls: [Input_Layout, S1, S2, B, N1, N2]
+    classifier: {requires: [probe.canSplitByBlockIdx]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: probe.canSplitByBlockIdx, value: 1}}
+      - {id: p-off, predicate: {op: eq, field: probe.canSplitByBlockIdx, value: 0}}
+
+  - id: D-legacy-rdc-gate
+    target: T-deter-band-schedule-active
+    controls: [sparse_mode, S1, S2]
+    classifier: {requires: [probe.rightDownBandCond]}
+    partitions:
+      - {id: p-off, predicate: {op: eq, field: probe.rightDownBandCond, value: 0}}
+      - {id: p-on, predicate: {op: eq, field: probe.rightDownBandCond, value: 1}}
+
+  - id: D-token-profile
+    target: T-deter-band-schedule-active
+    controls: [Pre_Tockens, Next_Tockens, S1, S2, sparse_mode]
+    classifier: {requires: [case.Pre_Tockens, case.Next_Tockens]}
+    partitions:
+      - {id: p-band-window, predicate: {op: and, args: [{op: ge, field: case.Pre_Tockens, value: 16}, {op: lt, field: case.Next_Tockens, value: 16}, {op: gt, field: case.Next_Tockens, value: 0}]}}
+      - {id: p-dense-window, predicate: {op: and, args: [{op: ge, field: case.Pre_Tockens, value: 65536}, {op: ge, field: case.Next_Tockens, value: 65536}]}}
+
+  - id: D-s1s2-same
+    target: T-deter-band-schedule-active
+    controls: [S1, S2]
+    classifier: {requires: [case.S1, case.S2]}
+    partitions:
+      - {id: p-same, predicate: {op: eq, field: case.S1, value: 16}}
+      - {id: p-diff, predicate: {op: eq, field: case.S1, value: 32}}
+
+  - id: D-n1-equals-n2
+    target: T-deter-band-schedule-active
+    controls: [N1, N2]
+    classifier: {requires: [case.N1, case.N2]}
+    partitions:
+      - {id: p-mhsa, predicate: {op: eq, field: case.N1, value: 4}}
+      - {id: p-gqa-blocked, predicate: {op: eq, field: case.N1, value: 8}}
+
+  - id: D-batch-parity
+    target: T-deter-band-schedule-active
+    controls: [B, N2]
+    classifier: {requires: [case.B, case.N2]}
+    partitions:
+      - {id: p-even, predicate: {op: mod_eq, left: case.B, divisor: 2, value: 0}}
+      - {id: p-odd, predicate: {op: mod_eq, left: case.B, divisor: 2, value: 1}}
+
+  - id: D-use-lower-causal
+    target: T-deter-band-schedule-active
+    controls: [S1, S2, Pre_Tockens, Next_Tockens, B, N2]
+    classifier: {requires: [probe.useLowerCausal]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: probe.useLowerCausal, value: 1}}
+      - {id: p-off, predicate: {op: eq, field: probe.useLowerCausal, value: 0}}
+
+  - id: D-l2-exceed
+    target: T-deter-band-schedule-active
+    controls: [B, N1, N2, S1, S2, D, D_V]
+    classifier: {requires: [probe.isExceedL2Cache]}
+    partitions:
+      - {id: p-on, predicate: {op: eq, field: probe.isExceedL2Cache, value: 1}}
+      - {id: p-off, predicate: {op: eq, field: probe.isExceedL2Cache, value: 0}}
+
+guards:
+  - id: G-non-deter
+    target: T-deter-band-schedule-active
+    controls: [is_deter]
+    predicate: {op: eq, field: case.is_deter, value: 0}
+    negate_hint: {is_deter: 0}
+
+  - id: G-tnd-layout
+    target: T-deter-band-schedule-active
+    controls: [Input_Layout]
+    predicate: {op: eq, field: case.Input_Layout, value: TND}
+    negate_hint: {Input_Layout: TND}
+
+  - id: G-mode-disabled
+    target: T-deter-band-schedule-active
+    controls: [is_deter, Input_Layout, sparse_mode]
+    predicate: {op: eq, field: case.sparse_mode, value: 1}
+    negate_hint: {sparse_mode: 1}
+
+coverage:
+  L0:
+    dimensions:
+      - D-is-deter
+      - D-input-layout
+      - D-sparse-mode-entry
+      - D-schedule-mode
+      - D-hybrid-band-gate
+      - D-enable-swizzle
+      - D-can-split-block
+      - D-legacy-rdc-gate
+      - D-token-profile
+      - D-s1s2-same
+      - D-n1-equals-n2
+      - D-batch-parity
+      - D-use-lower-causal
+      - D-l2-exceed
+  L1:
+    combinations:
+      - {dims: [D-schedule-mode, D-use-lower-causal], reason: SelectDeterBandSchedule 内 useLowerCausal 决定是否用 CAUSAL 嵌入覆盖 BAND round}
+      - {dims: [D-token-profile, D-schedule-mode], reason: Pre/Next token 经 ProcessTokensInfo 归一化后决定 p/q 进而影响 mode 比较}
+      - {dims: [D-s1s2-same, D-schedule-mode], reason: s1Outer/s2Outer 与 isS1S2Same 改变 bandBlocks 几何并影响三者 round}
+      - {dims: [D-enable-swizzle, D-hybrid-band-gate], reason: enableSwizzle 是 canSplitByBlockIdx 与 hybridBandCond 的必要合取项}
+      - {dims: [D-can-split-block, D-hybrid-band-gate], reason: canSplitByBlockIdx 为 hybridBandCond 前置，二者共同决定能否进入 SelectDeterBandSchedule}
+      - {dims: [D-l2-exceed, D-enable-swizzle], reason: isExceedL2Cache 与 blockOuter==aicNum 合取设置 enableSwizzle}
+      - {dims: [D-n1-equals-n2, D-hybrid-band-gate], reason: g=N1/N2，g≠1 时 hybridBandCond 为 false}
+      - {dims: [D-legacy-rdc-gate, D-hybrid-band-gate], reason: rightDownBandCond∧isSplitByBlockIdx 早退跳过 SelectDeterBandSchedule，mode 保持 DISABLED}
+      - {dims: [D-is-deter, D-input-layout], reason: 确定性+非 TND 是 SelectBlockSchedule 确定性分支入口}
+      - {dims: [D-token-profile, D-use-lower-causal], reason: band token 窗口与 lowerCausal 浪费比较共同决定 CAUSAL 是否优于 BAND}
+  L2: []
+  L3:
+    guards: [G-non-deter, G-tnd-layout, G-mode-disabled]
+
+oracle:
+  - md5
+
+constraints:
+  - id: C-deterministic
+    predicate: {op: eq, field: case.is_deter, value: 1}
+  - id: C-non-tnd
+    predicate: {op: not_in, field: case.Input_Layout, values: [TND]}
+  - id: C-g-one
+    predicate: {op: eq, field: case.N1, value: 4}
+  - id: C-sparse-no-mask
+    predicate: {op: eq, field: case.sparse_mode, value: 0}
+
+environment:
+  aicNum: 32
+  coreNum: 64
+
+untestable:
+  - id: u-sparse-band-mask
+    kind: control_gap
+    reason: sparse_mode=2/3/4 需 atten_mask 张量，Atten_mask_shape 列为 unresolved，无法证实 mask 形状传导到 GetSparseType/deterSparseType
+    needs_binding:
+      - {column: Atten_mask_shape, want: "confirmed+active，并证实 sparse_mode 2/3/4 的 mask 形状→isSparse→deterSparseType=DETER_BAND"}
+  - id: u-sparse-prefix
+    kind: control_gap
+    reason: sparse_mode=5/6 需 prefix 与 mask 组合，Atten_mask_shape unresolved 且 prefix 列 empty_rate=1.0
+    needs_binding:
+      - {column: Atten_mask_shape, want: "confirmed+active，并证实 sparse_mode 5/6 入口"}
+      - {column: prefix, want: "confirmed+active 且 corpus 可构造 prefix 张量"}
+  - id: u-varlen-tnd
+    kind: control_gap
+    reason: TND 布局需 seqlens/cu_seqlens 与 same_as_input 协同，band schedule 写点要求 layoutType≠TND；TND 侧 CalcleTNDDeterParam 未证实可达 hybridBandCond
+    needs_binding:
+      - {column: same_as_input, want: "confirmed+active，并证实 TND→BS2N2GD 转布局后 enableSwizzle 与 hybridBandCond 可达"}

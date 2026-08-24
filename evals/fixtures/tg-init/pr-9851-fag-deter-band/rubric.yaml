@@ -1,0 +1,268 @@
+schema: tg-init-rubric/v1
+case: pr-9851-fag-deter-band
+product: tg/init.yaml
+operator: FlashAttentionScoreGrad
+architecture: arch35
+test_script_repo: gitcode.com--coder_linx--fag_debug_tools
+
+notes: |
+  Golden standard for the tg-init product. Grading is SEMANTIC, never a literal diff:
+  wording, evidence line numbers, finding order and Chinese/English phrasing are all free.
+  Only the assertions below are scored.
+
+  All operator-specific keys live in this file. `evals/tg_init/grade_init.py` carries the
+  generic invariants only, so the same grader scores any operator's init.yaml and the
+  bind-init skill never learns these answers.
+
+  Two families:
+    E* — engine-owned facts. The agent cannot write these; a failure is an engine bug.
+    A* — agent-owned semantics. A failure is a skill/prompt bug.
+
+# ---------------------------------------------------------------------------
+# E* — engine-owned. Deterministic intake of the test-script repo.
+# ---------------------------------------------------------------------------
+engine:
+  # The entry must be the script a human actually runs. `fag_test/main.py` owns the
+  # argparse but uses package-relative imports, so `python fag_test/main.py` dies on
+  # ImportError; `run_fag.py` is the runnable wrapper that re-exports it.
+  entry: run_fag.py
+  flag_owner: fag_test/main.py
+  case_arg: --case
+
+  # columns / defaults / domains.profile must all describe ONE table. Reading the
+  # profile from a different table silently mislabels every column whose header
+  # spelling differs, and makes `defaults` contradict `domains.profile`.
+  primary_table: data/FASG_PSE_cases.csv
+  table_kind: csv
+  profile_rows: 113
+  column_count: 40
+
+  # Every one of these was `profile: {}` in the 2026-08-24 run because the profile was
+  # taken from FASG.xls (35 different columns) while `columns` came from the CSV.
+  # A planner that cannot see these has no evidence for token/layout/mask partitions.
+  columns_requiring_profile:
+    - Enable
+    - Input_Layout
+    - Pre_Tockens
+    - Next_Tockens
+    - Atten_mask_dtype
+    - Atten_mask_shape
+    - cu_seqlens_q
+    - cu_seqlens_kv
+    - eod
+    - is_sink
+    - Actual_dq_Md5sum
+
+  # These three are OOXML files renamed to `.xls`. Dispatching the reader on the file
+  # extension sends them to xlrd, which refuses them; the run then reported them as a
+  # harness gap and dropped 413 rows of real corpus.
+  tables_readable_by_content_sniffing:
+    - data/FASG.xls
+    - data/FASG_David.xls
+    - data/FASG_PSE_cases.csv
+    - data/FASG_TND1.xls
+    - data/varlen_flash_attention_testcases.xls
+
+  forbidden_finding_codes:
+    - unreadable_tables
+    - unreadable_table
+
+# ---------------------------------------------------------------------------
+# A* — agent-owned. harness axis.
+# ---------------------------------------------------------------------------
+harness:
+  call:
+    kind: pta
+    api_contains: npu_fusion_attention_grad
+    site_file: runner.py
+
+  # argparse default for --pta_mode is `profiler`, i.e. a perf mode. Precision must be
+  # requested explicitly, and --golden-only is data generation (help says it does not
+  # call pta / needs no NPU), not an oracle.
+  modes:
+    precision_argv_contains: [--pta_mode, only_grad]
+    perf_argv_contains: [--pta_mode, profiler]
+    default_is_perf: true
+
+  # Thresholds live inside check_result(), not on any flag. Inventing --atol/--rtol is
+  # the failure this guards.
+  compare:
+    how_contains: ['0.005', '0.000025', '0.1', check_result]
+    atol_rtol: absent
+
+  golden:
+    match_contains: [golden, dq, dk, dv]
+    golden_only_is_not_precision: true
+
+  generate_inputs:
+    cannot_keys:
+      - empty_tensor
+      - scalar
+      - inf_nan
+      - align_plus_1
+      - illegal_range
+
+  # Findings that must survive; each records a fact a planner would otherwise get wrong.
+  required_finding_codes:
+    - default_mode_is_perf
+    - golden_only_is_not_precision
+    - threshold_in_function_not_argparse
+    - call_kind_pta
+    - deterministic_mode
+
+  # is_deter=true makes the runner dump dq/dk/dv .bin and compute md5sum, so the
+  # deterministic path HAS a bit-exact oracle. Losing this fact is what made the plan
+  # declare `oracle: []`.
+  findings_must_mention:
+    deterministic_mode: [md5]
+
+# ---------------------------------------------------------------------------
+# A* — agent-owned. columns axis. Per-column allow / ban sets.
+#   status_in / relation_in : allowed control.status and relation values
+#   uo_ok                   : allowed uo.id spellings (case-insensitive, '' = must be empty)
+#   uo_ban                  : uo.id spellings that are wrong even if plausible
+# ---------------------------------------------------------------------------
+columns:
+  Testcase_Name:
+    status_in: [metadata]
+    uo_ok: ['']
+  Enable:
+    status_in: [metadata]
+    uo_ok: ['']
+
+  Dtype:
+    status_in: [active]
+    relation_in: [tensor_dtype]
+    uo_ban: [inputdtype, outdtype, istnd]
+  out_dtype:
+    status_in: [active]
+    relation_in: [tensor_dtype, direct]
+    uo_ban: [outdtype, inputdtype, istnd]
+
+  Input_Layout:
+    status_in: [active]
+    uo_ok: [input_layout, inputlayout, layout]
+  B:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [b]
+  N1:
+    status_in: [active]
+    uo_ok: [head_num, headnum, num_heads]
+    uo_ban: [n2, g]
+  N2:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [n2]
+  S1:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [s1]
+  S2:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [s2]
+  D:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [d]
+    # D also feeds scale_value=1/sqrt(D); binding the derived scalar loses the shape.
+    uo_ban: [scale, scale_value, scalevalue]
+  D_V:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [d1, dv, d_v]
+  Drop_Out_Possibility:
+    status_in: [active]
+    uo_ok: [keep_prob, keepprob]
+  Pre_Tockens:
+    status_in: [active]
+    uo_ok: [pre_tokens, pretokens, s1token]
+  Next_Tockens:
+    status_in: [active]
+    uo_ok: [next_tokens, nexttokens, s2token]
+  Atten_mask_dtype:
+    status_in: [active]
+    relation_in: [tensor_dtype]
+  Atten_mask_shape:
+    status_in: [active]
+    relation_in: [tensor_shape, presence]
+  sparse_mode:
+    status_in: [active]
+    uo_ok: [sparse_mode, sparsemode]
+  PSE_type:
+    status_in: [active]
+    uo_ok: [pse_type, psetype]
+  PSE_shape:
+    status_in: [active]
+    relation_in: [tensor_shape, presence]
+
+  # seqlens_list_* carry the real per-segment lengths; cu_seqlens_* are 100% empty in
+  # the primary table and the runner recomputes them from seqlens_list_*. So the empty
+  # pair is `shadowed` and the populated pair is the active source. The 2026-08-24 run
+  # inverted this and additionally gave BOTH seqlens columns `uo.id: numels`, which
+  # breaks the no-shared-id rule.
+  seqlens_list_q:
+    status_in: [active]
+    uo_ok: [actual_seq_qlen, actualseqqlen]
+    uo_ban: [numels, istnd]
+  seqlens_list_kv:
+    status_in: [active]
+    uo_ok: [actual_seq_kvlen, actualseqkvlen]
+    uo_ban: [numels, istnd]
+  cu_seqlens_q:
+    status_in: [shadowed, active]
+    uo_ban: [numels, istnd]
+  cu_seqlens_kv:
+    status_in: [shadowed, active]
+    uo_ban: [numels, istnd]
+
+  eod:
+    status_in: [active]
+    uo_ban: [b, actualseqqlen, actual_seq_qlen, s1, d]
+  same_as_input:
+    status_in: [active]
+    uo_ok: [softmax_layout, softmaxlayout]
+  seed:
+    status_in: [active]
+    uo_ok: [seed]
+  offset:
+    status_in: [active]
+    uo_ok: [offset]
+
+  # is_deter drives torch.use_deterministic_algorithms and therefore the whole
+  # deterministic tiling path. Calling it metadata would hide the PR's own feature.
+  is_deter:
+    status_in: [active]
+    uo_ok: [detertype, deter_type, deterministic]
+  rope:
+    status_in: [active]
+    uo_ok: [isrope, is_rope, rope]
+  inner_drop:
+    status_in: [active]
+    uo_ban: [keep_prob, keepprob]
+  is_sink:
+    status_in: [active]
+  prefix:
+    status_in: [active]
+    uo_ok: [prefix]
+
+  Actual_dq_pricision: {status_in: [result], uo_ok: ['']}
+  Actual_dk_pricision: {status_in: [result], uo_ok: ['']}
+  Actual_dv_pricision: {status_in: [result], uo_ok: ['']}
+  Actual_kernel_time_backward: {status_in: [result], uo_ok: ['']}
+  Actual_dq_Md5sum: {status_in: [result], uo_ok: ['']}
+  Actual_dk_Md5sum: {status_in: [result], uo_ok: ['']}
+  Actual_dv_Md5sum: {status_in: [result], uo_ok: ['']}
+
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+scoring:
+  # A run PASSes only when every E* and every generic invariant holds, and the
+  # agent-owned families are at or above these rates.
+  required_families: [engine, invariant]
+  min_pass_rate:
+    harness: 1.0
+    columns: 0.95
+  budget_seconds: 240

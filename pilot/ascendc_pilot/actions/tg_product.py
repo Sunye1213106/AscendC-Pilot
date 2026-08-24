@@ -43,7 +43,12 @@ def _action_dir(project_root: Path, ctx: dict[str, Any], action_id: str) -> Path
 def _dump_yaml(path: Path, doc: Any) -> Path:
     isolation.assert_tg_write_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    from testcase_agent.io import YAML_WIDTH
+
+    path.write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, width=YAML_WIDTH),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -310,20 +315,26 @@ def _replay_dir(project_root: Path, ctx: dict[str, Any] | None = None) -> Path:
 def _evidence_proofs(project_root: Path, mapping: dict[str, Any]) -> list[dict[str, Any]]:
     proofs: list[dict[str, Any]] = []
     try:
-        from ascendc_pilot.evidence_window import disk_window_proof
+        from ascendc_pilot.evidence_window import disk_window_proof, first_evidence_locator
     except Exception:  # noqa: BLE001
         return proofs
     for col, row in (mapping or {}).items():
         if not isinstance(row, dict):
             continue
         ev = str(row.get("evidence") or "").strip()
-        if not ev or ":" not in ev:
+        loc = first_evidence_locator(ev)
+        if not loc:
             continue
-        rel, _, spec = ev.replace("\\", "/").rpartition(":")
-        spec = spec.strip()
-        if not rel or not spec.replace("-", "").isdigit():
-            continue
-        proof = disk_window_proof(project_root, path=rel, lines=spec)
+        rel, spec = loc
+        try:
+            proof = disk_window_proof(project_root, path=rel, lines=spec)
+        except Exception as exc:  # noqa: BLE001
+            proof = {
+                "ok": False,
+                "error": "missing_file",
+                "path": rel,
+                "message_zh": str(exc)[:300],
+            }
         proofs.append({"column": col, "evidence": ev, **proof})
     return proofs
 
@@ -632,6 +643,11 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "architecture": str(ctx.get("architecture") or ident.get("architecture") or ""),
         "updated_at": _now(),
     }
+    doc["findings"], doc["harness_capabilities"] = products.reconcile_findings(
+        mapping,
+        findings,
+        generate_inputs=doc.get("generate_inputs"),
+    )
     for key in ("precision_cmd", "perf_cmd", "corpus"):
         if harness.get(key) is not None:
             doc[key] = harness[key]
@@ -641,7 +657,10 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     # (including confirmed/uo.id). Primary judges whether a filled uo.id
     # names the right implementation symbol.
     path = products.dump_init(tg, doc)
-    proofs = _evidence_proofs(project_root, mapping)
+    try:
+        proofs = _evidence_proofs(project_root, mapping)
+    except Exception as exc:  # noqa: BLE001 — proofs must not abort init.yaml
+        proofs = [{"ok": False, "error": "evidence_proof_failed", "message_zh": str(exc)[:300]}]
     receipt = _receipt(
         project_root,
         ctx,
@@ -783,30 +802,41 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    fuse_cap = _captured(project_root, ctx, "plan_fuse")
-    fuse_text = _captured_text(project_root, ctx, "plan_fuse")
-    fuse_doc = fuse_cap.get("doc") if isinstance(fuse_cap.get("doc"), dict) else None
-    mapping = _parse_captured_mapping(fuse_text, fuse_doc)
+    ingest_cap = _captured(project_root, ctx, "plan_ingest")
+    ingest_text = _captured_text(project_root, ctx, "plan_ingest")
+    ingest_doc = ingest_cap.get("doc") if isinstance(ingest_cap.get("doc"), dict) else None
+    mapping = _parse_captured_mapping(ingest_text, ingest_doc)
     if not mapping:
         return _plan_fail(
-            "PLAN_FUSE_REQUIRED",
-            ask="fuse",
-            message_zh="缺少 plan_fuse YAML；回 fuse 交覆盖模型，不要让 promote 编一份。",
-            rework_action_ids=["plan_fuse"],
+            "PLAN_INGEST_REQUIRED",
+            ask="model",
+            message_zh="缺少 Plan Owner YAML；下一发 `pilot_run(tg-plan)` intent 必须是 tg-plan/v3 全文，禁止空跑或让 promote 编一份。",
+            rework_action_ids=["plan_ingest"],
         )
-
-    prose = str(ctx.get("plan_prose") or "").strip()
-    if not _has_plan_prose(prose):
-        narrate_cap = _captured(project_root, ctx, "plan_narrate")
-        prose = str(narrate_cap.get("text") or "").strip()
-    if not _has_plan_prose(prose):
+    schema = str(mapping.get("schema") or "").strip()
+    if schema == "coverage-fragment/v1":
         return _plan_fail(
-            "PLAN_PROSE_REQUIRED",
-            ask="primary",
-            message_zh="缺少 plan_narrate 三节散文；promote 不从 fuse YAML 合成标题。",
-            rework_action_ids=["plan_narrate"],
+            "PLAN_INGEST_REQUIRED",
+            ask="model",
+            message_zh="plan_ingest 收到的是 fragment，不是 Owner 的 tg-plan/v3。先派 Plan Owner 汇总。",
+            rework_action_ids=["plan_ingest"],
+        )
+    if schema and schema != products.PLAN_SCHEMA:
+        return _plan_fail(
+            "PLAN_INGEST_REQUIRED",
+            ask="model",
+            message_zh=f"plan_ingest schema {schema!r} 不是 {products.PLAN_SCHEMA}。",
+            rework_action_ids=["plan_ingest"],
+        )
+    if not (mapping.get("targets") or []):
+        return _plan_fail(
+            "PLAN_INGEST_REQUIRED",
+            ask="model",
+            message_zh="Owner YAML 缺少 targets；禁止用 empty placeholder 继续 promote。",
+            rework_action_ids=["plan_ingest"],
         )
 
+    prose = products.render_plan_prose(mapping)
     text = _assemble_plan_md(prose, mapping)
     path = products.plan_path(_tg(project_root, ctx))
     isolation.assert_tg_write_path(path)
@@ -868,6 +898,31 @@ def _init_mapping(init_doc: dict[str, Any]) -> dict[str, Any] | None:
     return products.mapping_as_dict(init_doc.get("mapping"))
 
 
+def _primary_observations(project_root: Path, fence: dict[str, Any]) -> set[str] | None:
+    obs: set[str] = set()
+    req = fence.get("requirement") if isinstance(fence.get("requirement"), dict) else {}
+    for raw in (
+        req.get("observations")
+        or req.get("primary_observations")
+        or fence.get("primary_observations")
+        or []
+    ):
+        name = str(raw or "").strip()
+        if name:
+            obs.add(name)
+    try:
+        from ascendc_pilot.change_contract import load_change_contract
+
+        contract = load_change_contract(project_root) or {}
+        for raw in contract.get("primary_observations") or contract.get("observations") or []:
+            name = str(raw or "").strip()
+            if name:
+                obs.add(name)
+    except Exception:  # noqa: BLE001
+        pass
+    return obs or None
+
+
 def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     try:
@@ -878,14 +933,16 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     from ascendc_pilot.change_contract import allow_legal_keys
 
     semantic = products.semantic_plan_hash(fence)
+    observations = _primary_observations(project_root, fence)
     errors = products.validate_plan_fence(
         fence,
         init_columns=products.column_names(init_doc),
         init_mapping=_init_mapping(init_doc),
         allow_legal_keys=allow_legal_keys(project_root),
         observe_fields=_observe_fields(project_root, ctx),
+        primary_observations=observations,
     )
-    errors.extend(products.validate_plan_prose(text))
+    errors.extend(products.validate_plan_prose(text, fence))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
         errors.append("tilingkey_full_coverage / T=D is not a plan mode")
     ok = not errors

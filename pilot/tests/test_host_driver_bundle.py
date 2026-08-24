@@ -366,9 +366,9 @@ def test_knowledge_refs_materialize_into_session(tmp_path: Path) -> None:
     body = (sdir / "knowledge" / "ascendc" / "precision.md").read_text(encoding="utf-8")
     assert "P-CAST" not in body
     assert "/tg-plan" not in body
-    fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
-    assert "evidence.md" in (fuse.get("refs") or [])
-    assert "ascendc/precision.md" in (fuse.get("knowledge_refs") or [])
+    ingest = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_ingest")
+    assert "evidence.md" in (ingest.get("refs") or [])
+    assert "ascendc/precision.md" in (ingest.get("knowledge_refs") or [])
     draft = next(a for a in WORKFLOWS["ce-plan"]["actions"] if a["id"] == "plan_draft")
     assert "ascendc/cross-layer-contracts.md" in (draft.get("knowledge_refs") or [])
     assert not any(str(r).startswith("P-") for r in (draft.get("refs") or []))

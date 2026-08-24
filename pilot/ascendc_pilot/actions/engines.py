@@ -956,9 +956,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tg-bind-review-v1": [],
     "plan-precheck-v1": [],
-    "tg-plan-scope-v1": [],
-    "tg-plan-fuse-v1": [],
-    "tg-plan-narrate-v1": [],
+    "tg-plan-ingest-v1": [],
     "tg-plan-v1": ["tg/plan.md"],
     "tg-plan-validate-v1": ["runs/{run_id}/receipts/plan_validate.yaml"],
     "tg-plan-approved-v1": ["tg/plan.md"],
@@ -1026,4 +1024,14 @@ def invoke_engine(project_root: Path, workflow_id: str, action_id: str, *, ctx: 
                 payload["error"] = "LOCAL_CAPABILITY_REQUIRED"
                 payload["recovery_action"] = "local_capability_bootstrap"
                 return payload
-            raise
+            # Uncaught OSError/FileNotFoundError used to kill acp with no JSON
+            # (ACP_NO_JSON), leaving tg-init running and inspect-failure empty.
+            return {
+                "ok": False,
+                "engine": action_id,
+                "error": "ENGINE_EXCEPTION",
+                "reason_code": "ENGINE_EXCEPTION",
+                "exception_type": type(exc).__name__,
+                "message_zh": f"{type(exc).__name__}: {exc}"[:2000],
+                "retryable": True,
+            }

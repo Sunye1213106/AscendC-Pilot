@@ -35,6 +35,26 @@ def test_validate_init_fails_without_init_yaml(tmp_path: Path) -> None:
     assert not (tg_root(root, arch=_ARCH) / "init.yaml").is_file()
 
 
+def test_invoke_engine_returns_json_on_filenotfound(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions.engines import ENGINE_REGISTRY, invoke_engine
+
+    def boom(_project_root: Path, _ctx: dict) -> dict:
+        raise FileNotFoundError(
+            r"D:\x\op_kernel\arch35\flash_attention_score_grad_tiling_data_regbase.h"
+        )
+
+    monkeypatch.setitem(ENGINE_REGISTRY, ("tg-init", "bind_promote"), boom)
+    out = invoke_engine(
+        tmp_path,
+        "tg-init",
+        "bind_promote",
+        ctx={"architecture": _ARCH, "run_id": "RUN_x", "op_name": "synth_tg"},
+    )
+    assert out.get("ok") is False
+    assert out.get("error") == "ENGINE_EXCEPTION"
+    assert "flash_attention_score_grad_tiling_data_regbase.h" in str(out.get("message_zh") or "")
+
+
 def test_removed_legacy_actions_gone() -> None:
     ids = {a["id"] for a in WORKFLOWS["tg-init"]["actions"]} | {
         a["id"] for a in WORKFLOWS["tg-plan"]["actions"]
@@ -49,7 +69,10 @@ def test_removed_legacy_actions_gone() -> None:
         "closure_certify",
     ):
         assert dead not in ids
-    assert "plan_scope" in ids
+    assert "plan_scope" not in ids
+    assert "plan_fuse" not in ids
+    assert "plan_narrate" not in ids
+    assert "plan_ingest" in ids
 
 
 def test_output_contracts_are_three_products() -> None:
@@ -58,9 +81,7 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["tg-worklog-v1"] == ["tg/worklog.md"]
     assert "tg-cases-v1" not in OUTPUT_CONTRACT_PATHS
     assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
-    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == []
-    assert OUTPUT_CONTRACT_PATHS["tg-plan-fuse-v1"] == []
-    assert OUTPUT_CONTRACT_PATHS["tg-plan-narrate-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-ingest-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-construct-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-analyze-v1"] == []
     assert "tg-plan-staging-v1" not in OUTPUT_CONTRACT_PATHS
@@ -190,21 +211,20 @@ def test_plan_promote_writes_from_session_capture(tmp_path: Path) -> None:
     from ascendc_pilot.paths import ensure_agent_layout, tg_root
     from ascendc_pilot.state import start_workflow
 
-    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-ingest-v1"] == []
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
-    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
+    _write_capture(root, run_id, "plan_ingest", text=_FUSE_YAML)
     checked = _check_output_contract(
         root,
-        "tg-plan-fuse-v1",
+        "tg-plan-ingest-v1",
         run_id=run_id,
         workflow_id="tg-plan",
-        action_id="plan_fuse",
+        action_id="plan_ingest",
     )
     assert checked.get("ok") is True, checked
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
@@ -212,6 +232,7 @@ def test_plan_promote_writes_from_session_capture(tmp_path: Path) -> None:
     text = (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
     assert "## 测什么" in text
     assert "schema: tg-plan/v3" in text
+    assert "精度" not in text.split("```yaml")[0]
 
 
 def test_plan_promote_does_not_require_scope_file(tmp_path: Path) -> None:
@@ -225,20 +246,10 @@ def test_plan_promote_does_not_require_scope_file(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
-    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
+    _write_capture(root, run_id, "plan_ingest", text=_FUSE_YAML)
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
     assert "schema: tg-plan/v3" in (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
-
-
-def test_scope_answer_for_fuse_prefers_natural_language() -> None:
-    from ascendc_pilot.actions.runtime import _scope_answer_for_fuse
-
-    nl = "测 arch35 FAG 的 sparse 路径；dropout 关闭。不要铺全量 TilingKey。"
-    assert _scope_answer_for_fuse({"text": nl, "doc": {"targets": [{"id": "T-x"}]}}) == nl
-    assert _scope_answer_for_fuse({"text": "", "doc": {}}) == ""
-    assert _scope_answer_for_fuse({}) == ""
 
 
 def test_plan_promote_assembles_primary_prose_and_fuse_yaml(tmp_path: Path) -> None:
@@ -252,14 +263,14 @@ def test_plan_promote_assembles_primary_prose_and_fuse_yaml(tmp_path: Path) -> N
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
-    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
+    _write_capture(root, run_id, "plan_ingest", text=_FUSE_YAML)
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
     text = (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
     assert "## 测什么" in text
     assert "```yaml" in text
     assert "schema: tg-plan/v3" in text
+    assert "默认 TilingKey" in text or "dtype" in text.lower() or "测什么" in text
 
 
 def test_plan_promote_requires_fuse_yaml(tmp_path: Path) -> None:
@@ -278,12 +289,32 @@ def test_plan_promote_requires_fuse_yaml(tmp_path: Path) -> None:
         {"architecture": _ARCH, "run_id": run_id},
     )
     assert out.get("ok") is False
-    assert out.get("error") == "PLAN_FUSE_REQUIRED"
+    assert out.get("error") == "PLAN_INGEST_REQUIRED"
     assert out.get("retryable") is True
     assert out.get("failure_class") == "format_transport"
 
 
-def test_plan_promote_requires_primary_prose(tmp_path: Path) -> None:
+def test_plan_promote_renders_prose_from_yaml(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_plan_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    _write_capture(root, run_id, "plan_ingest", text=_FUSE_YAML)
+    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is True, out
+    text = (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
+    assert "## 覆盖什么" in text
+    assert "## 怎么判定" in text
+    assert "精度" not in text.split("```")[0]
+
+
+def test_plan_promote_rejects_empty_placeholder(tmp_path: Path) -> None:
     from ascendc_pilot.actions.tg_product import run_plan_promote
     from ascendc_pilot.paths import ensure_agent_layout
     from ascendc_pilot.state import start_workflow
@@ -294,30 +325,10 @@ def test_plan_promote_requires_primary_prose(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
+    _write_capture(root, run_id, "plan_ingest", text="schema: tg-plan/v3\ntargets: []\n")
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is False
-    assert out.get("error") == "PLAN_PROSE_REQUIRED"
-    assert out.get("retryable") is True
-    assert out.get("failure_class") == "format_transport"
-    assert "plan_narrate" in (out.get("rework_action_ids") or [])
-
-
-def test_plan_promote_does_not_take_prose_from_fuse(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_product import run_plan_promote
-    from ascendc_pilot.paths import ensure_agent_layout
-    from ascendc_pilot.state import start_workflow
-
-    root = tmp_path / "op"
-    root.mkdir()
-    ensure_agent_layout(root, arch=_ARCH)
-    _seed_manifest(root)
-    state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
-    run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
-    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
-    assert out.get("ok") is False
-    assert out.get("error") == "PLAN_PROSE_REQUIRED"
+    assert out.get("error") == "PLAN_INGEST_REQUIRED"
 
 
 def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
@@ -443,8 +454,7 @@ def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
-    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
+    _write_capture(root, run_id, "plan_ingest", text=_FUSE_YAML)
     promoted = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert promoted.get("ok") is True, promoted
     tg = tg_root(root, arch=_ARCH)
@@ -474,7 +484,7 @@ def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:
     assert not (tg / "coverage_ledger.yaml").is_file()
     assert not any(p.name == "targets.yaml" for p in root.rglob("targets.yaml"))
     assert not any(
-        p.name == "parts" and p.parent.name in {"plan_scope", "plan_fuse"}
+        p.name == "parts" and p.parent.name in {"plan_ingest", "plan_scope", "plan_fuse"}
         for p in root.rglob("*")
         if p.is_dir()
     )

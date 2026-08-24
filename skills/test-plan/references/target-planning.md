@@ -20,19 +20,22 @@ generic TilingKey 仅 `change_contract.kind=implementation_coverage`（且没有
 
 | # | 必答 | 怎么答 |
 | --- | --- | --- |
-| A | **可控面** | 逐列读 `init.yaml` 的 `control.status` / `confidence`，给出「可做确定 classifier 的列」集合 = `confirmed` + `active`。其余列（`partial` / `unresolved` / 非 `active`）**不得进入 plan 的 `controls` 或 `construct_hint.columns`**，只能在 `test_harness_gap` 的自然语言里描述并登记 `needs_binding` 提级 |
-| B | **触发门禁** | 把主行为成立的条件写成**合取式**，逐项标注：由哪个列控制 / 该列 confidence / 还是「非列」（平台常量、环境值、内部派生量）。漏项等于让 fuse 建一个永远 MISS 的 Target |
-| C | **可达性** | 现有 case 表里，同时满足 B 全部合取项的行数是多少。答**具体数字**。为 0 就明说 0，并指出是缺哪几项 |
-
+| A | **可控面** | 逐列读 `init.yaml` 的 `control.status` / `confidence`，给出「可做确定 classifier 的列」集合 = `confirmed` + `active`。其余列（`partial` / `unresolved` / 非 `active`）**不得进入 plan 的 `controls` 或 `construct_hint.columns`**，只能在 `test_harness_gap.needs_binding` 里点名提级 |
+| B | **触发门禁** | 先 `uo_query` 出该行为字段的**唯一写点**，再从写点回溯到入口，把**到写点的路径条件**写成合取式 —— 沿途每个被跨过的 `if (...) return` 都贡献一个**否定项**。逐项标：**直接列** / **派生** / **环境** / **host 局部量**（有 `<name> =` 就能 probe，不是 opaque） / **真 opaque**（三层都观测不到）。漏否定 = 永久 MISS。派生和环境**不是** untestable |
+| C | **构造种子** | 现有 case 表只提供 seed/default。答一个数字可以，但 **0 行不是 gap**，不要据此要求写 `test_harness_gap`。Solve 用 confirmed 列构造新行 |
 | D | **新增 vs 既有** | 本次改动**引入**的符号，与同一文件里**原本就有**的符号，必须分开说。判不准的标「未证实」，不要并列成「新增了 X、Y、Z」 |
 
-B 的合取项要一直拆到「单个列能否控制」这一层。典型漏项：奇偶 / 对齐 / 下界这类形状约束、核数与平台常量的关系、某个取值会**提前返回**而保持默认值。
+B 的合取项要一直拆到类别：直接列、派生、环境、可 probe 的 host 局部量、还是真 opaque。典型漏项：奇偶/对齐/下界（派生）、核数关系（环境）、提前返回、host 分支门被误标 opaque。
 
-C 的省力算法：`init.yaml` 的 `domains.<col>.profile` 已有每列的**边缘分布**（`topk` 计数、`min` / `max`、`n_unique`）。联合命中行数 **≤ 各门禁列边缘命中数的最小值**，先用这个取上界；上界已经很小（或为 0）就不必读全表。只有上界不够判定时，才去 case 表做联合筛选。
+B 项最贵的两个错，都在「方向」上，说 B 项时必须一并交代：
 
-C 为 0 是常态而非异常，直说即可 —— 这正是 fuse 要写 `test_harness_gap` 的依据。
+- **漏否定。** 写点前面每一个 `if (cond) return` 都意味着路径条件里有 `¬cond`。只交正向合取式，Owner 建出来的 partition 常常恰好满足某个早退，Target 永久 MISS 而没有任何校验会报错。
+- **抄错分支。** 同一个入口函数里，另一条 legacy / 兼容分支的入口门（它自己那串 `&&`）对本行为的路径条件**没有贡献**。把它当成前置约束交上去，等于帮那条早退成立。每报一个门禁项，都要能说出它是「到写点必须成立」还是「到写点必须不成立」。
+- **误杀析取支。** 写点 RHS 含 `||` 时，先问：把一支取反后 expected 是否还能被另一支打到。能 → 那是 Dimension（切臂），不是「Target 不可达」的 Guard。
 
-说 A 项时别用「可参与构造」这类含糊话。非 `confirmed`+`active` 的列在 plan 里**没有任何合法位置**（引擎对 `controls` 与 `construct_hint.columns` 用同一套校验）。要表达「构造这条 case 需要这些列」，说清它属于 `needs_binding`，由 fuse 写进 `test_harness_gap`。
+C 可以看 `init.yaml` 的 `domains.<col>.profile` 边缘分布当 **seed 线索**，但 **0 行不是 gap**，也不要去全表做「联合命中」来决定能不能测。Solve 用 confirmed 列构造新行。
+
+说 A 项时别用「可参与构造」这类含糊话。非 `confirmed`+`active` 的列在 plan 里**没有任何合法位置**（引擎对 `controls` 与 `construct_hint.columns` 用同一套校验）。要表达「构造这条 case 需要这些列」，说清它属于 `needs_binding`。
 
 ## 载体分工
 
@@ -51,7 +54,7 @@ C 为 0 是常态而非异常，直说即可 —— 这正是 fuse 要写 `test_
 
 1. 读用户要测的行为（PR 改动、点名状态、或「把这个算子测明白」）。
 2. 用 init 列和 UO 查询核对：这个行为能不能被 case 控制、Replay 能不能看见。
-3. 出四项必答（A 可控面 / B 触发门禁 / C 可达性 / D 新增 vs 既有）。
+3. 出四项必答（A 可控面 / B 触发门禁 / C 构造种子 / D 新增 vs 既有）。
 4. 说清：主行为、使它不成立的条件、还不确定的轴。原始 B/N/S/D 默认只是 control。
 5. 没有确定性证据的东西，标明「未证实」，不要升级成已绑定 Target。
 
@@ -62,8 +65,9 @@ C 为 0 是常态而非异常，直说即可 —— 这正是 fuse 要写 `test_
 | 对话没指定方向 | 说清：当前只能测 Host 已接受的 dispatch |
 | 用户说按 PR 出 case | 说清改了哪类行为，不要按 diff 行铺开 |
 | 门禁项里有列是 `partial` / `unresolved` | 照实说该项无法确定控制，列 `needs_binding`；不要绕过 |
-| 门禁项不是任何列（平台常量 / 派生量） | 明说「非列可控」，让 fuse 登记 `untestable` |
-| C 数出来是 0 行 | 直说 0，并列出缺失的门禁项；这是 `test_harness_gap` 的依据 |
+| 门禁项是派生等式 | 标成 constraint，不要写成 untestable |
+| 门禁项是平台常量 / 核数关系 | 标成 environment fact，不要写成 untestable |
+| C 数出来是 0 行 | 直说 0；这只是 seed 线索，**不是** `test_harness_gap` |
 | 测试脚本仓看不到目标字段 | 先问 Replay；不要直接判成覆盖缺口 |
 | 想写 YAML / plan.md / 文件 | 禁止；这窗只回答 |
 | 想写 L0–L3 | 交给 fuse + Primary 散文 |
@@ -73,8 +77,8 @@ C 为 0 是常态而非异常，直说即可 —— 这正是 fuse 要写 `test_
 - 交 `targets.yaml` 或任何磁盘产物
 - 把「可能有关」写成已经确认的 UO 绑定
 - 把既有符号说成本次新增（D 项就是防这个）
-- 只说「门禁大致是确定性 + 某类稀疏」，不拆到列级（B 项就是防这个）
-- 跳过 C 直接说「corpus 覆盖不足」——不给数字等于没答
+- 只说「门禁大致是确定性 + 某类稀疏」，不拆到列级/派生/环境（B 项就是防这个）
+- 把 corpus 0 行说成覆盖缺口 —— C 不是可达性门
 - 没搞懂就退回全量 TilingKey 枚举
 - packet 无 change_contract 时把目标改成「测当前实现」（引擎不会让本窗见到未 pin 的 PR）
 - 把 clone 回执或 Host run state 当成已 pin 的 PR 文件集
@@ -82,4 +86,4 @@ C 为 0 是常态而非异常，直说即可 —— 这正是 fuse 要写 `test_
 
 ## 停
 
-四项必答齐 + 主行为说清即停。下一窗是 fuse（YAML）和 Primary（散文）。
+四项必答齐 + 主行为说清即停。同一 Task 接着写 Coverage IR YAML，不要再交给另一个 agent。

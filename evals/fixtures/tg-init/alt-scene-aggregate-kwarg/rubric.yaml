@@ -1,0 +1,66 @@
+schema: tg-init-rubric/v1
+case: alt-scene-aggregate-kwarg
+product: parts/bindN.yaml
+operator: RaggedGemm (synthetic)
+
+notes: |
+  Generality control for the columns axis. Same grader, same schema, different operator
+  and different vocabulary from the FAG case, but the same *classes* of trap:
+
+    * one aggregate kwarg (`total_elems`) fed by two columns — copying the arg name onto
+      both would collide, so each column must take the kwarg it alone determines;
+    * a derived scalar (`scale`) that must not become a shape column's identity;
+    * a 100%-empty column the runner recomputes from a populated one;
+    * a switch dim (`InDType`) that must not become the dtype column's identity.
+
+  If a skill edit only fixed the FAG case, this case regresses.
+
+harness: {}
+
+columns:
+  Width:
+    status_in: [active]
+    relation_in: [tensor_shape]
+    uo_ok: [width]
+    # `scale = 1/sqrt(Width)` is derived; binding it loses the shape.
+    uo_ban: [scalevalue, scale, width1]
+  Groups:
+    status_in: [active]
+    uo_ok: [num_groups, numgroups, groups]
+    uo_ban: [elemtotal, total_elems, totalelems]
+  Layout:
+    status_in: [active]
+    uo_ok: [layout]
+
+  # Each feeds an aggregate AND a 1:1 kwarg. The 1:1 one is the identity.
+  row_lens:
+    status_in: [active]
+    uo_ok: [row_offsets, rowoffsets]
+    uo_ban: [total_elems, totalelems, elemtotal, ragged, colseg]
+  col_lens:
+    status_in: [active]
+    uo_ok: [col_offsets, coloffsets]
+    uo_ban: [total_elems, totalelems, elemtotal, ragged, rowseg]
+
+  # Empty in the corpus and recomputed from row_lens by a prefix sum.
+  row_starts:
+    status_in: [shadowed]
+    uo_ok: ['']
+
+  InDtype:
+    status_in: [active]
+    relation_in: [tensor_dtype]
+    # A switch dim is not a dtype column's identity.
+    uo_ban: [indtype, in_dtype, ragged, ispad]
+  RunName:
+    status_in: [metadata]
+    uo_ok: ['']
+  Actual_gflops:
+    status_in: [result]
+    uo_ok: ['']
+
+scoring:
+  required_families: [invariant]
+  min_pass_rate:
+    columns: 1.0
+  budget_seconds: 240

@@ -19,6 +19,7 @@ import csv
 import os
 import re
 from collections import Counter
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +90,14 @@ def scan(root: str | Path | None) -> dict[str, Any]:
         if file.suffix == ".py":
             parsed = _parse_python(file)
             if parsed["is_entry"] or parsed["flags"]:
-                entries.append({"path": rel, "is_entry": parsed["is_entry"]})
+                entries.append(
+                    {
+                        "path": rel,
+                        "is_entry": parsed["is_entry"],
+                        "relative_import": bool(parsed.get("relative_import")),
+                        "imports": list(parsed.get("imports") or []),
+                    }
+                )
                 for flag in parsed["flags"]:
                     flags.append({"path": rel, **flag})
         elif file.suffix.lower() in {".csv", ".tsv"}:
@@ -149,7 +157,7 @@ def contract_from_inventory(
     profile = dict(primary.get("profile") or {}) if isinstance(primary.get("profile"), dict) else {}
     entry = _pick_entry(entries, flags)
     case_arg = _pick_case_arg(flags)
-    entry_flags = _flags_for_entry(flags, entry)
+    entry_flags = _flags_for_entry(flags, entry, entries)
     modes = _pick_modes(entry_flags)
     mode_candidates = _mode_candidates(entry_flags)
     defaults = dict(sample)
@@ -164,18 +172,38 @@ def contract_from_inventory(
         findings.append({"code": "missing_schema", "detail": "no CSV/XLS case table with a header"})
     if inventory.get("error"):
         findings.append({"code": "scan_error", "detail": str(inventory["error"])})
+    for table in tables:
+        if table.get("error"):
+            findings.append(
+                {
+                    "code": "unreadable_table",
+                    "detail": f"{table.get('path')}: {table.get('error')}",
+                }
+            )
+    owner = flag_owner(entry, entries, flags)
+    if owner and owner != entry:
+        findings.append(
+            {
+                "code": "entry_delegates_flags",
+                "detail": f"{entry} is the runnable wrapper; argparse lives in {owner}",
+            }
+        )
 
+    primary_table = str(primary.get("path") or "") if primary else ""
     return {
         "schema": SCHEMA,
         "kind": "script_repo",
         "root": root,
         "entry": entry,
+        "flag_owner": owner,
         "case_arg": case_arg,
         "modes": modes,
         "mode_candidates": mode_candidates,
         "columns": columns,
         "defaults": defaults,
         "corpus": [str(t.get("path") or "") for t in tables if t.get("path")],
+        "primary_table": primary_table,
+        "table_kind": str(primary.get("kind") or "") if primary else "",
         "mapping": {},
         "findings": findings,
         "column_profile": profile,
@@ -240,12 +268,23 @@ def _parse_python(path: Path) -> dict[str, Any]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, SyntaxError):
-        return {"is_entry": False, "flags": []}
+        return {"is_entry": False, "flags": [], "relative_import": False, "imports": []}
     flags: list[dict[str, Any]] = []
+    imports: list[str] = []
+    relative_import = False
     is_entry = path.name in {"main.py", "__main__.py"} or path.name.startswith("run_")
     for node in ast.walk(tree):
         if isinstance(node, ast.If) and _is_main_guard(node):
             is_entry = True
+        if isinstance(node, ast.ImportFrom):
+            # level > 0 is a package-relative import: the module cannot be run as a
+            # plain script, only as `-m package.module` or via a wrapper.
+            if (node.level or 0) > 0:
+                relative_import = True
+            if node.module:
+                imports.append(str(node.module))
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names if alias.name)
         if not isinstance(node, ast.Call):
             continue
         func_name = _call_name(node.func)
@@ -265,7 +304,12 @@ def _parse_python(path: Path) -> dict[str, Any]:
             elif kw.arg == "choices":
                 meta["choices"] = _const_list(kw.value)
         flags.append(meta)
-    return {"is_entry": is_entry, "flags": flags}
+    return {
+        "is_entry": is_entry,
+        "flags": flags,
+        "relative_import": relative_import,
+        "imports": sorted(set(imports)),
+    }
 
 
 def _is_main_guard(node: ast.If) -> bool:
@@ -322,16 +366,35 @@ def _csv_table(path: Path) -> tuple[list[str], dict[str, str], dict[str, Any]]:
         return [], {}, {}
 
 
+def _workbook_format(path: Path) -> str:
+    """Detect the real workbook container, ignoring the file extension.
+
+    Test tables are routinely saved as OOXML and renamed to ``.xls``; dispatching
+    on the suffix sends those to xlrd, which refuses them.
+    """
+    try:
+        with path.open("rb") as handle:
+            magic = handle.read(8)
+    except OSError:
+        return "xlsx" if path.suffix.lower() == ".xlsx" else "xls"
+    if magic.startswith(b"PK\x03\x04"):
+        return "xlsx"
+    if magic.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "xls"
+    return "xlsx" if path.suffix.lower() == ".xlsx" else "xls"
+
+
 def _xls_table(path: Path) -> tuple[list[str], dict[str, str], str, str, dict[str, Any]]:
-    suffix = path.suffix.lower()
-    kind = "xlsx" if suffix == ".xlsx" else "xls"
-    if suffix == ".xlsx":
+    kind = _workbook_format(path)
+    if kind == "xlsx":
         try:
             from openpyxl import load_workbook
         except ImportError:
             return [], {}, kind, "xlsx_reader_missing", {}
         try:
-            wb = load_workbook(path, read_only=True, data_only=True)
+            # Pass bytes, not the path: openpyxl re-validates the suffix and would
+            # reject an OOXML workbook that is named `.xls`.
+            wb = load_workbook(BytesIO(path.read_bytes()), read_only=True, data_only=True)
             ws = wb.active
             it = ws.iter_rows(values_only=True)
             raw_header = next(it, ())
@@ -481,21 +544,84 @@ def _pick_table(tables: list[dict[str, Any]]) -> dict[str, Any]:
     return scored[0]
 
 
+def _module_names(path: str) -> set[str]:
+    """Dotted module spellings a wrapper could use to import ``path``."""
+    parts = Path(path).with_suffix("").parts
+    if not parts:
+        return set()
+    dotted = ".".join(parts)
+    names = {dotted, parts[-1]}
+    if parts[-1] in {"main", "__main__"} and len(parts) > 1:
+        names.add(".".join(parts[:-1]))
+    return {n for n in names if n}
+
+
+def _delegates_to(entry: dict[str, Any], candidates: list[str]) -> str:
+    """Which flagged module this entry re-exports, if any."""
+    imported = {str(name) for name in (entry.get("imports") or [])}
+    for path in candidates:
+        names = _module_names(path)
+        if imported & names:
+            return path
+        # `from fag_test.main import main` records module `fag_test.main`;
+        # also accept a parent-package import of the flagged module.
+        if any(name.startswith(tuple(f"{n}." for n in names)) for name in imported):
+            return path
+    return ""
+
+
+def flag_owner(entry: str, entries: list[dict[str, Any]], flags: list[dict[str, Any]]) -> str:
+    """Path whose argparse flags apply when ``entry`` is executed."""
+    flagged = [str(f.get("path") or "") for f in flags]
+    ordered: list[str] = []
+    for path in flagged:
+        if path and path not in ordered:
+            ordered.append(path)
+    if entry in ordered:
+        return entry
+    row = next((e for e in entries if str(e.get("path") or "") == entry), None)
+    if row:
+        delegate = _delegates_to(row, ordered)
+        if delegate:
+            return delegate
+    return entry
+
+
+def _is_case_flag(row: dict[str, Any]) -> bool:
+    blob = _flag_blob(row)
+    return any(hint in blob for hint in _CASE_HINTS) and "cache" not in blob
+
+
 def _pick_entry(entries: list[dict[str, Any]], flags: list[dict[str, Any]]) -> str:
-    flagged = {str(f.get("path") or "") for f in flags}
-    for row in entries:
+    """Pick the script a human would actually run to execute cases.
+
+    Two things beat "first file that has argparse": the entry must be executable as
+    a script (a module using package-relative imports only runs via ``-m`` or via a
+    wrapper), and its flags must include case selection, so a display/report tool
+    with its own argparse does not win over the real driver.
+    """
+    by_path = {str(f.get("path") or ""): [] for f in flags}
+    for row in flags:
+        by_path.setdefault(str(row.get("path") or ""), []).append(row)
+    flagged_order = [p for p in by_path if p]
+
+    def rank(row: dict[str, Any]) -> tuple:
         path = str(row.get("path") or "")
-        name = Path(path).name
-        if name.startswith("run_") and path in flagged:
-            return path
-    for row in entries:
-        path = str(row.get("path") or "")
-        if path in flagged and row.get("is_entry"):
-            return path
-    for row in entries:
-        if row.get("is_entry"):
-            return str(row.get("path") or "")
-    return str(entries[0].get("path") or "") if entries else ""
+        owner = path if path in by_path else _delegates_to(row, flagged_order)
+        owned = by_path.get(owner) or []
+        return (
+            0 if not row.get("relative_import") else 1,
+            0 if any(_is_case_flag(f) for f in owned) else 1,
+            0 if owned else 1,
+            len(Path(path).parts),
+            0 if Path(path).name.startswith("run_") else 1,
+            path,
+        )
+
+    candidates = [row for row in entries if row.get("is_entry")] or list(entries)
+    if not candidates:
+        return ""
+    return str(sorted(candidates, key=rank)[0].get("path") or "")
 
 
 def _pick_case_arg(flags: list[dict[str, Any]]) -> str:
@@ -506,10 +632,15 @@ def _pick_case_arg(flags: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _flags_for_entry(flags: list[dict[str, Any]], entry: str) -> list[dict[str, Any]]:
+def _flags_for_entry(
+    flags: list[dict[str, Any]],
+    entry: str,
+    entries: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     if not entry:
         return list(flags)
-    return [row for row in flags if str(row.get("path") or "") == entry]
+    owner = flag_owner(entry, list(entries or []), flags)
+    return [row for row in flags if str(row.get("path") or "") == owner]
 
 
 def _mode_candidates(flags: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -526,11 +657,21 @@ def _mode_candidates(flags: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _mode_blob(row: dict[str, Any]) -> str:
+    """Flag text plus its declared choices.
+
+    ``choices`` *are* the mode values, so a flag that documents nothing in help but
+    declares ``choices=['only_grad', 'profiler']`` still identifies both modes. Kept
+    separate from ``_flag_blob`` so case-selection detection is not widened.
+    """
+    return " ".join([_flag_blob(row), *(str(c or "").lower() for c in (row.get("choices") or []))])
+
+
 def _pick_modes(flags: list[dict[str, Any]]) -> dict[str, list[str]]:
     precision: list[str] = []
     perf: list[str] = []
     for row in flags:
-        blob = _flag_blob(row)
+        blob = _mode_blob(row)
         flag = str(row.get("flag") or "")
         if not flag:
             continue

@@ -771,6 +771,18 @@ def _declared_phase_actors(
     actor = str(active.get("actor_id") or "").strip().lower()
     if actor:
         declared.add(actor)
+    # primary_review Host action is the controller (ascendc-pilot). Primary still
+    # native-Tasks the workflow's producer (plan_ingest → tg-analyst). Actors on
+    # the review action itself stay [ascendc-pilot] (ACTOR_LIST_DRIFT).
+    if any(str(a.get("execution_mode") or "") == "primary_review" for a in allowed):
+        for row in meta.get("agents") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("role") or "") not in {"producer", "readonly_analyst"}:
+                continue
+            extra = str(row.get("id") or "").strip().lower()
+            if extra:
+                declared.add(extra)
     return declared
 
 

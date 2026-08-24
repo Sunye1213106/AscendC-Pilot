@@ -348,7 +348,7 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         "kb_check": "UO KB 就绪",
         "repo_scan": "扫描测试脚本仓",
         "bind_promote": "写出 init.yaml",
-        "plan_narrate": "写 plan.md 三节散文",
+        "plan_ingest": "派 Plan Owner 交 Coverage IR",
         "plan_promote": "写出 plan.md",
         "analyze_promote": "写出 worklog.md",
         "code_review": "CE 审查",

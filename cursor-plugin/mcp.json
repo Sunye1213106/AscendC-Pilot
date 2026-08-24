@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ascendc-pilot": {
+      "type": "stdio",
+      "command": "C:/ProgramData/miniconda3/python.exe",
+      "args": [
+        "-u",
+        "D:/PR-review/AscendC-Pilot/cursor-plugin/run_mcp.py"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONWARNINGS": "ignore"
+      }
+    }
+  }
+}

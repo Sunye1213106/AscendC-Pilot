@@ -280,3 +280,18 @@ def test_merge_bind_chunks_unions_mapping_and_call_args(tmp_path: Path) -> None:
     bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
     assert bind["llm_edit"] is True
     assert bind["run_id"] == "RUN_1"
+
+
+def test_dump_part_does_not_wrap_long_evidence_path(tmp_path: Path) -> None:
+    evidence = (
+        "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:105 "
+        "TILING_FIELD b (FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase)"
+    )
+    path = tmp_path / "bind.yaml"
+    BP.dump_part(path, {"mapping": {"B": {"evidence": evidence}}})
+    raw = path.read_text(encoding="utf-8")
+    assert "flash_attention_score_grad_tiling_data_regbase.h:105" in raw
+    assert "flash_attention_\n" not in raw
+    loaded = yaml.safe_load(raw)
+    assert loaded["mapping"]["B"]["evidence"] == evidence
+

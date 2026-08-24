@@ -42,9 +42,11 @@ def load_schema(kind: str) -> dict[str, Any]:
 
 
 def dump_part(path: Path, doc: dict[str, Any]) -> None:
+    from .io import YAML_WIDTH
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, width=YAML_WIDTH),
         encoding="utf-8",
     )
 
@@ -132,28 +134,52 @@ def _column_names(scan: dict[str, Any]) -> list[str]:
     return names
 
 
-def _table_kind(scan: dict[str, Any]) -> str:
+def _primary_table(scan: dict[str, Any]) -> dict[str, Any]:
+    """The one table that ``contract.columns`` / ``contract.defaults`` describe."""
+    contract = scan.get("contract") if isinstance(scan.get("contract"), dict) else {}
     inventory = scan.get("inventory") if isinstance(scan.get("inventory"), dict) else {}
-    kinds = [
-        str(t.get("kind") or "")
-        for t in (inventory.get("tables") or [])
-        if isinstance(t, dict)
-    ]
-    if "xlsx" in kinds:
-        return "xlsx"
-    if "xls" in kinds:
-        return "xls"
-    return "csv"
+    tables = [t for t in (inventory.get("tables") or []) if isinstance(t, dict)]
+    wanted = str(contract.get("primary_table") or "").strip()
+    if wanted:
+        for table in tables:
+            if str(table.get("path") or "") == wanted:
+                return table
+    # Older receipts carry no primary_table: recover it by matching the header the
+    # contract published, so the profile can never come from a different table.
+    cols = _column_names(scan)
+    if cols:
+        for table in tables:
+            if [str(c or "").strip() for c in (table.get("columns") or [])] == cols:
+                return table
+    return {}
+
+
+def _table_kind(scan: dict[str, Any]) -> str:
+    contract = scan.get("contract") if isinstance(scan.get("contract"), dict) else {}
+    declared = str(contract.get("table_kind") or "").strip()
+    if declared:
+        return declared
+    kind = str(_primary_table(scan).get("kind") or "").strip()
+    return kind or "csv"
 
 
 def _profiles(scan: dict[str, Any]) -> dict[str, Any]:
-    inventory = scan.get("inventory") if isinstance(scan.get("inventory"), dict) else {}
-    for table in inventory.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        profile = table.get("profile") if isinstance(table.get("profile"), dict) else {}
-        cols = profile.get("columns") if isinstance(profile.get("columns"), dict) else {}
-        if cols:
+    """Column profile of the primary table only.
+
+    Reading a profile from any other table silently mislabels every column whose
+    header spelling differs between tables, and makes ``defaults`` disagree with
+    ``domains.profile``.
+    """
+    contract = scan.get("contract") if isinstance(scan.get("contract"), dict) else {}
+    profile = contract.get("column_profile")
+    if isinstance(profile, dict):
+        cols = profile.get("columns")
+        if isinstance(cols, dict) and cols:
+            return cols
+    profile = _primary_table(scan).get("profile")
+    if isinstance(profile, dict):
+        cols = profile.get("columns")
+        if isinstance(cols, dict) and cols:
             return cols
     return {}
 

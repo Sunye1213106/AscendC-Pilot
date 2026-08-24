@@ -1,0 +1,160 @@
+schema: tg-plan/v3
+requirement:
+  id: R-tnd-dense-swizzle
+  text: >
+    PR10335 新增 IsTndDeterSwizzleScheduleSafe 与 deterTndSwizzleSafe 门控，kernel 侧 CalTNDDenseSwizzleIndex
+    替换 deter TND dense 旧索引。写点 tndBaseInfo.isTndSwizzle（DoOpTiling:753，pack IsTndSwizzle@1787）路径：
+    ¬IsCapable早退(tndSoftmaxIn≠""∨npuArch≠DAV_3510) ∧ DoSparse成功。合取：enableSwizzle
+    ∧ layoutType=TND ∧ templateSupportCond ∧ B<129 ∧ ¬isSeqExistZero ∧ tailZeroCount=0。
+    enableSwizzle=(isExceedL2Cache∨isLargeInvalidBlk)∧blockOuter==aicNum（environment.aicNum=32）。
+    templateSupportCond 析取两支均可达 expected=1（禁止 Guard 误杀）：
+    (1) isDeterministic∧splitAxis=BN2GS1S2∧deterSparseType=DETER_DENSE∧g=1∧deterTndSwizzleSafe；
+    (2) ¬isDeterministic∧splitAxis=BN2S2∧(s1≥2048∨(s2>128∧s1≥1024))∧sparseType≠UNSUPPORTED。
+    deterTndSwizzleSafe=¬isDeterministic∨IsTndDeterSwizzleScheduleSafe（helper 仅杀 deter 支，negate 后 nondeter 支仍可达→Dimension）。
+    取反杀整 Target：layout≠TND；B≥129；seqlens 段长含 0→isSeqExistZero；eod 尾零→tailZeroCount（eod 列 untestable）。
+
+targets:
+  - id: T-is-tnd-swizzle
+    evidence: {kind: replay_field, field: replay.IsTndSwizzle, expected: 1}
+
+dimensions:
+  - id: D-template-arm
+    target: T-is-tnd-swizzle
+    controls: [is_deter]
+    classifier: {requires: [case.is_deter, probe.deterTndSwizzleSafe]}
+    partitions:
+      - id: p-deter-dense-schedule-safe
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.is_deter, value: 1}
+            - {op: eq, field: probe.deterTndSwizzleSafe, value: 1}
+      - id: p-nondeter-bn2s2
+        predicate: {op: eq, field: case.is_deter, value: 0}
+
+  - id: D-s1-threshold
+    target: T-is-tnd-swizzle
+    controls: [S1, S2]
+    classifier: {requires: [case.S1, case.S2]}
+    partitions:
+      - id: p-s1-ge-2048
+        predicate: {op: ge, field: case.S1, value: 2048}
+      - id: p-s2-gt128-s1-ge-1024
+        predicate:
+          op: and
+          args:
+            - {op: ge, field: case.S1, value: 1024}
+            - {op: lt, field: case.S1, value: 2048}
+            - {op: gt, field: case.S2, value: 128}
+
+  - id: D-n1n2-gqa
+    target: T-is-tnd-swizzle
+    controls: [N1, N2]
+    classifier: {requires: [case.N1, case.N2]}
+    partitions:
+      - id: p-mha-g1
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 4}
+            - {op: eq, field: case.N2, value: 4}
+      - id: p-gqa-nondeter
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 4}
+            - {op: eq, field: case.N2, value: 2}
+
+guards:
+  - id: G-non-tnd
+    target: T-is-tnd-swizzle
+    controls: [Input_Layout]
+    predicate: {op: ne, field: case.Input_Layout, value: TND}
+    negate_hint: {Input_Layout: TND}
+
+  - id: G-batch-ge-prefix-num
+    target: T-is-tnd-swizzle
+    controls: [B]
+    predicate: {op: ge, field: case.B, value: 129}
+    negate_hint: {B: 128}
+
+  - id: G-seq-zero-segment
+    target: T-is-tnd-swizzle
+    controls: [seqlens_list_q]
+    predicate: {op: eq, field: case.seqlens_list_q, value: "[0]"}
+    negate_hint: {seqlens_list_q: "[1024]"}
+
+coverage:
+  L0: {dimensions: [D-template-arm, D-s1-threshold, D-n1n2-gqa]}
+  L1:
+    combinations:
+      - {dims: [D-template-arm, D-s1-threshold], reason: "nondeter BN2S2 支依赖 s1/s2 内层 || 阈值；deter 支不依赖该阈值"}
+      - {dims: [D-template-arm, D-n1n2-gqa], reason: "deter 支要求 g=1(MHA)；GQA 仅 nondeter 支可达 expected=1"}
+      - {dims: [D-s1-threshold, D-n1n2-gqa], reason: "nondeter 支同时受 seq 阈值与 head 分组影响 enableSwizzle 分核"}
+  L2: []
+  L3: {guards: [G-non-tnd, G-batch-ge-prefix-num, G-seq-zero-segment]}
+
+oracle:
+  - kind: md5
+    fields: [Actual_dq_Md5sum, Actual_dk_Md5sum, Actual_dv_Md5sum]
+    when: {op: eq, field: case.is_deter, value: 1}
+
+constraints:
+  - predicate: {op: eq, field: case.same_as_input, value: 1}
+    reason: "TND 路径 layoutType=INPUT_FORMAT_TND（runner softmax_layout=TND）"
+  - predicate: {op: eq, field: case.Drop_Out_Possibility, value: 1}
+    reason: "keepProb=1 避免 drop 分支改写 splitAxis/enableSwizzle 路径"
+  - predicate: {op: eq, field: case.sparse_mode, value: 0}
+    reason: "deter 支需 GetDeterSparseTilingKey→DETER_DENSE；nondeter 支需 sparseType≠UNSUPPORTED"
+  - predicate:
+      op: and
+      args:
+        - {op: ge, field: case.Pre_Tockens, value: 65536}
+        - {op: ge, field: case.Next_Tockens, value: 65536}
+    reason: "NO_MASK dense 判定需 s1Token≥s1 且 s2Token≥s2（默认 pre/next 覆盖表内 S1/S2）"
+
+environment:
+  aicNum: {value: 32, source: "attention/flash_attention_score_grad/tests/ut/op_host/arch35/test_flash_attention_score_grad_tiling.cpp:49"}
+  coreNum: {value: 32, source: "attention/flash_attention_score_grad/tests/ut/op_host/arch35/test_flash_attention_score_grad_tiling.cpp:56"}
+
+untestable:
+  - id: u-dtype
+    kind: control_gap
+    reason: "Dtype 列 unresolved+active，无 host TILING_KEY/字段绑定，无法控制 queryType→splitAxis 早退"
+    needs_binding:
+      - {column: Dtype, want: "confirmed+active，并证实 dtype→queryType→SetSplitAxis/isBn2 传导链"}
+  - id: u-out-dtype
+    kind: control_gap
+    reason: "out_dtype 列 unresolved+active，无 host 字段绑定，无法隔离 outDtype 对 nz/swizzle 路径影响"
+    needs_binding:
+      - {column: out_dtype, want: "confirmed+active，并证实 out_dtype→outDtype 传导链"}
+  - id: u-atten-mask-dtype
+    kind: control_gap
+    reason: "Atten_mask_dtype unresolved+active，无法控制 atten_mask tensor dtype→sparseType 路径"
+    needs_binding:
+      - {column: Atten_mask_dtype, want: "confirmed+active，并证实 atten_mask_dtype→sparse 判定传导链"}
+  - id: u-atten-mask-shape
+    kind: control_gap
+    reason: "Atten_mask_shape unresolved+active，无法控制 atten_mask 存在性→isSparse/sparseType"
+    needs_binding:
+      - {column: Atten_mask_shape, want: "confirmed+active，并证实 atten_mask_shape→isSparse 传导链"}
+  - id: u-pse-shape
+    kind: control_gap
+    reason: "PSE_shape unresolved+active，无法控制 pse 分支对 tiling 路径的副作用"
+    needs_binding:
+      - {column: PSE_shape, want: "confirmed+active，并证实 PSE_shape→pseOptional 传导链"}
+  - id: u-eod
+    kind: control_gap
+    reason: "eod 列 unresolved+active，tailZeroCount/isEOD 无法由表列直接驱动，阻塞 tailZeroCount==0 负项覆盖"
+    needs_binding:
+      - {column: eod, want: "confirmed+active，并证实 eod→tailZeroCount 传导链"}
+  - id: u-inner-drop
+    kind: control_gap
+    reason: "inner_drop unresolved+active，仅影响 drop_mask 造数，与 IsDrop TILING_KEY 无 UO 绑定"
+    needs_binding:
+      - {column: inner_drop, want: "confirmed+active，并证实 inner_drop→drop_mask 策略传导链"}
+  - id: u-is-sink
+    kind: control_gap
+    reason: "is_sink unresolved+active，sink kwarg 存在性无 TILING_KEY 观测面"
+    needs_binding:
+      - {column: is_sink, want: "confirmed+active，并证实 is_sink→sink kwarg 传导链"}

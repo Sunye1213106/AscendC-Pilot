@@ -225,8 +225,8 @@ def test_return_value_producer_does_not_publish_canonical() -> None:
     from ascendc_pilot.workflows.artifact_dag import is_staged_producer, normalize_published
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
-    fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
-    assert fuse.get("output_mode") == "return_value"
-    assert not is_staged_producer(fuse)
-    published = normalize_published(fuse)
+    ingest = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_ingest")
+    assert ingest.get("output_mode") == "return_value"
+    assert not is_staged_producer(ingest)
+    published = normalize_published(ingest)
     assert published == []

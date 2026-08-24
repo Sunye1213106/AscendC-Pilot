@@ -509,6 +509,7 @@ def parse_args_sel(src: str) -> list[list[dict]]:
     src = _join_continuations(strip_cpp_comments(src))
     groups: list[list[dict]] = []
     for m in re.finditer(r"ASCENDC_TPL_ARGS_SEL\s*\(", src):
+        line = src.count("\n", 0, m.start()) + 1
         body = _balanced_paren_body(src, m.end() - 1)
         sels: list[dict] = []
         for sm in re.finditer(
@@ -522,6 +523,7 @@ def parse_args_sel(src: str) -> list[list[dict]]:
                     "name": parts[0],
                     "kind": kind,
                     "vals": canonicalize_sel_vals(kind, parts[1:]),
+                    "line": line,
                 }
             )
         if sels:

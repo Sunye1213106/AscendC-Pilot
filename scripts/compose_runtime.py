@@ -19,10 +19,12 @@ _legacy.WORKFLOW_ENTRIES["ce-review"]["description"] = (
     "结论留在对话。建议测试走 /tg-plan。用 `pilot_run`。"
 )
 _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
-    "白盒测试规划，只落 tg/plan.md。`plan_scope` 像 uo-query：说清要测什么，不写文件。"
-    "fuse 交覆盖模型 YAML；Primary 写三节散文并校对 YAML；promote 拼成 plan.md。"
+    "白盒测试规划，只落 tg/plan.md。"
+    "`plan_precheck` 后 host_step 回 Primary：原生 Task(agent=tg-analyst) 当 Plan Owner，"
+    "同一窗完成测什么 + Coverage IR，只交 YAML。Host 不发 model 阶 ticket。"
+    "Engine 确定性 narrate 并 promote。禁止 Primary 自己 Write plan.md。"
     "`/tg-plan` 不审查 diff。全量 tilingkey 仅当用户点名时用 coverage.enumerate: legal_keys。"
-    "缺脚本/列/生成器写 test_harness_gap 交 /ce-apply。缺 fuse YAML → PLAN_FUSE_REQUIRED；缺散文 → PLAN_PROSE_REQUIRED。"
+    "缺脚本/列/生成器写 test_harness_gap 交 /ce-apply。缺 Owner YAML → PLAN_INGEST_REQUIRED。"
 )
 
 # Keep the Primary OpenCode permission contract explicit at the entrypoint. The

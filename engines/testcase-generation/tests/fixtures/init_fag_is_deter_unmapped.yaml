@@ -1,0 +1,40 @@
+schema: tg-init/v1
+kind: script_repo
+mapping:
+  is_deter:
+    control: {status: active}
+    relation: direct
+    confidence: confirmed
+    uo: {id: isDeter, candidate: ""}
+  rope:
+    control: {status: active}
+    relation: direct
+    confidence: confirmed
+    uo: {id: rope, candidate: ""}
+  prefix:
+    control: {status: active}
+    relation: presence
+    confidence: confirmed
+    uo: {id: prefix, candidate: ""}
+  sparse_mode:
+    control: {status: metadata}
+    relation: ""
+    confidence: unresolved
+    uo: {id: "", candidate: ""}
+findings:
+  - code: unmapped_column
+    detail: "case column 'is_deter' is not a host field or key dim; agent must map or flag a test-script gap"
+  - code: unmapped_column
+    detail: "case column 'rope' is not a host field or key dim; agent must map or flag a test-script gap"
+  - code: unmapped_column
+    detail: "case column 'prefix' is not a host field or key dim; agent must map or flag a test-script gap"
+  - code: unmapped_column
+    detail: "case column 'sparse_mode' is not a host field or key dim; agent must map or flag a test-script gap"
+  - code: test_harness_gap
+    detail: "generate_inputs cannot emit inf_nan / empty_tensor / NaN"
+  - code: missing_entry
+    detail: leftover scan finding
+generate_inputs:
+  cannot:
+    inf_nan: "harness does not emit NaN/Inf"
+    empty_tensor: ""

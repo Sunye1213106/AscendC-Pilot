@@ -1,0 +1,244 @@
+schema: tg-plan/v3
+requirement:
+  id: R-fag-tnd-dense-swizzle
+  text: >
+    PR10335：(新增) IsTndDeterSwizzleScheduleSafe@tiling_normal_regbase.cpp:106，DoOpTiling:743 写入
+    deterTndSwizzleSafe；(改动) templateSupportCond deter 支去掉 &&false，合取
+    isDeterministic&&SplitAxis==BN2GS1S2(0)&&DeterType==DETER_DENSE(2)&&g==1(N1/N2)&&deterTndSwizzleSafe；(改动)
+    tndBaseInfo.isTndSwizzle@DoOpTiling:753 打包 replay.IsTndSwizzle@1787；(改动) CalTNDDenseSwizzleIndex@deter.h:1626
+    linearIdx=delta/s1OuterTmp*k+j（去掉 deltaCnt），CalDenseDeterIndex@kernel_deter.h:439 在 IS_TND_SWIZZLE&&IsNewDeter
+    路径调用。可达 isTndSwizzle=1 需否定 IsCapable 早退(tndSoftmaxIn非空)、DoSparse 失败；合取
+    enableSwizzle=(isExceedL2Cache||isLargeInvalidBlk)&&blockOuter==aicNum、Input_Layout=TND、templateSupportCond、
+    B<129、!isSeqExistZero、tailZeroCount==0。否定 deter 支：g!=1(GQA,N1!=N2)、deterTndSwizzleSafe=0(m<min(aicNum,n))、
+    DeterType!=DETER_DENSE；否定外层：layout!=TND、is_deter=0、B>=129、enableSwizzle=0。kernel swizzle 坐标路径另需
+    IsNewDeter&&replay.IsTndSwizzle=1&&replay.IsTnd=1。
+targets:
+  - id: T-isTndSwizzle
+    evidence: {kind: replay_field, field: replay.IsTndSwizzle, expected: 1}
+  - id: T-deter-schedule-safe
+    evidence: {kind: probe, field: probe.deterTndSwizzleSafe, expected: 1}
+  - id: T-kernel-tnd-swizzle-coord
+    evidence:
+      kind: derived
+      predicate:
+        op: and
+        args:
+          - {op: eq, field: replay.IsTndSwizzle, value: 1}
+          - {op: eq, field: replay.DeterType, value: 2}
+          - {op: eq, field: replay.IsTnd, value: 1}
+dimensions:
+  - id: D-head-count
+    target: T-isTndSwizzle
+    controls: [N1, N2]
+    classifier: {requires: [case.N1, case.N2]}
+    partitions:
+      - id: p-heads-4
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 4}
+            - {op: eq, field: case.N2, value: 4}
+      - id: p-heads-8
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 8}
+            - {op: eq, field: case.N2, value: 8}
+  - id: D-batch-count
+    target: T-isTndSwizzle
+    controls: [B]
+    classifier: {requires: [case.B]}
+    partitions:
+      - {id: p-b1, predicate: {op: eq, field: case.B, value: 1}}
+      - {id: p-b2, predicate: {op: eq, field: case.B, value: 2}}
+  - id: D-swizzle-trigger
+    target: T-isTndSwizzle
+    controls: [B, D, S1, S2]
+    classifier: {requires: [probe.isExceedL2Cache, probe.isLargeInvalidBlk]}
+    partitions:
+      - id: p-l2-exceed
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: probe.isExceedL2Cache, value: 1}
+            - {op: eq, field: probe.isLargeInvalidBlk, value: 0}
+      - id: p-large-invalid-blk
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: probe.isLargeInvalidBlk, value: 1}
+            - {op: eq, field: probe.isExceedL2Cache, value: 0}
+  - id: D-schedule-margin
+    target: T-deter-schedule-safe
+    controls: [seqlens_list_q, seqlens_list_kv]
+    classifier: {requires: [case.seqlens_list_q, probe.deterTndSwizzleSafe]}
+    partitions:
+      - id: p-tight-margin
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.seqlens_list_q, value: "[2048]"}
+            - {op: eq, field: probe.deterTndSwizzleSafe, value: 1}
+      - id: p-loose-margin
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.seqlens_list_q, value: "[8192]"}
+            - {op: eq, field: probe.deterTndSwizzleSafe, value: 1}
+  - id: D-seq-asymmetry
+    target: T-kernel-tnd-swizzle-coord
+    controls: [seqlens_list_q, seqlens_list_kv]
+    classifier: {requires: [case.seqlens_list_q, case.seqlens_list_kv]}
+    partitions:
+      - id: p-symmetric
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.seqlens_list_q, value: "[2048]"}
+            - {op: eq, field: case.seqlens_list_kv, value: "[2048]"}
+      - id: p-asymmetric
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.seqlens_list_q, value: "[4096]"}
+            - {op: eq, field: case.seqlens_list_kv, value: "[1024]"}
+  - id: D-kernel-batch
+    target: T-kernel-tnd-swizzle-coord
+    controls: [B]
+    classifier: {requires: [case.B]}
+    partitions:
+      - {id: p-k-b1, predicate: {op: eq, field: case.B, value: 1}}
+      - {id: p-k-b2, predicate: {op: eq, field: case.B, value: 2}}
+guards:
+  - id: G-not-tnd
+    target: T-isTndSwizzle
+    controls: [Input_Layout]
+    predicate: {op: ne, field: case.Input_Layout, value: TND}
+    negate_hint: {Input_Layout: TND}
+  - id: G-not-deter
+    target: T-isTndSwizzle
+    controls: [is_deter]
+    predicate: {op: eq, field: case.is_deter, value: 0}
+    negate_hint: {is_deter: 1}
+  - id: G-gqa
+    target: T-isTndSwizzle
+    controls: [N1, N2]
+    predicate:
+      op: and
+      args:
+        - {op: eq, field: case.N1, value: 6}
+        - {op: eq, field: case.N2, value: 2}
+    negate_hint: {N1: 4, N2: 4}
+  - id: G-b-over
+    target: T-isTndSwizzle
+    controls: [B]
+    predicate: {op: ge, field: case.B, value: 129}
+    negate_hint: {B: 2}
+  - id: G-schedule-unsafe
+    target: T-deter-schedule-safe
+    controls: [seqlens_list_q]
+    predicate: {op: eq, field: case.seqlens_list_q, value: "[32]"}
+    negate_hint: {seqlens_list_q: "[2048]"}
+  - id: G-not-deter-dense
+    target: T-isTndSwizzle
+    controls: [is_deter, sparse_mode]
+    predicate:
+      op: and
+      args:
+        - {op: eq, field: case.is_deter, value: 1}
+        - {op: eq, field: case.sparse_mode, value: 3}
+    negate_hint: {is_deter: 1, sparse_mode: 0}
+  - id: G-enable-swizzle-off
+    target: T-isTndSwizzle
+    controls: [B, D, N1]
+    predicate:
+      op: and
+      args:
+        - {op: eq, field: case.B, value: 1}
+        - {op: eq, field: case.D, value: 64}
+        - {op: eq, field: case.N1, value: 4}
+    negate_hint: {B: 2, D: 128, N1: 8}
+coverage:
+  L0:
+    dimensions:
+      - D-head-count
+      - D-batch-count
+      - D-swizzle-trigger
+      - D-schedule-margin
+      - D-seq-asymmetry
+      - D-kernel-batch
+  L1:
+    combinations:
+      - {dims: [D-batch-count, D-schedule-margin], reason: "IsTndDeterSwizzleScheduleSafe 按 actualSeqQlen/Kvlen 逐 batch 校验 m>=min(aicNum,n)"}
+      - {dims: [D-swizzle-trigger, D-head-count], reason: "CheckExceedL2Cache 估算含 n2*g(=N1 when N1==N2) 与 enableSwizzle 合取"}
+      - {dims: [D-kernel-batch, D-seq-asymmetry], reason: "CalTNDDenseSwizzleIndex 用 tndS2BlockPrefixSum[b] 分解多 batch 与不对称 s1Outer/s2Outer"}
+  L2: []
+  L3:
+    guards:
+      - G-not-tnd
+      - G-not-deter
+      - G-gqa
+      - G-b-over
+      - G-schedule-unsafe
+      - G-not-deter-dense
+      - G-enable-swizzle-off
+oracle:
+  - kind: md5
+    columns: [Actual_dq_Md5sum, Actual_dk_Md5sum, Actual_dv_Md5sum]
+    requires: [case.is_deter]
+    reason: "CalTNDDenseSwizzleIndex head-major S2 linearIdx 重排改变 deterministic 累加顺序，is_deter=1 时以 md5 回归 dq/dk/dv"
+constraints:
+  - id: C-deter-on
+    predicate: {op: eq, field: case.is_deter, value: 1}
+  - id: C-tnd-layout
+    predicate: {op: eq, field: case.Input_Layout, value: TND}
+  - id: C-sparse-no-mask
+    predicate: {op: eq, field: case.sparse_mode, value: 0}
+  - id: C-pre-tokens-dense
+    predicate: {op: ge, field: case.Pre_Tockens, value: 65536}
+  - id: C-next-tokens-dense
+    predicate: {op: ge, field: case.Next_Tockens, value: 65536}
+environment:
+  aicNum: 32
+  coreNum: 32
+untestable:
+  - id: u-Dtype
+    kind: control_gap
+    reason: "Dtype 列 unresolved+active；驱动 query/key/value tensor dtype，未证实到 IsTndSwizzle/deterTndSwizzleSafe 写点传导链"
+    needs_binding:
+      - {column: Dtype, want: "confirmed+active，并证实 Dtype→queryType→templateSupportCond/isTndSwizzle 传导链"}
+  - id: u-out_dtype
+    kind: control_gap
+    reason: "out_dtype 列 unresolved+active；驱动 dy/attention_in dtype，未证实到 deter TND swizzle 写点"
+    needs_binding:
+      - {column: out_dtype, want: "confirmed+active，并证实 out_dtype→OutDType TILING_KEY 与 swizzle 路径关系"}
+  - id: u-Atten_mask_dtype
+    kind: control_gap
+    reason: "Atten_mask_dtype 列 unresolved+active；驱动 atten_mask tensor dtype，未证实到 isTndSwizzle 写点"
+    needs_binding:
+      - {column: Atten_mask_dtype, want: "confirmed+active，并证实 Atten_mask_dtype→host 分支与 swizzle gate 关系"}
+  - id: u-Atten_mask_shape
+    kind: control_gap
+    reason: "Atten_mask_shape 列 unresolved+active；驱动 atten_mask shape/存在性，CheckExceedL2Cache 含 mask 体积但未证实独立 gate isTndSwizzle"
+    needs_binding:
+      - {column: Atten_mask_shape, want: "confirmed+active，并证实 Atten_mask_shape→attenMaskShapeType→enableSwizzle 传导链"}
+  - id: u-PSE_shape
+    kind: control_gap
+    reason: "PSE_shape 列 unresolved+active；驱动 pse tensor shape，未证实到 deter TND swizzle 写点"
+    needs_binding:
+      - {column: PSE_shape, want: "confirmed+active，并证实 PSE_shape→pseOptional 与 tiling key 关系"}
+  - id: u-eod
+    kind: control_gap
+    reason: "eod 列 unresolved+active；TND EOD trim 经 host isEOD 影响 tailZeroCount/isSeqExistZero，gate isTndSwizzle 写点需 tailZeroCount==0 且 !isSeqExistZero"
+    needs_binding:
+      - {column: eod, want: "confirmed+active，并证实 eod→isEOD→tailZeroCount/isSeqExistZero 传导链"}
+  - id: u-inner_drop
+    kind: control_gap
+    reason: "inner_drop 列 unresolved+active；控制 drop_mask 造数策略，IsDrop TILING_KEY 由 keepProb 驱动，无法独立构造 deter swizzle 对照"
+    needs_binding:
+      - {column: inner_drop, want: "confirmed+active，并证实 inner_drop 与 tiling key/写点传导链"}
+  - id: u-is_sink
+    kind: control_gap
+    reason: "is_sink 列 unresolved+active；控制 sink kwarg 存在性，无 IsSink dim 无法 replay 观测"
+    needs_binding:
+      - {column: is_sink, want: "confirmed+active，并证实 is_sink→sink kwarg 与 kernel 路径关系"}

@@ -207,6 +207,96 @@ def mapping_as_dict(raw: Any) -> dict[str, Any]:
     return _drop_unfilled_mapping(out)
 
 
+_UNMAPPED_COL_RE = re.compile(r"case column ['\"]([^'\"]+)['\"]", re.I)
+
+
+def _finding_code(row: Any) -> str:
+    if isinstance(row, dict):
+        return str(row.get("code") or "").strip()
+    return ""
+
+
+def _finding_column(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    for key in ("column", "col", "name"):
+        val = str(row.get(key) or "").strip()
+        if val:
+            return val
+    detail = str(row.get("detail") or row.get("message") or "")
+    match = _UNMAPPED_COL_RE.search(detail)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def _finding_blob(row: Any) -> str:
+    if isinstance(row, str):
+        return row.lower()
+    if isinstance(row, dict):
+        parts = [str(row.get(k) or "") for k in ("code", "detail", "message", "column", "col")]
+        return " ".join(parts).lower()
+    return str(row or "").lower()
+
+
+def _cannot_keys(generate_inputs: dict[str, Any] | None) -> dict[str, str]:
+    gen = generate_inputs if isinstance(generate_inputs, dict) else {}
+    cannot = gen.get("cannot")
+    out: dict[str, str] = {}
+    if isinstance(cannot, dict):
+        for key, reason in cannot.items():
+            name = str(key or "").strip()
+            if name:
+                out[name] = str(reason or "")
+    elif isinstance(cannot, list):
+        for key in cannot:
+            name = str(key or "").strip()
+            if name:
+                out[name] = ""
+    return out
+
+
+def _mapping_confidence(mapping: dict[str, Any], col: str) -> str:
+    row = _mapping_row_for(mapping, col)
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("confidence") or "").strip()
+
+
+def reconcile_findings(
+    mapping: Any,
+    findings: list[Any] | None,
+    *,
+    generate_inputs: dict[str, Any] | None = None,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Drop stale unmapped_column when mapping is confirmed.
+
+    ``generate_inputs.cannot`` is a capability inventory, not a blocking
+    ``test_harness_gap``. Only later Plan obligations may write that fence.
+    """
+    bound = mapping_as_dict(mapping)
+    cannot = _cannot_keys(generate_inputs)
+    cannot_tokens = {key.lower() for key in cannot}
+    for key in list(cannot):
+        cannot_tokens.update(part for part in re.split(r"[_\s/]+", key.lower()) if part)
+
+    kept: list[Any] = []
+    for row in findings or []:
+        code = _finding_code(row)
+        if code == "unmapped_column":
+            col = _finding_column(row)
+            if col and _mapping_confidence(bound, col) == "confirmed":
+                continue
+        blob = _finding_blob(row)
+        looks_gap = code in {"test_harness_gap", "harness_gap"} or "test_harness_gap" in blob
+        if looks_gap and cannot_tokens and any(token in blob for token in cannot_tokens if len(token) > 2):
+            continue
+        kept.append(row)
+
+    unsupported = [{"key": key, "reason": reason} for key, reason in cannot.items()]
+    return kept, {"unsupported": unsupported}
+
+
 def _mapping_uses_name_schema(raw: Any) -> bool:
     rows: list[dict[str, Any]] = []
     if isinstance(raw, dict):
@@ -503,11 +593,22 @@ _PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
 _OBSERVE_PREFIXES = ("case.", "replay.", "probe.")
 
 
-def validate_plan_prose(text: str) -> list[str]:
+def validate_plan_prose(text: str, fence: dict[str, Any] | None = None) -> list[str]:
     errors: list[str] = []
     for heading in _PLAN_PROSE_HEADINGS:
         if not re.search(rf"^##\s*{re.escape(heading)}\s*$", text or "", re.MULTILINE):
             errors.append(f"plan.md missing heading {heading!r}")
+    if fence is None:
+        return errors
+    oracle = fence.get("oracle") or []
+    has_oracle = bool(oracle)
+    body = _FENCE_RE.sub("", text or "")
+    if re.search(r"精度|\bmd5\b|\bNaN\b|\bInf\b|\bnan\b|\binf\b", body, re.IGNORECASE) and not has_oracle:
+        from testcase_agent.coverage.contract import PLAN_PROSE_CONTRACT_DRIFT
+
+        errors.append(
+            f"{PLAN_PROSE_CONTRACT_DRIFT}: prose promises precision/md5/NaN/Inf but oracle is empty"
+        )
     return errors
 
 
@@ -585,6 +686,7 @@ def validate_plan_fence(
     init_mapping: Any = None,
     allow_legal_keys: bool = False,
     observe_fields: set[str] | None = None,
+    primary_observations: set[str] | None = None,
 ) -> list[str]:
     from testcase_agent.coverage.predicate import validate_predicate
 
@@ -637,6 +739,10 @@ def validate_plan_fence(
             err = _check_observe_field(field, owner=tid)
             if err:
                 errors.append(err)
+        if kind in {"replay_field", "probe"} and isinstance(evidence.get("expected"), (list, tuple, dict)):
+            errors.append(
+                f"{tid}: {kind} expected must be a scalar; multi-value use kind: derived with op: in"
+            )
         if kind == "derived":
             pred = evidence.get("predicate") or evidence.get("expr")
             errors.extend(validate_predicate(pred, path=f"{tid}.evidence.predicate"))
@@ -791,7 +897,7 @@ def validate_plan_fence(
                 continue
             if not str(row.get("reason") or "").strip():
                 errors.append(f"untestable[{idx}] missing reason")
-    from testcase_agent.coverage.contract import validate_executability
+    from testcase_agent.coverage.contract import validate_executability, validate_plan_semantics
 
     bound_mapping = mapping_as_dict(init_mapping) if init_mapping is not None else None
     errors.extend(
@@ -802,7 +908,65 @@ def validate_plan_fence(
             observe_fields=observe_fields,
         )
     )
+    errors.extend(validate_plan_semantics(fence, primary_observations=primary_observations))
     return errors
+
+
+def render_plan_prose(fence: dict[str, Any]) -> str:
+    """Deterministic three-section prose from Coverage IR. Does not invent oracle claims."""
+    req = fence.get("requirement") if isinstance(fence.get("requirement"), dict) else {}
+    what = str(req.get("text") or "").strip() or "见 Coverage IR。"
+    cover: list[str] = []
+    for row in fence.get("targets") or []:
+        if not isinstance(row, dict):
+            continue
+        tid = str(row.get("id") or "").strip() or "target"
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        kind = str(evidence.get("kind") or "").strip()
+        field = str(evidence.get("field") or "").strip()
+        expected = evidence.get("expected")
+        if kind == "derived":
+            cover.append(f"- `{tid}`: derived `{evidence.get('predicate') or evidence.get('expr')}`")
+        else:
+            cover.append(f"- `{tid}`: {kind} `{field}` expected={expected!r}")
+    for row in fence.get("dimensions") or []:
+        if isinstance(row, dict) and str(row.get("id") or "").strip():
+            parts = [
+                str(p.get("id") or "")
+                for p in (row.get("partitions") or [])
+                if isinstance(p, dict)
+            ]
+            cover.append(
+                f"- Dimension `{row['id']}` → `{row.get('target')}` partitions={parts}"
+            )
+    for row in fence.get("guards") or []:
+        if isinstance(row, dict) and str(row.get("id") or "").strip():
+            cover.append(f"- Guard `{row['id']}` on `{row.get('target')}`")
+    for row in fence.get("constraints") or []:
+        if isinstance(row, dict) and str(row.get("id") or "").strip():
+            cover.append(f"- constraint `{row['id']}`")
+    env = fence.get("environment")
+    if isinstance(env, dict) and env:
+        cover.append(f"- environment: {sorted(str(k) for k in env)}")
+    elif isinstance(env, list) and env:
+        cover.append(f"- environment: {len(env)} facts")
+    for row in fence.get("untestable") or []:
+        if isinstance(row, dict):
+            cover.append(
+                f"- untestable `{row.get('id') or ''}` kind={row.get('kind') or 'unspecified'}"
+            )
+    if not cover:
+        cover.append("- （Coverage IR 无 Target/Dimension）")
+    oracle = fence.get("oracle") or []
+    if oracle:
+        judge = f"oracle: {oracle}"
+    else:
+        judge = "本轮不声明 oracle；判定只看 Replay evidence 与 Guard。"
+    return (
+        f"## 测什么\n\n{what}\n\n"
+        f"## 覆盖什么\n\n" + "\n".join(cover) + "\n\n"
+        f"## 怎么判定\n\n{judge}\n"
+    )
 
 
 _APPROVAL_META = frozenset(

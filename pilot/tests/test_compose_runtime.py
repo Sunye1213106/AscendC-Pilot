@@ -165,8 +165,9 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         tg_prompts = generated / "prompts" / "tasks" / "tg"
         assert not (generated / "skills" / "workflow-orchestration" / "SKILL.md").exists()
         assert (tg_prompts / "bind-init.md").is_file()
-        assert (tg_prompts / "plan-fuse.md").is_file()
-        assert (tg_prompts / "plan-scope.md").is_file()
+        assert (tg_prompts / "plan-owner.md").is_file()
+        assert not (tg_prompts / "plan-fuse.md").exists()
+        assert not (tg_prompts / "plan-scope.md").exists()
         assert not (tg_prompts / "parse-intent.md").exists()
         assert not (tg_prompts / "change-impact.md").exists()
         assert not (tg_prompts / "change-obligations.md").exists()

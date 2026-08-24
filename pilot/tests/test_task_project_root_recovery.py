@@ -181,6 +181,23 @@ def test_primary_still_cannot_task_undeclared_producer_during_uo_init(tmp_path: 
     assert verdict.get("reason_code") == "TASK_AGENT_UNKNOWN", verdict
 
 
+def test_primary_may_task_tg_analyst_during_plan_ingest(tmp_path: Path) -> None:
+    """ses_fccf: plan_ingest is primary_review; Primary native-Tasks Plan Owner."""
+    op = tmp_path / "ops" / "flash_attention_score_grad"
+    op.mkdir(parents=True)
+    start_workflow(op, "tg-plan", phase="model", force_phase=True, architecture="arch35")
+    verdict = authorize(
+        op,
+        tool="task",
+        path="tg-analyst",
+        command="tg-analyst",
+        agent="ascendc-pilot",
+        action="plan_ingest",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK", verdict
+
+
 def test_primary_may_task_uo_query_during_failed_auto(tmp_path: Path) -> None:
     from ascendc_pilot.observation import record_pilot_result
 

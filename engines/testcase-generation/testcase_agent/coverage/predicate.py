@@ -94,10 +94,13 @@ def validate_predicate(expr: Any, *, path: str = "predicate") -> list[str]:
         errors.extend(validate_predicate(expr.get("when"), path=f"{path}.when"))
         errors.extend(validate_predicate(expr.get("then"), path=f"{path}.then"))
     elif op in {"eq", "ne"}:
-        if not str(expr.get("field") or expr.get("left") or "").strip():
-            errors.append(f"{path} {op} requires field")
+        raw = expr.get("field") if expr.get("field") is not None else expr.get("left")
+        if not isinstance(raw, str) or not raw.strip():
+            errors.append(f"{path} {op} requires string field")
         if "value" not in expr:
             errors.append(f"{path} {op} requires value")
+        elif isinstance(expr.get("value"), (dict, list, tuple)):
+            errors.append(f"{path} {op} value must be a scalar")
     elif op in {"in", "not_in"}:
         if not str(expr.get("field") or "").strip():
             errors.append(f"{path} {op} requires field")
@@ -105,10 +108,13 @@ def validate_predicate(expr: Any, *, path: str = "predicate") -> list[str]:
         if not isinstance(values, list) or not values:
             errors.append(f"{path} {op} requires nonempty values list")
     elif op in {"lt", "le", "gt", "ge"}:
-        if not str(expr.get("field") or expr.get("left") or "").strip():
-            errors.append(f"{path} {op} requires field")
+        raw = expr.get("field") if expr.get("field") is not None else expr.get("left")
+        if not isinstance(raw, str) or not raw.strip():
+            errors.append(f"{path} {op} requires string field")
         if "value" not in expr:
             errors.append(f"{path} {op} requires value")
+        elif isinstance(expr.get("value"), (dict, list, tuple)):
+            errors.append(f"{path} {op} value must be a scalar")
     elif op in {"is_null", "is_present"}:
         if not str(expr.get("field") or "").strip():
             errors.append(f"{path} {op} requires field")

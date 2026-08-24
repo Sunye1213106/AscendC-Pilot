@@ -9,20 +9,15 @@ def test_plan_intent_action_removed() -> None:
 
     assert "plan_intent" not in PRIMARY_TG_ACTIONS
     assert action_by_id("tg-plan", "plan_intent") is None
-    scope = action_by_id("tg-plan", "plan_scope")
-    assert scope is not None
-    assert scope.get("execution_mode") == "subagent"
-    assert scope.get("skill_id") == "test-plan"
-    assert scope.get("method_ref") == "target-planning.md"
-    assert scope.get("output_mode") == "return_value"
-    fuse = action_by_id("tg-plan", "plan_fuse")
-    assert fuse is not None
-    assert fuse.get("execution_mode") == "subagent"
-    assert fuse.get("output_mode") == "return_value"
-    narrate = action_by_id("tg-plan", "plan_narrate")
-    assert narrate is not None
-    assert narrate.get("execution_mode") == "primary_review"
-    assert narrate.get("output_mode") == "return_value"
+    assert action_by_id("tg-plan", "plan_scope") is None
+    assert action_by_id("tg-plan", "plan_fuse") is None
+    assert action_by_id("tg-plan", "plan_narrate") is None
+    ingest = action_by_id("tg-plan", "plan_ingest")
+    assert ingest is not None
+    assert ingest.get("execution_mode") == "primary_review"
+    assert ingest.get("skill_id") == "test-plan"
+    assert ingest.get("method_ref") == "coverage-planning.md"
+    assert ingest.get("output_mode") == "return_value"
     pre = action_by_id("tg-plan", "plan_precheck")
     assert pre is not None
     assert pre.get("execution_mode") == "deterministic"

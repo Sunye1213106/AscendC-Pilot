@@ -505,7 +505,7 @@ def _materialize_plan_approve(
             init_mapping=init_mapping,
             observe_fields=observe_fields,
         )
-        errors.extend(validate_plan_prose(text))
+        errors.extend(validate_plan_prose(text, fence))
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,
@@ -806,7 +806,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     if scenario is None:
         return {"ok": False, "error": "NOT_HOSTED_CONFIRM_ACTION", "action_id": action_id}
 
-    skip_gate = action_id in {
+    skip_ask = action_id in {
         "human_confirm",
         "plan_approve",
         "apply_report",
@@ -814,17 +814,20 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     } and not hosted_confirm_should_ask(
         project_root, state, action_id=action_id
     )
-    if skip_gate:
-        host_owned = action_id in {"human_confirm", "plan_approve"}
-        if host_owned and not _confirm_already_recorded(project_root, action_id, state):
-            return {
-                "ok": False,
-                "error": "HUMAN_DECISION_RECEIPT_REQUIRED",
-                "message_zh": "Host 确认尚未落收据；禁止无收据写入批准。",
-            }
+    host_owned = action_id in {"human_confirm", "plan_approve"}
+    # Host-owned confirms still need a HumanDecisionReceipt. skip_ask only
+    # means "don't use OpenCode native AskQuestion", not "skip the receipt".
+    if skip_ask and not host_owned:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         identity = _identity(session)
         identity["human_decision_request_id"] = "auto-skip-no-material"
+        materialize: MaterializeFn = scenario["materialize"]
+        return materialize(project_root, state, identity, now)
+
+    if _confirm_already_recorded(project_root, action_id, state):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        identity = _identity(session)
+        identity["human_decision_request_id"] = "already-recorded"
         materialize: MaterializeFn = scenario["materialize"]
         return materialize(project_root, state, identity, now)
 

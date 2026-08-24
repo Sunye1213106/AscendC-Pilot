@@ -6,6 +6,10 @@ from typing import Any
 
 import yaml
 
+# PyYAML default width=80 wraps long ``op_kernel/arch35/flash_attention_*.h:N``
+# evidence strings. A later line-oriented read then opens the truncated prefix.
+YAML_WIDTH = 4096
+
 
 def assert_tg_write_path(path: Path | str, *, out_root: Path | None = None) -> Path:
     """Delegate to isolation module (avoid circular import at package load)."""
@@ -23,7 +27,10 @@ def read_yaml(path: Path) -> Any:
 def write_yaml(path: Path, data: Any) -> None:
     assert_tg_write_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=YAML_WIDTH),
+        encoding="utf-8",
+    )
 
 
 def write_json(path: Path, data: Any) -> None:

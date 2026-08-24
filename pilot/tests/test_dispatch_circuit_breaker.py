@@ -12,7 +12,7 @@ def test_second_identical_dispatch_failure_is_blocked(monkeypatch, tmp_path: Pat
         "ticket_id": "ticket-1",
         "status": "processing",
         "workflow_id": "tg-plan",
-        "action_id": "plan_fuse",
+        "action_id": "plan_ingest",
     }
 
     def load(_root, _ticket_id):

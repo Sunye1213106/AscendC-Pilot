@@ -53,6 +53,7 @@ class TemplateBlock:
     field_domains: dict[str, list[str]]
     product_count: int
     sel_group_index: int
+    line_start: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +63,7 @@ class TemplateBlock:
             "field_domains": {k: list(v) for k, v in self.field_domains.items()},
             "product_count": self.product_count,
             "sel_group_index": self.sel_group_index,
+            "line_start": int(self.line_start or 0),
         }
 
 
@@ -127,6 +129,11 @@ def build_template_blocks(schema: TplSchema) -> list[TemplateBlock]:
         if product < 1:
             product = 1
         bid = named_id("TemplateBinding", f"sel{gi}")
+        line_start = 0
+        for sel in group:
+            line_start = int(sel.get("line") or 0)
+            if line_start:
+                break
         blocks.append(
             TemplateBlock(
                 id=bid,
@@ -135,6 +142,7 @@ def build_template_blocks(schema: TplSchema) -> list[TemplateBlock]:
                 field_domains=domains,
                 product_count=product,
                 sel_group_index=gi,
+                line_start=line_start,
             )
         )
     return blocks

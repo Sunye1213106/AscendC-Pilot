@@ -280,6 +280,74 @@ def test_bind_promote_merges_parts_after_referee(synthetic_root: Path) -> None:
     assert "b1" in doc.get("findings")
 
 
+def test_bind_promote_prose_evidence_does_not_crash(synthetic_root: Path) -> None:
+    """Free-form evidence with later ``other.cpp:2068`` must not abort promote.
+
+    Naive ``rpartition(':')`` left ``file.h:105 TILING...`` as the path; Windows
+    then FileNotFoundError'd and acp exited with ACP_NO_JSON.
+    """
+    from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote, run_repo_scan
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.state import start_workflow
+
+    src = (
+        synthetic_root
+        / "op_kernel"
+        / "arch35"
+        / "flash_attention_score_grad_tiling_data_regbase.h"
+    )
+    src.parent.mkdir(parents=True)
+    src.write_text("\n".join(f"line{i}" for i in range(1, 12)) + "\n", encoding="utf-8")
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    adopt_test_script_root(synthetic_root, "no_repo_uo_query")
+    ctx = {
+        "architecture": "arch0",
+        "run_id": str(state.get("run_id") or ""),
+        "op_name": "_synthetic_toy",
+    }
+    assert run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"}).get("ok")
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
+    (bind_root / "parts" / "harness.yaml").write_text(
+        "golden: {status: match}\ncompare: {atol: 1e-4}\nmodes: {precision: [run], perf: []}\n"
+        "generate_inputs: {kind: default}\n",
+        encoding="utf-8",
+    )
+    (bind_root / "parts" / "bind.yaml").write_text(
+        "table_kind: csv\nentry: ''\ncase_arg: ''\ncolumns: [{name: B}]\n"
+        "mapping:\n"
+        "  B:\n"
+        "    control: {status: active}\n"
+        "    relation: tensor_shape\n"
+        "    confidence: confirmed\n"
+        "    uo: {id: b, candidate: ''}\n"
+        "    evidence: op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:3 "
+        "TILING_FIELD b; set_n2 at tiling_normal_regbase.cpp:2068\n"
+        "domains: {B: '>=0'}\n",
+        encoding="utf-8",
+    )
+    # Drop scan-owned keys so restore cannot replace the prose evidence row.
+    engine_dir = bind_root / "parts" / ".engine"
+    if engine_dir.is_dir():
+        for child in engine_dir.iterdir():
+            child.unlink()
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True, exist_ok=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    proofs = out.get("evidence_proofs") or []
+    assert proofs, out
+    hit = next((p for p in proofs if p.get("column") == "B"), proofs[0])
+    assert hit.get("ok") is True, hit
+    assert hit.get("path") == "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h"
+    assert ":" not in str(hit.get("path") or "")
+
+
+
 def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_root: Path) -> None:
     from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote, run_repo_scan
     from ascendc_pilot.human_interaction import adopt_test_script_root

@@ -278,7 +278,7 @@ def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
             "ask": "primary",
             "message_zh": (
                 "PR 针对性 plan 需要先 pin-facts --project <算子>，从 clone_receipt promote。"
-                "缺 pin 不得进入 plan_scope。"
+                "缺 pin 不得进入 plan_ingest。"
             ),
         }
     return None

@@ -46,30 +46,15 @@ def test_classify_uo_scope_finalize_is_environment_invariant():
     assert c["recommended_transition"] == "human_required"
 
 
-def test_classify_plan_fuse_required_is_format_transport_not_human():
+def test_classify_plan_ingest_required_is_format_transport_not_human():
     c = classify_failure(
-        error_code="PLAN_FUSE_REQUIRED",
+        error_code="PLAN_INGEST_REQUIRED",
         action_id="plan_promote",
         source="finalize_action",
         execution_mode="deterministic",
         workflow_id="tg-plan",
-        phase="fuse",
-        messages=["缺少 plan_fuse YAML"],
-    )
-    assert c["failure_class"] == FORMAT_TRANSPORT
-    assert c["retryable"] is True
-    assert c["recommended_transition"] == "rework_required"
-
-
-def test_classify_plan_prose_required_is_format_transport_not_human():
-    c = classify_failure(
-        error_code="PLAN_PROSE_REQUIRED",
-        action_id="plan_promote",
-        source="finalize_action",
-        execution_mode="deterministic",
-        workflow_id="tg-plan",
-        phase="fuse",
-        messages=["缺少 Primary 散文"],
+        phase="validate",
+        messages=["缺少 Plan Owner YAML"],
     )
     assert c["failure_class"] == FORMAT_TRANSPORT
     assert c["retryable"] is True

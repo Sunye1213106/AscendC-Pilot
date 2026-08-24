@@ -1,0 +1,28 @@
+schema: tg-plan/v3
+requirement:
+  id: R-fag-deter-band
+  text: >
+    回归 deterBandScheduleMode（本次新增字段）在确定性调度下的取值。
+targets:
+  - id: T-deter-band-disabled
+    evidence: {kind: replay_field, field: replay.deterBandScheduleMode, expected: 0}
+dimensions:
+  - id: D-deter
+    target: T-deter-band-disabled
+    controls: [is_deter]
+    partitions:
+      - {id: on, predicate: {op: eq, field: case.is_deter, value: 1}}
+      - {id: deter_off, predicate: {op: eq, field: case.is_deter, value: 0}}
+guards:
+  - id: G-deter-on
+    target: T-deter-band-disabled
+    controls: [is_deter]
+    predicate: {op: eq, field: case.is_deter, value: 1}
+    negate_hint: {is_deter: 0}
+coverage:
+  L0: {dimensions: [D-deter]}
+  L1: []
+  L2: []
+  L3: {guards: [G-deter-on]}
+oracle: []
+untestable: []

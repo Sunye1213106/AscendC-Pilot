@@ -1,0 +1,38 @@
+schema: tg-plan-rubric/v1
+case: pr-10335-fag-tnd-dense-swizzle
+product: tg/plan.md
+operator: FlashAttentionScoreGrad
+architecture: arch35
+
+notes: |
+  Semantic grading for PR 10335 (TND deterministic dense swizzle unlock).
+  Not a literal diff against any golden file.
+
+must:
+  # The new behavior is isTndSwizzle becoming true on the deter+TND+DENSE path
+  # that used to be compiled out with `&& false`.
+  target_fields_any:
+    - isTndSwizzle
+    - deterTndSwizzleSafe
+  require_probe_or_replay_on:
+    - isTndSwizzle
+    - deterTndSwizzleSafe
+  layout_tnd_mentioned: true
+  is_deter_gate: true
+  gqa_filtered: true          # g==1 / N1==N2 must appear (partition or constraint or guard)
+  dense_sparse_path: true     # DETER_DENSE / sparse_mode=0 / tokens covering
+  kernel_index_mentioned: true  # CalTNDDenseSwizzleIndex in requirement or untestable
+  no_false_and_left: true     # plan must not still treat the path as permanently disabled
+  oracle_md5: true
+  environment_aic_and_core: true
+  min_dimensions: 5
+  min_partitions: 12
+  min_guards: 3
+  require_l1: true
+
+unresolved_must_gap:
+  - Dtype
+  - Atten_mask_shape
+
+scoring:
+  budget_seconds: 240

@@ -1,0 +1,222 @@
+schema: tg-plan/v3
+requirement:
+  id: R-fag-tnd-dense-swizzle
+  text: >
+    新增（PR-10335）：host DoOpTiling 写 tndBaseInfo.isTndSwizzle（flash_attention_score_grad_tiling_normal_regbase.cpp:753-755），
+    合取 enableSwizzle ∧ layout==TND ∧ templateSupportCond ∧ B<TND_SWIZZLE_PREFIX_NUM(129) ∧ ¬isSeqExistZero ∧ tailZeroCount==0；
+    打包 replay.IsTndSwizzle=1（:1787）。新增 host helper IsTndDeterSwizzleScheduleSafe(:106-134) 赋值 deterTndSwizzleSafe 进入 deter 模板臂(:743-747)。
+    InitTilingData 新增/改动 swizzle 分支：IsNewDeter∧isTndSwizzle→FagTilingWithTemplateTTTT+tndSwizzleParam_(:2082-2095)；
+    isTndSwizzle→FagTilingWithTemplateFFTT+tndSwizzleParam_(:2109-2120)。
+    新增 kernel deter.h::CalTNDDenseSwizzleIndex(:1607-1646)；改动 flash_attention_score_grad_kernel_deter.h::CalDenseDeterIndex
+    IS_TND_SWIZZLE 分支调 CalTNDDenseSwizzleIndex(:437-443) 与坐标 decode(:471-480)；CalDeterMaxLoopNum IS_TND_SWIZZLE
+    分支读 tndS2BlockPrefixSum(:606-608)。既有 flash_attention_score_grad_template_tiling_key.h::IsTndSwizzle TILING_KEY(:123) 扩展 ARGS_SEL。
+    既有：enableSwizzle=(isExceedL2Cache||isLargeInvalidBlk)∧blockOuter==aicNum(:731)；templateSupportCond 析取
+    deter(isDeterministic∧BN2GS1S2∧DETER_DENSE∧g==1∧deterTndSwizzleSafe) | nondeter(¬isDeterministic∧BN2S2∧(s1≥2048||(s2>128∧s1≥1024))∧sparseType≠UNSUPPORTED)(:744-752)。
+    路径否定：DoSparse 成功；layout≠TND、B≥129、isSeqExistZero 杀整 Target（Guard）。enableSwizzle 同一层 || 两支、
+    templateSupportCond 两支、nondeter S1 阈值同一层 || 两支、g==1 仅杀 deter 臂均可独立打到 expected=1；
+    deterTndSwizzleSafe unsafe 时 nondeter 臂仍可达；deterTndSwizzleSafe/g 维不得与 is_deter 维 L1 交叉。
+
+targets:
+  - id: T-is-tnd-swizzle-on
+    evidence: {kind: replay_field, field: replay.IsTndSwizzle, expected: 1}
+
+dimensions:
+  - id: D-enableSwizzle-arm
+    target: T-is-tnd-swizzle-on
+    controls: [S1, S2, D, B, N1, sparse_mode]
+    classifier: {requires: [probe.isExceedL2Cache, probe.isLargeInvalidBlk]}
+    partitions:
+      - id: p-exceed-l2cache-on
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: probe.isExceedL2Cache, value: 1}
+            - {op: eq, field: probe.isLargeInvalidBlk, value: 0}
+      - id: p-large-invalid-blk-on
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: probe.isExceedL2Cache, value: 0}
+            - {op: eq, field: probe.isLargeInvalidBlk, value: 1}
+
+  - id: D-template-deter-nondeter
+    target: T-is-tnd-swizzle-on
+    controls: [is_deter]
+    classifier: {requires: [case.is_deter]}
+    partitions:
+      - id: p-template-deter-arm
+        predicate: {op: eq, field: case.is_deter, value: 1}
+      - id: p-template-nondeter-arm
+        predicate: {op: eq, field: case.is_deter, value: 0}
+
+  - id: D-deterTndSwizzleSafe
+    target: T-is-tnd-swizzle-on
+    controls: [seqlens_list_q, seqlens_list_kv, N1, S1, S2, D]
+    classifier: {requires: [probe.deterTndSwizzleSafe]}
+    partitions:
+      - id: p-deter-swizzle-safe
+        predicate: {op: eq, field: probe.deterTndSwizzleSafe, value: 1}
+      - id: p-deter-swizzle-unsafe-nondeter-fallback
+        predicate: {op: eq, field: probe.deterTndSwizzleSafe, value: 0}
+
+  - id: D-nondeter-s1-threshold
+    target: T-is-tnd-swizzle-on
+    controls: [S1, S2]
+    classifier: {requires: [case.S1, case.S2]}
+    partitions:
+      - id: p-s1-ge2048-on
+        predicate:
+          op: and
+          args:
+            - {op: ge, field: case.S1, value: 2048}
+            - {op: ge, field: case.S2, value: 0}
+      - id: p-s2gt128-s1ge1024-on
+        predicate:
+          op: and
+          args:
+            - {op: lt, field: case.S1, value: 2048}
+            - {op: gt, field: case.S2, value: 128}
+            - {op: ge, field: case.S1, value: 1024}
+
+  - id: D-g-eq1
+    target: T-is-tnd-swizzle-on
+    controls: [N1, N2]
+    classifier: {requires: [case.N1, case.N2]}
+    partitions:
+      - id: p-g-eq1-mha
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 4}
+            - {op: eq, field: case.N2, value: 4}
+      - id: p-g-gt1-gqa
+        predicate:
+          op: and
+          args:
+            - {op: eq, field: case.N1, value: 8}
+            - {op: eq, field: case.N2, value: 2}
+
+  - id: D-replay-split-axis
+    target: T-is-tnd-swizzle-on
+    controls: [is_deter, sparse_mode, Input_Layout]
+    classifier: {requires: [replay.SplitAxis]}
+    partitions:
+      - id: p-split-bn2gs1s2
+        predicate: {op: eq, field: replay.SplitAxis, value: 0}
+      - id: p-split-bn2s2
+        predicate: {op: eq, field: replay.SplitAxis, value: 5}
+
+guards:
+  - id: G-layout-not-tnd
+    target: T-is-tnd-swizzle-on
+    controls: [Input_Layout]
+    predicate: {op: ne, field: case.Input_Layout, value: TND}
+    negate_hint: {Input_Layout: TND}
+
+  - id: G-b-ge-swizzle-prefix
+    target: T-is-tnd-swizzle-on
+    controls: [B]
+    predicate: {op: ge, field: case.B, value: 129}
+    negate_hint: {B: 128}
+
+  - id: G-seq-exist-zero
+    target: T-is-tnd-swizzle-on
+    controls: [seqlens_list_q, seqlens_list_kv]
+    predicate:
+      op: in
+      field: case.seqlens_list_q
+      values:
+        - "[7488,7488,7488,0,0,0,0,0,0]"
+    negate_hint: {seqlens_list_q: "[82,150,150]"}
+
+coverage:
+  L0:
+    dimensions:
+      - D-enableSwizzle-arm
+      - D-template-deter-nondeter
+      - D-deterTndSwizzleSafe
+      - D-nondeter-s1-threshold
+      - D-g-eq1
+      - D-replay-split-axis
+  L1:
+    combinations:
+      - dims: [D-enableSwizzle-arm, D-template-deter-nondeter]
+        reason: enableSwizzle 外层 || 两支与 templateSupportCond 析取两支均可独立使 isTndSwizzle=1
+      - dims: [D-enableSwizzle-arm, D-deterTndSwizzleSafe]
+        reason: enableSwizzle 触发与 deterTndSwizzleSafe 字段不相交；unsafe 格靠 is_deter=0 nondeter 臂仍可达
+      - dims: [D-enableSwizzle-arm, D-g-eq1]
+        reason: enableSwizzle 与 g 分岔字段不相交；g>1 仅杀 deter 臂，nondeter 臂独立可达
+      - dims: [D-enableSwizzle-arm, D-nondeter-s1-threshold]
+        reason: enableSwizzle 与 nondeter S1 阈值内层 || 字段不相交；deter 臂不依赖 S1 阈值
+      - dims: [D-enableSwizzle-arm, D-replay-split-axis]
+        reason: enableSwizzle 与 SplitAxis 观测字段不相交；两 split 模板均可配合 swizzle 写点
+      - dims: [D-nondeter-s1-threshold, D-g-eq1]
+        reason: nondeter S1 阈值内层 || 与 g 分岔字段不相交；g>1 不阻断 nondeter templateSupportCond 臂
+  L2: []
+  L3:
+    guards:
+      - G-layout-not-tnd
+      - G-b-ge-swizzle-prefix
+      - G-seq-exist-zero
+
+oracle:
+  - kind: precision
+    fields: [Actual_dq_pricision, Actual_dk_pricision, Actual_dv_pricision]
+  - kind: md5sum
+    fields: [Actual_dq_Md5sum, Actual_dk_Md5sum, Actual_dv_Md5sum]
+    when: {op: eq, field: case.is_deter, value: 1}
+
+constraints:
+  - id: c-block-outer-eq-aic-num
+    reason: enableSwizzle 合取项 blockOuter==aicNum（flash_attention_score_grad_tiling_normal_regbase.cpp:731）
+    predicate: {op: eq, field: probe.blockOuter, value: 32}
+  - id: c-tail-zero-count-zero
+    reason: isTndSwizzle 写点要求 tailZeroCount==0（flash_attention_score_grad_tiling_normal_regbase.cpp:755）
+    predicate: {op: eq, field: probe.tailZeroCount, value: 0}
+
+environment:
+  aicNum: 32
+  coreNum: 32
+  source: attention/flash_attention_score_grad/tests/ut/op_host/arch35/test_flash_attention_score_grad_tiling.cpp:49-56
+
+untestable:
+  - id: u-Dtype
+    kind: control_gap
+    reason: Dtype 列 unresolved+active，无 host TILING_KEY/TILING_FIELD 绑定，无法驱动 swizzle 写点分岔
+    needs_binding:
+      - {column: Dtype, want: "confirmed+active，并证实 dtype→queryType→CheckExceedL2Cache 输入字节宽度传导链"}
+  - id: u-out_dtype
+    kind: control_gap
+    reason: out_dtype 列 unresolved+active，无 replay/probe 观测面
+    needs_binding:
+      - {column: out_dtype, want: "confirmed+active，并证实 out_dtype→outDtype TILING_KEY 与 IsTndSwizzle 路径无关或需单列维"}
+  - id: u-Atten_mask_dtype
+    kind: control_gap
+    reason: Atten_mask_dtype 列 unresolved+active，mask dtype 未映射 host 判定点
+    needs_binding:
+      - {column: Atten_mask_dtype, want: "confirmed+active，并证实 atten_mask_dtype→attenMask tensor dtype→CheckExceedL2Cache mask 尺寸项"}
+  - id: u-Atten_mask_shape
+    kind: control_gap
+    reason: Atten_mask_shape 列 unresolved+active，mask shape 未映射 host 判定点
+    needs_binding:
+      - {column: Atten_mask_shape, want: "confirmed+active，并证实 atten_mask_shape→attenMaskShapeType→CheckExceedL2Cache(:1357-1363) 传导链"}
+  - id: u-PSE_shape
+    kind: control_gap
+    reason: PSE_shape 列 unresolved+active，PSE tensor shape 未映射 swizzle 写点
+    needs_binding:
+      - {column: PSE_shape, want: "confirmed+active，并证实 PSE_shape→pse 分支对 enableSwizzle/isTndSwizzle 可达性影响"}
+  - id: u-eod
+    kind: control_gap
+    reason: eod 列 unresolved+active，host isEOD 为计算量非表列直接绑定
+    needs_binding:
+      - {column: eod, want: "confirmed+active，并证实 eod→tailZeroCount/isSeqExistZero 传导链可表驱动"}
+  - id: u-inner_drop
+    kind: control_gap
+    reason: inner_drop 列 unresolved+active，仅控制 drop_mask 生成策略，与 IsTndSwizzle 写点无 confirmed 绑定
+    needs_binding:
+      - {column: inner_drop, want: "confirmed+active，并证实 inner_drop→IsDrop/enableSwizzle 间接影响链"}
+  - id: u-is_sink
+    kind: control_gap
+    reason: is_sink 列 unresolved+active，sink kwarg 存在性无 UO dim 匹配
+    needs_binding:
+      - {column: is_sink, want: "confirmed+active，并证实 is_sink→sink kwarg→tiling 路径对 IsTndSwizzle 影响"}

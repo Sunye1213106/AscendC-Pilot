@@ -57,7 +57,7 @@ pin-facts --project <算子> = 读 clone_receipt → 写 change_contract（kind=
 无 clone_receipt → ok=false，不写盘
 已有 PR clone_receipt 时禁止 kind=implementation_coverage / enumerate=legal_keys
 IF clone_receipt/user_goal 表明 PR 源 AND（change_contract 非法或 changed_files 为空）
-THEN plan_precheck FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin；不进入 plan_scope）
+THEN plan_precheck FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin；不进入 plan_ingest）
 generic TilingKey fallback 仅无 PR 候选且 change_contract.kind == implementation_coverage
 enumerate: legal_keys 仅上述本地覆盖 pin
 ```
@@ -80,13 +80,13 @@ enumerate: legal_keys 仅上述本地覆盖 pin
 
 `auto` 返回的 `(operator, architecture)` 直接用于后续 `pilot_run`。`status` / `uo-query --status-only` 也必须带上该算子路径，不要对着打开目录根判断 `.uo`。
 
-`Planning Context` 就是 `/tg-plan` 的 `plan_scope` 回答（像 uo-query：说清要测什么，不写文件）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
+`Planning Context` 就是 `/tg-plan` 的 Coverage IR（Plan Owner YAML）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
 
 ## 按用户目标选择流程
 
 用户只要求 Code Review 时，只执行 `/ce-review`。
 
-用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；`plan_scope` 像 uo-query 把要测的东西说清楚，Primary 读回答即可，不要在中间再派自由查询。
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；`plan_precheck` 后回到 Primary，原生 Task 派 Plan Owner，不要在中间再派自由查询。
 
 用户只要求语义查询时：
 
@@ -123,7 +123,7 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 
 调查只获取下一步真正需要的事实。
 
-`/tg-init` 完成后直接 `/tg-plan`。`plan_scope` 根据对话与 `tg/init.yaml` 说清要测什么（未指定则只能测 Host 已接受的 dispatch）。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash。bind 列由引擎按每路 ≤20 切开；Primary 原样派 Host 给出的 1 路 harness + N 路 bind，不要自己再拆或加路。
+`/tg-init` 完成后直接 `/tg-plan`。`plan_precheck` 写出改动包后 host_step 回到 Primary，不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash。bind 列由引擎按每路 ≤20 切开；Primary 原样派 Host 给出的 1 路 harness + N 路 bind，不要自己再拆或加路。
 
 用户只要求语义查询、不要生成用例时，仍用 `pilot_cli uo-query`，不进入 `/tg-plan`。
 
@@ -177,6 +177,19 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 `task_result` 为空时，用同一问题补查一次。
 
 一次空结果不能证明 UO 中没有相关信息；补查后仍不足，再记录为缺口。
+
+## `/tg-plan` 路由（对齐 uo-query）
+
+`plan_precheck` 之后 Host **回到 Primary**，不发 `dispatch_subagent` / `task_prompt_stub`。禁止单独 `plan_route` action，也不用文件数/LOC 脚本分类。
+
+拆路只看**独立测试因果链**（不是文件层、不是 Host/Kernel/Tiling 目录）。相关 ≠ 单域。每轮最多 5 路。
+
+* 一条主行为：立刻原生一个 `Task(agent=tg-analyst)` 当 Plan Owner。Task 正文即全部（packet 路径 + FOCUS + 只交 `tg-plan/v3` YAML），不要让子代去找 session `prompt.md`。本 FAG 类 PR（一个 `deterBandScheduleMode` 行为）走这条。
+* 多条独立行为：同一轮最多 5 路 FOCUS fragment Task（`coverage-fragment/v1`），再一个 Owner Task 汇总。fragment 必须 `pilot_run` ingest 落盘；空 fragment → `PLAN_FRAGMENT_REQUIRED`，禁止 Owner 再扫一遍 PR。
+* Owner / fragment **禁止再派 Task**。
+* Primary **禁止 Write `tg/plan.md`**。下一发 `pilot_run(tg-plan)` intent=YAML，Engine merge / validate / 确定性 narrate。
+
+向用户说明将派 1 个 Owner 还是 N 路 FOCUS 后立刻派，不要空转一轮只宣布路数。
 
 ## 对用户输出
 

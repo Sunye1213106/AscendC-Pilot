@@ -1,0 +1,12 @@
+{
+  "name": "ascendc-pilot",
+  "displayName": "AscendC Pilot",
+  "version": "0.1.0",
+  "description": "Operator CodeMap query (uo-query) for Ascend C. One native tool, four shapes.",
+  "author": {
+    "name": "AscendC-Pilot"
+  },
+  "keywords": ["ascendc", "uo-query", "codemap", "tiling"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}

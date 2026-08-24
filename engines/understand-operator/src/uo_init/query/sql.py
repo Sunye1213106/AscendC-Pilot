@@ -81,6 +81,11 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "edges",
         "snippet",
         "seeds",
+        "match",
+        "match_note",
+        "text_hits",
+        "text_hits_total",
+        "text_hits_complete",
     }
 )
 PACKING_RHS_TRIM = 400
@@ -158,7 +163,7 @@ CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
     "FLOWS_TO",
     "LAUNCHES",
 )
-EDGES_PER_KIND = 3
+EDGES_PER_KIND = 8
 DERIVES_PER_TILING_KEY = 3
 CARD_SNIPPET_MAX_LINES = 8
 AROUND_SEED_LIMIT = 16
@@ -406,6 +411,23 @@ def _leaf_name_where(needle: str) -> tuple[str, list[str]]:
       )
     """
     return clause, [full, ident, ident, ident]
+
+
+def _leaf_name_where_indexed(needle: str) -> tuple[str, list[str]]:
+    """Same predicate as `_leaf_name_where` over the leaf-name inverted index.
+
+    The legacy clause combines `OR` with a leading-wildcard `LIKE`, which makes
+    SQLite abandon every index on `entity` and scan the table on every hop.
+    """
+    full = str(needle or "").strip().lower()
+    ident = _last_ident(full.replace(".", "::")) or full
+    leaves = [full] if ident == full else [full, ident]
+    placeholders = ",".join("?" for _ in leaves)
+    clause = (
+        "e.id IN (SELECT entity_id FROM entity_name_leaf "
+        f"WHERE leaf IN ({placeholders}) AND is_ascendc = 0)"
+    )
+    return clause, leaves
 
 
 def _encloses_line(hit: dict[str, Any], line: int) -> bool:
@@ -1310,23 +1332,33 @@ def _extend_next_from_edges(
     *,
     limit: int = 12,
 ) -> None:
-    def _from_group(group: Any) -> bool:
+    queues: list[list[Any]] = []
+
+    def _queue(group: Any) -> None:
         if not isinstance(group, dict):
-            return False
-        for row in list(group.get("neighbors") or []):
-            if _append_next_name(
-                names, seen, self_names, str(row.get("name") or ""), limit=limit
-            ):
-                return True
-        return False
+            return
+        rows = [row for row in list(group.get("neighbors") or []) if isinstance(row, dict)]
+        if rows:
+            queues.append(rows)
 
     for rel in _NEXT_EDGE_PRIORITY:
-        if _from_group(grouped.get(rel)):
-            return
+        _queue(grouped.get(rel))
     for rel, group in grouped.items():
         if rel in _NEXT_EDGE_PRIORITY or rel in _NEXT_EDGE_SKIP:
             continue
-        if _from_group(group):
+        _queue(group)
+    if not queues:
+        return
+    index = 0
+    while len(names) < limit and any(queues):
+        bucket = queues[index % len(queues)]
+        index += 1
+        if not bucket:
+            continue
+        row = bucket.pop(0)
+        if _append_next_name(
+            names, seen, self_names, str(row.get("name") or ""), limit=limit
+        ):
             return
 
 
@@ -1515,6 +1547,12 @@ def _template_block_matches(row: dict[str, Any], filters: dict[str, str]) -> boo
             continue
         return False
     return True
+
+
+def _fts_match_query(needle: str) -> str:
+    """Quote a substring so FTS5 trigram treats it as a phrase."""
+    text = str(needle or "").replace('"', " ").strip()
+    return f'"{text}"' if text else ""
 
 
 def _compact_template_block(row: dict[str, Any]) -> dict[str, Any]:
@@ -1920,12 +1958,21 @@ class UoSqlQuery:
         self._architecture = _architecture_from_name(self.product)
         self._op_root = _op_root_from_product(self.product)
         self._engine = None
+        self._accel: bool | None = None
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         from uo_init.store.reader import shared_uo
 
         yield shared_uo(self.product)
+
+    def _accel_ready(self, conn: sqlite3.Connection) -> bool:
+        """Whether this product carries the leaf-name inverted index."""
+        if self._accel is None:
+            from uo_init.store.accel import has_accel
+
+            self._accel = has_accel(conn)
+        return bool(self._accel)
 
     def close(self) -> None:
         from uo_init.query.legal_key_cache import clear_legal_key_cache
@@ -1937,6 +1984,7 @@ class UoSqlQuery:
         with _TEMPLATE_BLOCKS_LOCK:
             _TEMPLATE_BLOCKS_CACHE.pop(key, None)
         self._engine = None
+        self._accel = None
 
     def __enter__(self):
         return self
@@ -3664,6 +3712,162 @@ class UoSqlQuery:
             )
         return _fit_payload(payload)
 
+    def _sql_template_cover(
+        self, structured: dict[str, str], dim_only: str
+    ) -> dict[str, Any] | None:
+        """Cover query over template_block tables. None if the product has no accel."""
+        from uo_init.store.accel import has_template_block
+        from uo_init.tpl_dsl import bool_value_aliases
+
+        with self._connect() as conn:
+            if not has_template_block(conn):
+                return None
+            total = int(
+                conn.execute("SELECT COUNT(*) FROM template_block").fetchone()[0] or 0
+            )
+            if total <= 0:
+                return None
+            if dim_only:
+                values = [
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT DISTINCT value FROM template_block_dim WHERE dim = ? ORDER BY value",
+                        (dim_only,),
+                    )
+                ]
+                return {
+                    "ok": True,
+                    "dim_only": dim_only,
+                    "dim_coverage": {dim_only: values},
+                    "matching_block_count": 0,
+                    "block_matches": [],
+                    "nearby": [],
+                    "sel_sites": [],
+                }
+
+            ids: set[int] | None = None
+            if not structured:
+                match_ids = [
+                    int(row[0])
+                    for row in conn.execute("SELECT id FROM template_block ORDER BY id")
+                ]
+            else:
+                for dim, value in structured.items():
+                    aliases = {str(value)}
+                    aliases.update(bool_value_aliases(value))
+                    placeholders = ",".join("?" for _ in aliases)
+                    found = {
+                        int(row[0])
+                        for row in conn.execute(
+                            f"SELECT DISTINCT block_id FROM template_block_dim "
+                            f"WHERE dim = ? AND value IN ({placeholders})",
+                            (dim, *sorted(aliases)),
+                        )
+                    }
+                    ids = found if ids is None else ids & found
+                match_ids = sorted(ids or [])
+            block_matches: list[dict[str, Any]] = []
+            sel_sites: list[dict[str, Any]] = []
+            for bid in match_ids:
+                row = conn.execute(
+                    "SELECT name, file, line_start, line_end, data FROM template_block WHERE id = ?",
+                    (bid,),
+                ).fetchone()
+                if row is None:
+                    continue
+                try:
+                    data = json.loads(row[4] or "{}")
+                except json.JSONDecodeError:
+                    data = {}
+                if isinstance(data, dict):
+                    block_matches.append(data)
+                file = str(row[1] or "")
+                line = int(row[2] or 0)
+                if file and line:
+                    sel_sites.append(
+                        {
+                            "name": str(row[0] or ""),
+                            "file": file,
+                            "line": line,
+                            "line_end": int(row[3] or line),
+                        }
+                    )
+            dim_coverage: dict[str, list[str]] = {}
+            if match_ids:
+                placeholders = ",".join("?" for _ in match_ids)
+                for dim, value in conn.execute(
+                    f"SELECT dim, value FROM template_block_dim WHERE block_id IN ({placeholders})",
+                    tuple(match_ids),
+                ):
+                    dim_coverage.setdefault(str(dim), [])
+                    if str(value) not in dim_coverage[str(dim)]:
+                        dim_coverage[str(dim)].append(str(value))
+            nearby: list[dict[str, Any]] = []
+            if structured and not match_ids:
+                for drop in structured:
+                    rest = {k: v for k, v in structured.items() if k != drop}
+                    dropped = self._sql_template_cover(rest, "")
+                    if dropped and dropped.get("matching_block_count"):
+                        nearby.append(
+                            {
+                                "dropped": drop,
+                                "matching_block_count": dropped["matching_block_count"],
+                                "values": (dropped.get("dim_coverage") or {}).get(drop) or [],
+                            }
+                        )
+            return {
+                "ok": True,
+                "dim_only": "",
+                "dim_coverage": dim_coverage,
+                "matching_block_count": len(block_matches),
+                "block_matches": block_matches,
+                "nearby": nearby,
+                "sel_sites": sel_sites,
+            }
+
+    def _sel_sites_for_dim(self, dim: str, *, limit: int = 8) -> list[dict[str, Any]]:
+        ident = _last_ident(str(dim or "").replace(".", "::"))
+        if not ident:
+            return []
+        from uo_init.store.accel import has_template_block
+
+        with self._connect() as conn:
+            if not has_template_block(conn):
+                return []
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(DISTINCT block_id) FROM template_block_dim WHERE dim = ?",
+                    (ident,),
+                ).fetchone()[0]
+                or 0
+            )
+            rows = conn.execute(
+                """
+                SELECT b.name, b.file, b.line_start, b.line_end
+                FROM template_block b
+                JOIN template_block_dim d ON d.block_id = b.id
+                WHERE d.dim = ? AND IFNULL(b.line_start, 0) > 0
+                GROUP BY b.id
+                ORDER BY b.line_start
+                LIMIT ?
+                """,
+                (ident, max(int(limit), 1)),
+            ).fetchall()
+        sites = [
+            {
+                "name": str(row[0] or ""),
+                "file": str(row[1] or ""),
+                "line": int(row[2] or 0),
+                "line_end": int(row[3] or 0),
+            }
+            for row in rows
+            if int(row[2] or 0) > 0
+        ]
+        if sites:
+            sites[0]["matching_block_count"] = total
+            sites[0]["complete"] = len(sites) >= total
+        return sites
+
     def aggregate_template_match(
         self,
         pattern: str = "",
@@ -3693,43 +3897,53 @@ class UoSqlQuery:
         dim_coverage: dict[str, list[str]] = {}
         nearby: list[dict[str, Any]] = []
         matching_block_count = 0
-        cached = _load_template_blocks_cached(self.product)
-        block_status = {
-            "ok": bool(cached.get("ok")),
-            "reason_code": str(cached.get("reason_code") or ""),
-            "used": bool(cached.get("ok")),
-        }
-        if cached.get("ok"):
-            all_blocks = cached.get("rows") or []
-            universe_coverage = _dim_coverage(all_blocks)
-            if dim_only:
-                product = list(universe_coverage.get(dim_only) or [])
-                dim_coverage = {dim_only: product}
-                matching_block_count = 0
-                block_matches = []
-            elif structured:
-                block_matches = [
-                    row for row in all_blocks if _template_block_matches(row, structured)
-                ]
-                matching_block_count = len(block_matches)
-                dim_coverage = (
-                    _dim_coverage_restricted(block_matches, structured)
-                    if block_matches
-                    else {}
-                )
-                if matching_block_count == 0:
-                    nearby = _template_nearby(all_blocks, structured)
-            else:
-                dim_coverage = universe_coverage
-                matching_block_count = len(all_blocks)
-                block_matches = all_blocks
+        sel_sites: list[dict[str, Any]] = []
+        sql_cover = self._sql_template_cover(structured, dim_only) if (structured or dim_only) else None
+        if sql_cover is not None:
+            block_status = {"ok": True, "reason_code": "", "used": True, "backend": "sql"}
+            dim_coverage = sql_cover.get("dim_coverage") or {}
+            matching_block_count = int(sql_cover.get("matching_block_count") or 0)
+            block_matches = list(sql_cover.get("block_matches") or [])
+            nearby = list(sql_cover.get("nearby") or [])
+            sel_sites = list(sql_cover.get("sel_sites") or [])
+        else:
+            cached = _load_template_blocks_cached(self.product)
+            block_status = {
+                "ok": bool(cached.get("ok")),
+                "reason_code": str(cached.get("reason_code") or ""),
+                "used": bool(cached.get("ok")),
+            }
+            if cached.get("ok"):
+                all_blocks = cached.get("rows") or []
+                universe_coverage = _dim_coverage(all_blocks)
+                if dim_only:
+                    product = list(universe_coverage.get(dim_only) or [])
+                    dim_coverage = {dim_only: product}
+                    matching_block_count = 0
+                    block_matches = []
+                elif structured:
+                    block_matches = [
+                        row for row in all_blocks if _template_block_matches(row, structured)
+                    ]
+                    matching_block_count = len(block_matches)
+                    dim_coverage = (
+                        _dim_coverage_restricted(block_matches, structured)
+                        if block_matches
+                        else {}
+                    )
+                    if matching_block_count == 0:
+                        nearby = _template_nearby(all_blocks, structured)
+                else:
+                    dim_coverage = universe_coverage
+                    matching_block_count = len(all_blocks)
+                    block_matches = all_blocks
         compact_blocks = [_compact_template_block(row) for row in block_matches]
         if not dim_only:
             compact_blocks = compact_blocks[:TEMPLATE_BLOCK_EXEMPLARS]
         else:
             compact_blocks = []
         fixed_coverage = _fixed_coverage(block_matches) if block_matches else {}
-        universe_scanned = bool(cached.get("ok"))
+        universe_scanned = bool(block_status.get("ok") and block_status.get("used"))
         if dim_only:
             declared = self._declared_dim_values(dim_only)
             product = list(dim_coverage.get(dim_only) or [])
@@ -3764,6 +3978,7 @@ class UoSqlQuery:
             "template_blocks": compact_blocks,
             "template_projection": block_status,
             "fixed_coverage": fixed_coverage,
+            "sel_sites": sel_sites[:8],
         }
         if dim_only:
             payload["dim_only"] = dim_only
@@ -4341,6 +4556,12 @@ class UoSqlQuery:
         if not hits and not catalog_ident:
             located = self.aggregate_locate(needle, limit=max(int(limit), 8))
             hits = list(located.get("locations") or [])
+        recall_samples: list[dict[str, Any]] = []
+        recall_total = 0
+        if not hits and not catalog_ident:
+            hits, recall_samples, recall_total = self._recall_name_hits(
+                needle, limit=max(int(limit), 8)
+            )
         by_kind: dict[str, dict[str, Any]] = {}
         ranked = sorted(
             hits,
@@ -4427,6 +4648,14 @@ class UoSqlQuery:
             if snip_cut:
                 card["truncated"] = True
             extras = self._card_extras(hit)
+            if kind == EntityKind.TILING_KEY.value:
+                sel_sites = self._sel_sites_for_dim(name)
+                if sel_sites:
+                    extras["sel_sites"] = sel_sites
+                    extras["sel_sites_complete"] = bool(
+                        sel_sites and sel_sites[0].get("complete")
+                    )
+                    extras["cover_followup"] = f"Dim={_last_ident(name)}"
             if definition_sites:
                 extras["definition_sites"] = definition_sites
                 extras["definition_sites_complete"] = sites_complete
@@ -4541,6 +4770,16 @@ class UoSqlQuery:
             "coverage": coverage,
             "files": _group_by_file(cards_src),
         }
+        if recall_total:
+            payload["match"] = "recall_scan"
+            payload["text_hits"] = recall_samples
+            payload["text_hits_total"] = recall_total
+            payload["text_hits_complete"] = len(recall_samples) >= recall_total
+            payload["match_note"] = (
+                "No graph identifier matched. These are source-text matches, "
+                f"{len(recall_samples)} shown of {recall_total} total. Confirm the "
+                "name at the cited line before citing it."
+            )
         attach_query_hints(payload, needle, count=len(cards), mode="name")
         return _fit_payload(payload)
 
@@ -4565,8 +4804,11 @@ class UoSqlQuery:
         return row is not None
 
     def _exact_name_hits(self, needle: str, *, limit: int) -> list[dict[str, Any]]:
-        where, params = _leaf_name_where(needle)
         with self._connect() as conn:
+            if self._accel_ready(conn):
+                where, params = _leaf_name_where_indexed(needle)
+            else:
+                where, params = _leaf_name_where(needle)
             rows = self._select_entities(
                 conn,
                 extra_where=where,
@@ -4580,13 +4822,119 @@ class UoSqlQuery:
         if not _IDENT_NAME_RE.match(ident):
             return []
         with self._connect() as conn:
+            if self._accel_ready(conn):
+                low = ident.lower()
+                extra_where = (
+                    "e.id IN (SELECT entity_id FROM entity_name_leaf "
+                    "WHERE leaf >= ? AND leaf < ? AND is_ascendc = 0)"
+                )
+                params: tuple[Any, ...] = (low, low + "\uffff")
+            else:
+                extra_where = f"{_ASCENDC_CATALOG_SQL} AND e.name COLLATE NOCASE LIKE ?"
+                params = (ident.lower() + "%",)
             rows = self._select_entities(
                 conn,
-                extra_where=f"{_ASCENDC_CATALOG_SQL} AND e.name COLLATE NOCASE LIKE ?",
-                params=(ident.lower() + "%",),
+                extra_where=extra_where,
+                params=params,
                 limit=max(int(limit), 8),
             )
             return self._hits_from_rows(conn, rows, why="name_card", with_snippet=True)
+
+    def _recall_name_hits(
+        self, needle: str, *, limit: int
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+        """Last-resort recall over indexed source text.
+
+        Name lookup needs the identifier up front. This scans `source_line` the
+        way grep would, so a caller can still land on a site it could only
+        describe by a fragment. Returns (entity hits, text hit samples, exact
+        total) — the total is what lets a caller say "all N sites" instead of
+        quoting a page.
+        """
+        text = str(needle or "").strip()
+        if len(text) < 3:
+            return [], [], 0
+        with self._connect() as conn:
+            from uo_init.store.accel import has_source_fts, has_source_line
+
+            samples: list[dict[str, Any]] = []
+            total = 0
+            fts_q = _fts_match_query(text)
+            if has_source_fts(conn) and fts_q:
+                try:
+                    total = int(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM source_fts WHERE source_fts MATCH ?",
+                            (fts_q,),
+                        ).fetchone()[0]
+                        or 0
+                    )
+                    sample_rows = conn.execute(
+                        """
+                        SELECT path, line, text FROM source_fts
+                        WHERE source_fts MATCH ?
+                        ORDER BY path, line LIMIT ?
+                        """,
+                        (fts_q, max(int(limit), 8)),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    total = 0
+                    sample_rows = []
+            elif has_source_line(conn):
+                total = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM source_line WHERE text LIKE '%' || ? || '%'",
+                        (text,),
+                    ).fetchone()[0]
+                    or 0
+                )
+                sample_rows = conn.execute(
+                    """
+                    SELECT path, line, text FROM source_line
+                    WHERE text LIKE '%' || ? || '%'
+                    ORDER BY path, line LIMIT ?
+                    """,
+                    (text, max(int(limit), 8)),
+                ).fetchall()
+            else:
+                return [], [], 0
+            if not total:
+                return [], [], 0
+            samples = [
+                {
+                    "file": str(r[0] or ""),
+                    "line": int(r[1] or 0),
+                    "text": str(r[2] or "").strip()[:200],
+                }
+                for r in sample_rows
+            ]
+            hits: list[dict[str, Any]] = []
+            for row in sample_rows[:PRIMARY_CANDIDATES]:
+                ent_rows = self._select_entities(
+                    conn,
+                    extra_where=(
+                        "(IFNULL(e.file,'') = ? OR IFNULL(e.file,'') LIKE '%' || ?) "
+                        "AND IFNULL(e.line_start,0) <= ? "
+                        "AND IFNULL(e.line_end, e.line_start) >= ?"
+                    ),
+                    params=(row[0], row[0], int(row[1] or 0), int(row[1] or 0)),
+                    limit=4,
+                )
+                hits.extend(
+                    self._hits_from_rows(
+                        conn, ent_rows, why="recall_scan", with_snippet=True
+                    )
+                )
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for hit in hits:
+            eid = str(hit.get("id") or "")
+            if eid and eid in seen:
+                continue
+            seen.add(eid)
+            hit["recall_scan"] = True
+            unique.append(hit)
+        return unique, samples, total
 
     def _grouped_edges(self, entity_id: str, *, entity_kind: str = "") -> dict[str, Any]:
         if not entity_id:
@@ -4911,7 +5259,7 @@ class UoSqlQuery:
                         "file": row.get("file"),
                         "line": row.get("line_start"),
                     }
-                    for row in list(field.get("writers") or [])[:5]
+                    for row in list(field.get("writers") or [])[:12]
                 ]
                 extras["readers"] = [
                     {
@@ -4919,7 +5267,7 @@ class UoSqlQuery:
                         "file": row.get("file"),
                         "line": row.get("line_start"),
                     }
-                    for row in list(field.get("readers") or [])[:5]
+                    for row in list(field.get("readers") or [])[:12]
                 ]
                 if field.get("canonical"):
                     extras["canonical"] = field.get("canonical")
@@ -4936,7 +5284,7 @@ class UoSqlQuery:
                             "file": row.get("file"),
                             "line": row.get("line"),
                         }
-                        for row in neigh[:5]
+                        for row in neigh[:8]
                     ]
             timeline = self._write_timeline(name, primary=hit)
             extras.update(timeline)
@@ -5028,6 +5376,19 @@ class UoSqlQuery:
             payload["template_blocks"] = list(match.get("template_blocks") or [])[:TEMPLATE_BLOCK_EXEMPLARS]
         else:
             payload["template_blocks"] = []
+        sel_sites = list(match.get("sel_sites") or [])[:8]
+        if sel_sites:
+            payload["sel_sites"] = sel_sites
+            first = sel_sites[0]
+            window, _cut = _statement_window(
+                self._op_root,
+                str(first.get("file") or ""),
+                int(first.get("line") or 0),
+            )
+            if window:
+                payload["snippet"] = window
+                payload["file"] = first.get("file") or ""
+                payload["line"] = int(first.get("line") or 0)
         attach_query_hints(payload, needle, count=int(payload.get("count") or 0), mode="cover")
         if match.get("hint"):
             payload["hint"] = match.get("hint")

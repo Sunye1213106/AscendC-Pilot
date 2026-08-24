@@ -127,6 +127,65 @@ def pending_is_open(pending: dict[str, Any] | None) -> bool:
     return str(pending.get("status") or "pending").strip().lower() == "pending"
 
 
+def _pending_matches_ask(
+    pending: dict[str, Any] | None,
+    *,
+    kind: str,
+    decision: str,
+    action_id: str = "",
+) -> bool:
+    if not pending:
+        return False
+    if str(pending.get("kind") or "") != kind:
+        return False
+    if str(pending.get("decision_kind") or "") != decision:
+        return False
+    got = str(pending.get("action_id") or "")
+    if action_id and got and got != action_id:
+        return False
+    return True
+
+
+def pending_answered_unconsumed(
+    project_root: Path,
+    pending: dict[str, Any] | None = None,
+) -> bool:
+    """True when the user answered but materialize has not consumed the receipt."""
+    row = pending if pending is not None else _load(pending_path(Path(project_root)))
+    if not row:
+        return False
+    if str(row.get("status") or "").strip().lower() != "answered":
+        return False
+    request_id = str(row.get("request_id") or "").strip()
+    if not request_id:
+        return False
+    receipt = _load(decisions_dir(Path(project_root)) / f"{request_id}.yaml")
+    return bool(receipt) and not receipt.get("consumed")
+
+
+def _reuse_interaction_envelope(
+    existing: dict[str, Any],
+    *,
+    kind: str,
+    decision: str,
+    action_id: str,
+    rid: str,
+    values: list[str],
+    ask_question: dict[str, Any],
+    request_id_fallback: str,
+) -> dict[str, Any]:
+    return {
+        "request_id": str(existing.get("request_id") or request_id_fallback),
+        "run_id": str(existing.get("run_id") or rid),
+        "workflow_id": str(existing.get("workflow_id") or ""),
+        "action_id": str(existing.get("action_id") or action_id),
+        "kind": kind,
+        "decision_kind": decision,
+        "allowed_values": list(existing.get("allowed_values") or values),
+        "ask_question": existing.get("ask_question") or ask_question,
+    }
+
+
 def pending_is_intake(pending: dict[str, Any] | None) -> bool:
     """True when pending is pre-start intake (architecture / project / uo product)."""
     if not pending_is_open(pending):
@@ -532,20 +591,23 @@ def issue_interaction_request(
                     values.append(v)
     decision = decision_kind or kind
     existing = _load(pending_path(project_root))
-    if pending_is_open(existing):
-        same_kind = str(existing.get("kind") or "") == kind
-        same_decision = str(existing.get("decision_kind") or "") == decision
-        if same_kind and same_decision:
-            return {
-                "request_id": str(existing.get("request_id") or request_id),
-                "run_id": str(existing.get("run_id") or rid),
-                "workflow_id": str(existing.get("workflow_id") or ""),
-                "action_id": str(existing.get("action_id") or action_id),
-                "kind": kind,
-                "decision_kind": decision,
-                "allowed_values": list(existing.get("allowed_values") or values),
-                "ask_question": existing.get("ask_question") or ask_question,
-            }
+    reuse = _pending_matches_ask(
+        existing, kind=kind, decision=decision, action_id=action_id
+    ) and (
+        pending_is_open(existing)
+        or pending_answered_unconsumed(project_root, existing)
+    )
+    if reuse:
+        return _reuse_interaction_envelope(
+            existing,
+            kind=kind,
+            decision=decision,
+            action_id=action_id,
+            rid=rid,
+            values=values,
+            ask_question=ask_question,
+            request_id_fallback=request_id,
+        )
     _clear_superseded_flag(project_root)
     req = {
         "schema": "human-interaction-request/v1",

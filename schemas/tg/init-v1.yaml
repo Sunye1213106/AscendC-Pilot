@@ -14,6 +14,7 @@ engine_owned:
   - confirmed
   - updated_at
   - test_script_root
+  - harness_capabilities
 llm_owned:
   - call
   - mapping

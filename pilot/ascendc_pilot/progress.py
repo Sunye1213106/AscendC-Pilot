@@ -24,7 +24,7 @@ def engine_span(workflow_id: str, action_id: str) -> Iterator[None]:
         yield
     except Exception as exc:  # noqa: BLE001
         dt = time.perf_counter() - t0
-        emit(f"engine FAIL {label} ({dt:.1f}s): {exc}"[:240], prefix="acp-engine")
+        emit(f"engine FAIL {label} ({dt:.1f}s): {exc}"[:2000], prefix="acp-engine")
         raise
     else:
         dt = time.perf_counter() - t0
