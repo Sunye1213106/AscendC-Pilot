@@ -657,6 +657,41 @@ def test_cli_inspect_failure_has_top_level_message_zh(tmp_path: Path, capsys):
     assert "CANN" in str(out.get("message_zh") or "")
 
 
+def test_record_prepare_failure_surfaces_in_inspect_failure(tmp_path: Path, capsys):
+    from ascendc_pilot.observation import record_prepare_failure
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import load_state, start_workflow
+
+    (tmp_path / "op_host").mkdir()
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
+    record_prepare_failure(
+        tmp_path,
+        action_id="plan_ingest",
+        result={
+            "error": "PROMPT_IDENTITY_UNRESOLVED",
+            "message_zh": "skills/test-plan/references/coverage-planning.md:68 <TILING_FIELD>",
+            "unresolved": [
+                {
+                    "source": "method",
+                    "file": "skills/test-plan/references/coverage-planning.md",
+                    "token": "<TILING_FIELD>",
+                    "line": 68,
+                }
+            ],
+        },
+    )
+    st = load_state(tmp_path) or {}
+    assert isinstance(st.get("last_failure"), dict)
+    assert st["last_failure"].get("unresolved")
+    code = main(["inspect-failure", "--project", str(tmp_path)])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("last_failure") is not None
+    assert "TILING_FIELD" in str(out.get("message_zh") or "")
+    assert "当前没有失败记录" not in str(out.get("message_zh") or "")
+
+
 def test_prepare_pins_operator_from_pr_then_uo_gate(tmp_path: Path, monkeypatch):
     import sys
 

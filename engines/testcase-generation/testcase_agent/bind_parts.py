@@ -253,6 +253,92 @@ def _normalize_call_arg(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _canonical_from_scan(scan: dict[str, Any]) -> dict[str, Any]:
+    row = scan.get("canonical_call")
+    if isinstance(row, dict) and (row.get("api") or row.get("site") or row.get("kind")):
+        return dict(row)
+    contract = scan.get("contract") if isinstance(scan.get("contract"), dict) else {}
+    row = contract.get("canonical_call")
+    if isinstance(row, dict) and (row.get("api") or row.get("site") or row.get("kind")):
+        return dict(row)
+    inventory = scan.get("inventory") if isinstance(scan.get("inventory"), dict) else {}
+    row = inventory.get("canonical_call")
+    if isinstance(row, dict) and (row.get("api") or row.get("site") or row.get("kind")):
+        return dict(row)
+    return {}
+
+
+def _call_from_canonical(canon: dict[str, Any]) -> dict[str, str]:
+    return {
+        "kind": str(canon.get("kind") or ""),
+        "api": str(canon.get("api") or ""),
+        "site": str(canon.get("site") or ""),
+    }
+
+
+def _call_args_from_canonical(canon: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in canon.get("args") or []:
+        name = str(item or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "runtime_expr": "", "sources": []})
+    return out
+
+
+def _call_skeleton(bind: dict[str, Any]) -> dict[str, str]:
+    call = bind.get("call") if isinstance(bind.get("call"), dict) else {}
+    return {
+        "kind": str(call.get("kind") or ""),
+        "api": str(call.get("api") or ""),
+        "site": str(call.get("site") or ""),
+    }
+
+
+def _call_args_skeleton(bind: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in bind.get("call_args") or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(
+            {
+                "name": name,
+                "runtime_expr": str(row.get("runtime_expr") or ""),
+                "sources": [],
+            }
+        )
+    return out
+
+
+def _merge_call_arg_row(dst: dict[str, Any], src: dict[str, Any]) -> dict[str, Any]:
+    out = _normalize_call_arg(dst)
+    extra = _normalize_call_arg(src)
+    if not str(out.get("runtime_expr") or "").strip() and str(extra.get("runtime_expr") or "").strip():
+        out["runtime_expr"] = extra["runtime_expr"]
+    sources: list[Any] = list(out.get("sources") or [])
+    seen: set[tuple[str, str]] = set()
+    for item in sources:
+        if isinstance(item, dict):
+            seen.add((str(item.get("column") or ""), str(item.get("relation") or "")))
+    for item in extra.get("sources") or []:
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("column") or ""), str(item.get("relation") or ""))
+        if key in seen:
+            continue
+        sources.append(item)
+        seen.add(key)
+    out["sources"] = sources
+    return out
+
+
 def chunk_column_names(
     names: list[str], size: int = BIND_COLUMN_CHUNK_SIZE
 ) -> list[list[str]]:
@@ -390,8 +476,8 @@ def _bind_doc_subset(bind: dict[str, Any], names: list[str]) -> dict[str, Any]:
         "table_kind": bind.get("table_kind") or "",
         "entry": bind.get("entry") or "",
         "case_arg": bind.get("case_arg") or "",
-        "call": {"kind": "", "api": "", "site": ""},
-        "call_args": [],
+        "call": _call_skeleton(bind),
+        "call_args": _call_args_skeleton(bind),
         "columns": [{"name": name} for name in names],
         "mapping": {
             name: dict(mapping.get(name) or _empty_mapping_row()) for name in names
@@ -477,14 +563,22 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
     if not isinstance(bind, dict):
         return {"ok": False, "error": "invalid_yaml"}
     call = dict(bind.get("call") or {}) if isinstance(bind.get("call"), dict) else {}
-    call_args: list[dict[str, Any]] = []
-    seen_args: set[str] = set()
+    by_name: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _add_arg(row: dict[str, Any]) -> None:
+        name = str(row.get("name") or "").strip()
+        if not name:
+            return
+        if name not in by_name:
+            by_name[name] = _normalize_call_arg(row)
+            order.append(name)
+            return
+        by_name[name] = _merge_call_arg_row(by_name[name], row)
+
     for row in bind.get("call_args") or []:
-        if isinstance(row, dict) and str(row.get("name") or "").strip():
-            name = str(row["name"])
-            if name not in seen_args:
-                call_args.append(_normalize_call_arg(row))
-                seen_args.add(name)
+        if isinstance(row, dict):
+            _add_arg(row)
     mapping = dict(bind.get("mapping") or {}) if isinstance(bind.get("mapping"), dict) else {}
     domains = dict(bind.get("domains") or {}) if isinstance(bind.get("domains"), dict) else {}
     findings: list[Any] = list(bind.get("findings") or []) if isinstance(bind.get("findings"), list) else []
@@ -500,14 +594,11 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
         ch_call = doc.get("call") if isinstance(doc.get("call"), dict) else {}
         if str(ch_call.get("kind") or "").strip() and not str(call.get("kind") or "").strip():
             call = dict(ch_call)
+        elif str(ch_call.get("api") or "").strip() and not str(call.get("api") or "").strip():
+            call = {**call, **dict(ch_call)}
         for row in doc.get("call_args") or []:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("name") or "").strip()
-            if not name or name in seen_args:
-                continue
-            call_args.append(_normalize_call_arg(row))
-            seen_args.add(name)
+            if isinstance(row, dict):
+                _add_arg(row)
         ch_map = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
         meta = doc.get("chunk") if isinstance(doc.get("chunk"), dict) else {}
         chunk_names = [str(x).strip() for x in (meta.get("columns") or []) if str(x).strip()]
@@ -532,7 +623,7 @@ def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
         if isinstance(doc.get("findings"), list):
             findings.extend(doc["findings"])
     bind["call"] = call
-    bind["call_args"] = call_args
+    bind["call_args"] = [by_name[name] for name in order]
     bind["mapping"] = mapping
     bind["domains"] = domains
     bind["findings"] = findings
@@ -551,6 +642,7 @@ def emit_bind_parts(
     contract = scan.get("contract") if isinstance(scan.get("contract"), dict) else {}
     columns = _column_names(scan)
     profiles = _profiles(scan)
+    canon = _canonical_from_scan(scan)
     bind = _stamp(
         {
             "schema": "tg-bind-part/v1",
@@ -558,8 +650,8 @@ def emit_bind_parts(
             "table_kind": _table_kind(scan),
             "entry": str(contract.get("entry") or ""),
             "case_arg": str(contract.get("case_arg") or ""),
-            "call": {"kind": "", "api": "", "site": ""},
-            "call_args": [],
+            "call": _call_from_canonical(canon),
+            "call_args": _call_args_from_canonical(canon),
             "columns": [{"name": name} for name in columns],
             "mapping": {name: _empty_mapping_row() for name in columns},
             "domains": {
@@ -579,6 +671,7 @@ def emit_bind_parts(
             "kind": kind,
             "entry": str(contract.get("entry") or ""),
             "case_arg": str(contract.get("case_arg") or ""),
+            "call": _call_from_canonical(canon),
             "golden": {"match": "", "mismatch": "", "gaps": ""},
             "compare": {"how": "", "atol_rtol": ""},
             "modes": {

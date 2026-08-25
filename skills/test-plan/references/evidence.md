@@ -11,7 +11,7 @@
 | `replay_field` | Replay 已经输出 | TilingKey、TilingData 字段、blockDim、workspace |
 | `derived` | case + Replay 字段能算死 | 结构化 `mod_eq` / 比较 |
 | `dispatch_map` | Replay 字段 + UO 静态映射 | TilingKey → 模板 specialization |
-| `probe` | 上面都看不到的 Host 内部状态 | `TG_PROBE kvMerge=1` |
+| `probe` | 上面都看不到的 Host 内部状态 | `TG_PROBE <赋值名>=<值>` |
 | `source_proof` | 不可达 / 静态 invariant | 某组合不可能出现 |
 
 `source_proof` 不证明某条 case 的 runtime 命中。不可达走 `skills/source-proof/SKILL.md`。
@@ -36,12 +36,13 @@
 `replay.*` 的字段名是 **TilingData 解码后展平的纯字段名**，`case.*` 是**列名**。两者都只有**两段**：
 
 ```text
-replay.deterBandScheduleMode      ✅  解码器给的就是这个键
-case.sparse_mode                  ✅  init.yaml 的列名
+replay.{leaf}       ✅  解码器给的就是这个键
+case.{column}               ✅  init.yaml 的列名原文
+probe.{host_name}       ✅  源码里的 `{name} =`
 ```
 
 ```text
-replay.s1s2BNGS1S2BaseParams.deterBandScheduleMode   ❌ 多了子结构前缀
+replay.{struct}.{leaf}   ❌ 多了子结构前缀
 ```
 
 源码里 TilingData 是嵌套结构，但解码器把所有字段**展平**、且**不带 struct 名**，观察包再把它们提到 `replay` 顶层。多写一层 struct 前缀会被 `plan_validate` 拒绝。
@@ -71,8 +72,8 @@ accuracy PASS 但 Target MISS ≠ 已覆盖
 ```yaml
 evidence:
   kind: replay_field   # 或 derived | dispatch_map | probe | source_proof
-  field: kvMerge
-  expected: true
+  field: replay.{leaf}
+  expected: 1
 ```
 
 缺 `kind` 或期望含糊 → 不得进正式 plan。

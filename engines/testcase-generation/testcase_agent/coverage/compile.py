@@ -26,6 +26,10 @@ class PlanCompileError(ValueError):
         super().__init__("; ".join(self.errors) or "PLAN_INVALID")
 
 
+def _s(val: Any) -> str:
+    return "" if val is None else str(val).strip()
+
+
 def _ids(rows: Any) -> list[str]:
     out: list[str] = []
     if not isinstance(rows, list):
@@ -114,6 +118,63 @@ def _l2_tuples(cov: dict[str, Any]) -> tuple[list[list[str]], list[str]]:
             continue
         out.append(dims)
     return out, errors
+
+
+L2_FULL_CROSS_MODES = frozenset({"full_cross", "full_cartesian", "all_dimensions"})
+
+# A full crossing is exponential in the dimension count. Past this many nominal
+# cells the plan has not converged enough to hand Solve a finite ledger, so we
+# refuse instead of materializing millions of rows.
+L2_FULL_CROSS_CAP = 200_000
+
+
+def l2_is_full_cross(cov: dict[str, Any]) -> bool:
+    l2 = cov.get("L2")
+    if not isinstance(l2, dict):
+        return False
+    return str(l2.get("mode") or "").strip().lower() in L2_FULL_CROSS_MODES
+
+
+def l2_exclusions(cov: dict[str, Any]) -> list[dict[str, Any]]:
+    l2 = cov.get("L2")
+    if not isinstance(l2, dict):
+        return []
+    rows = l2.get("exclusions") or []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _exclusion_specs(cov: dict[str, Any]) -> tuple[list[dict[str, str]], list[str]]:
+    """Normalize L2 exclusions into partial cell assignments.
+
+    Each spec is ``{dim_id: partition_id}``; a full-cross cell is excluded when
+    it agrees with every entry of any spec.
+    """
+    specs: list[dict[str, str]] = []
+    errors: list[str] = []
+    for idx, row in enumerate(l2_exclusions(cov)):
+        owner = f"coverage.L2.exclusions[{idx}]"
+        parts = row.get("partitions")
+        if not isinstance(parts, dict) or len(parts) < 2:
+            errors.append(
+                f"PLAN_INVALID: {owner}: partitions must map >=2 Dimensions to partition ids"
+            )
+            continue
+        spec = {_s(k): _s(v) for k, v in parts.items() if _s(k) and _s(v)}
+        if len(spec) < 2:
+            errors.append(f"PLAN_INVALID: {owner}: partitions entries must be non-empty")
+            continue
+        if not _s(row.get("reason")):
+            errors.append(f"PLAN_INVALID: {owner}: reason required (why the combination conflicts)")
+            continue
+        specs.append(spec)
+    return specs, errors
+
+
+def _cell_excluded(cell: dict[str, str], specs: list[dict[str, str]]) -> bool:
+    for spec in specs:
+        if all(cell.get(did) == pid for did, pid in spec.items()):
+            return True
+    return False
 
 
 def _l3_guards(cov: dict[str, Any]) -> list[str]:
@@ -288,8 +349,63 @@ def compile_obligations(
                     }
                 )
 
-    tuples, l2_errors = _l2_tuples(cov)
-    errors.extend(l2_errors)
+    if l2_is_full_cross(cov):
+        specs, spec_errors = _exclusion_specs(cov)
+        errors.extend(spec_errors)
+        for did in {d for spec in specs for d in spec}:
+            if did not in dims:
+                errors.append(f"PLAN_INVALID: coverage.L2.exclusions unknown dimension {did}")
+        # Cross every L0 dimension, grouped by Target: crossing dimensions that
+        # gate different Targets has no joint HIT to observe.
+        by_target: dict[str, list[str]] = {}
+        for did in l0_ids:
+            dim = dims.get(did)
+            if dim is None:
+                continue
+            tid, err = _dim_target(dim, did=did)
+            if err or not tid:
+                continue
+            if _partitions(dim):
+                by_target.setdefault(tid, []).append(did)
+        for tid, tdims in by_target.items():
+            if len(tdims) < 2:
+                continue
+            parts_list = [_partitions(dims[did]) for did in tdims]
+            nominal = 1
+            for row in parts_list:
+                nominal *= len(row)
+            if nominal > L2_FULL_CROSS_CAP:
+                errors.append(
+                    f"PLAN_INVALID: coverage.L2 full_cross for {tid} is {nominal} cells "
+                    f"(cap {L2_FULL_CROSS_CAP}); split the Target or exclude conflicting "
+                    "Dimension pairs"
+                )
+                continue
+            from itertools import product as _product
+
+            for combo_parts in _product(*parts_list):
+                cell = {tdims[i]: str(combo_parts[i].get("id")) for i in range(len(tdims))}
+                if _cell_excluded(cell, specs):
+                    continue
+                oid = _next_id("O")
+                out.append(
+                    {
+                        "id": oid,
+                        "level": "L2",
+                        "kind": "full_cross",
+                        "target": tid,
+                        "dimensions": cell,
+                        "expected": {
+                            "targets": {tid: "HIT"},
+                            "dimensions": cell,
+                        },
+                        "status": "OPEN",
+                    }
+                )
+        tuples: list[list[str]] = []
+    else:
+        tuples, l2_errors = _l2_tuples(cov)
+        errors.extend(l2_errors)
     for tup in tuples:
         missing = [did for did in tup if did not in dims]
         if missing:
@@ -366,3 +482,53 @@ def compile_obligations(
     if errors:
         raise PlanCompileError(errors)
     return out
+
+
+def ledger_counts(plan: dict[str, Any]) -> dict[str, Any]:
+    """Mechanical L0–L3 counts plus L2 nominal/excluded. Never invents numbers.
+
+    On compile failure, ``levels`` is empty and ``error`` carries the messages.
+    """
+    cov = _coverage(plan)
+    dims = _dim_map(plan)
+    npart = {did: len(_partitions(d)) for did, d in dims.items()}
+    l0_ids = _l0_dim_ids(cov)
+    by_target: dict[str, list[str]] = {}
+    for did in l0_ids:
+        dim = dims.get(did)
+        if dim is None or not npart.get(did):
+            continue
+        tid = _s(dim.get("target"))
+        if tid:
+            by_target.setdefault(tid, []).append(did)
+    l2_nominal = 0
+    for tdims in by_target.values():
+        if len(tdims) < 2:
+            continue
+        n = 1
+        for did in tdims:
+            n *= npart[did]
+        l2_nominal += n
+    try:
+        obligations = compile_obligations(plan)
+        error: list[str] = []
+    except PlanCompileError as exc:
+        obligations = []
+        error = list(exc.errors)
+    levels = {lv: 0 for lv in ("L0", "L1", "L2", "L3")}
+    for row in obligations:
+        lv = _s(row.get("level"))
+        if lv in levels:
+            levels[lv] += 1
+    full = l2_is_full_cross(cov)
+    excluded = (l2_nominal - levels["L2"]) if full else 0
+    return {
+        "error": error,
+        "levels": levels,
+        "total": sum(levels.values()),
+        "l2_mode": "full_cross" if full else "tuples",
+        "l2_nominal": l2_nominal,
+        "l2_excluded": excluded,
+        "l2_obligations": levels["L2"],
+        "l2_exclusion_rules": len(l2_exclusions(cov)),
+    }

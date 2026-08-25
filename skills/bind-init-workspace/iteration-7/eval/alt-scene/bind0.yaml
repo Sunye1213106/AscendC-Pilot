@@ -1,0 +1,229 @@
+schema: tg-bind-part/v1
+kind: script_repo
+call:
+  kind: pta
+  api: torch_npu.npu_ragged_gemm
+  site: runner.py:1
+call_args:
+- name: left
+  runtime_expr: ''
+  sources:
+  - column: Width
+    relation: tensor_shape
+  - column: InDtype
+    relation: tensor_dtype
+- name: right
+  runtime_expr: ''
+  sources:
+  - column: Width
+    relation: tensor_shape
+  - column: InDtype
+    relation: tensor_dtype
+- name: num_groups
+  runtime_expr: Groups
+  sources:
+  - column: Groups
+    relation: direct
+- name: scale
+  runtime_expr: 1.0 / math.sqrt(Width)
+  sources:
+  - column: Width
+    relation: derived
+- name: total_elems
+  runtime_expr: count_all(row_lens, col_lens)
+  sources:
+  - column: row_lens
+    relation: derived
+  - column: col_lens
+    relation: derived
+  - column: Groups
+    relation: derived
+- name: row_offsets
+  runtime_expr: tuple(row_lens)
+  sources:
+  - column: row_lens
+    relation: direct
+- name: col_offsets
+  runtime_expr: tuple(col_lens)
+  sources:
+  - column: col_lens
+    relation: direct
+- name: layout
+  runtime_expr: Layout
+  sources:
+  - column: Layout
+    relation: direct
+mapping:
+  Width:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    uo:
+      id: width
+      candidate: ''
+    encoding: last dim of left/right tensors
+    evidence: width
+  Groups:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    uo:
+      id: num_groups
+      candidate: ''
+    encoding: CSV cell as num_groups=
+    evidence: runner.py:1
+  Layout:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    uo:
+      id: layout
+      candidate: ''
+    encoding: CSV cell as layout=
+    evidence: runner.py:1
+  row_lens:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    uo:
+      id: row_offsets
+      candidate: ''
+    encoding: parsed list to row_offsets and count_all
+    evidence: runner.py:1
+  col_lens:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    uo:
+      id: col_offsets
+      candidate: ''
+    encoding: parsed list to col_offsets and count_all
+    evidence: runner.py:1
+  row_starts:
+    control:
+      status: shadowed
+    relation: derived
+    confidence: unresolved
+    uo:
+      id: ''
+      candidate: ''
+    encoding: prefix sum recomputed from row_lens when needed
+    evidence: ''
+  InDtype:
+    control:
+      status: active
+    relation: tensor_dtype
+    confidence: unresolved
+    uo:
+      id: ''
+      candidate: ''
+    encoding: dtype of left/right tensors
+    evidence: ''
+  RunName:
+    control:
+      status: metadata
+    relation: ''
+    confidence: unresolved
+    uo:
+      id: ''
+      candidate: ''
+    encoding: case identity string
+    evidence: ''
+  Actual_gflops:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    uo:
+      id: ''
+      candidate: ''
+    encoding: measured throughput written back after run
+    evidence: ''
+domains:
+  Width:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  Groups:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  Layout:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  row_lens:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  col_lens:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  row_starts:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile:
+      empty_rate: 1.0
+  InDtype:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  RunName:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+  Actual_gflops:
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+    profile: {}
+chunk:
+  index: 0
+  count: 1
+  columns:
+  - Width
+  - Groups
+  - Layout
+  - row_lens
+  - col_lens
+  - row_starts
+  - InDtype
+  - RunName
+  - Actual_gflops
+findings:
+- code: PARTIAL
+  detail: InDtype tensor_dtype not bound to InDType switch dim
+- code: PARTIAL
+  detail: total_elems aggregate fed by row_lens, col_lens, Groups; no column owns elemTotal

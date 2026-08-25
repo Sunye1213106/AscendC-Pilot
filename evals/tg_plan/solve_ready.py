@@ -35,6 +35,12 @@ def solve_contract_errors(
 ) -> list[str]:
     from testcase_agent import products
     from testcase_agent.coverage.compile import PlanCompileError, compile_obligations
+    from testcase_agent.plan_fill import AssembleError, ensure_v3
+
+    try:
+        fence = ensure_v3(fence, init)
+    except AssembleError as exc:
+        return list(exc.errors)
 
     cols = _column_names(init, fallback_columns)
     mapping = init.get("mapping") if isinstance(init, dict) else None

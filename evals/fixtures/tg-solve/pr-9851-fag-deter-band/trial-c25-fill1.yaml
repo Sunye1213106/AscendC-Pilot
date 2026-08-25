@@ -1,0 +1,56 @@
+schema: tg-solve-fill/v1
+baseline:
+  is_deter: 1
+  Input_Layout: BNSD
+hits:
+  - dim: D-schedule-mode
+    arm: p-causal
+    seed:
+      Pre_Tockens: 128
+      Next_Tockens: 128
+      B: 2
+  - dim: D-schedule-mode
+    arm: p-dense
+    seed:
+      Pre_Tockens: 65536
+      Next_Tockens: 65536
+      B: 2
+  - dim: D-schedule-mode
+    arm: p-band
+    seed:
+      Pre_Tockens: 65536
+      Next_Tockens: 65536
+      B: 1
+      S1: 4095
+      S2: 4095
+  - dim: D-use-lower-causal
+    arm: p-on
+    seed:
+      Pre_Tockens: 128
+      Next_Tockens: 128
+  - dim: D-use-lower-causal
+    arm: p-off
+    seed:
+      Pre_Tockens: 65536
+      Next_Tockens: 65536
+  - dim: D-dense-eligible
+    arm: p-denseK-eq-k
+    seed:
+      B: 2
+  - dim: D-dense-eligible
+    arm: p-denseK-ne-k
+    seed:
+      B: 1
+      S1: 4095
+      S2: 4095
+  - dim: D-tail-round
+    arm: p-zero
+    seed:
+      B: 2
+  - dim: D-tail-round
+    arm: p-nonzero
+    seed:
+      B: 3
+      N1: 1
+      N2: 1
+unreachable: []

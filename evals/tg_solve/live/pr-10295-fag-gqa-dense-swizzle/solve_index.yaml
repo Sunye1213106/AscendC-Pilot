@@ -1,0 +1,105 @@
+schema: tg-solve-index/v1
+needs_hit:
+- dim: D-align-early-return
+  arm: p-base-aligned
+  cuts: &id001
+  - probe.baseRound
+  seed: {}
+- dim: D-align-early-return
+  arm: p-base-unaligned
+  cuts: *id001
+  seed: {}
+auto:
+- dim: D-entry-route
+  arm: p-entry-no-mask
+  cuts: &id002
+  - case.sparse_mode
+  seed:
+    sparse_mode: 0
+- dim: D-entry-route
+  arm: p-entry-all-mask
+  cuts: *id002
+  seed:
+    sparse_mode: 1
+- dim: D-gqa-ratio
+  arm: p-g-eq-2
+  cuts: &id003
+  - case.N1
+  - case.N2
+  seed:
+    N1: 4
+    N2: 2
+- dim: D-gqa-ratio
+  arm: p-g-eq-4
+  cuts: *id003
+  seed:
+    N1: 8
+    N2: 2
+- dim: D-k-clamp
+  arm: p-k-full-aic
+  cuts: &id004
+  - case.B
+  - case.S2
+  seed:
+    B: 8
+    S2: 4096
+- dim: D-k-clamp
+  arm: p-k-clamped
+  cuts: *id004
+  seed:
+    B: 1
+    S2: 256
+- dim: D-layout
+  arm: p-layout-bnsd
+  cuts: &id005
+  - case.Input_Layout
+  seed:
+    Input_Layout: BNSD
+- dim: D-layout
+  arm: p-layout-bsnd
+  cuts: *id005
+  seed:
+    Input_Layout: BSND
+- dim: D-layout
+  arm: p-layout-bsh
+  cuts: *id005
+  seed:
+    Input_Layout: BSH
+- dim: D-layout
+  arm: p-layout-sbh
+  cuts: *id005
+  seed:
+    Input_Layout: SBH
+- dim: D-s1-outer
+  arm: p-s1-256
+  cuts: &id006
+  - case.S1
+  seed:
+    S1: 256
+- dim: D-s1-outer
+  arm: p-s1-4096
+  cuts: *id006
+  seed:
+    S1: 4096
+guards:
+- id: G-is-deter-off
+  seed:
+    is_deter: 0
+  auto: true
+- id: G-tnd-layout
+  seed:
+    Input_Layout: BNSD
+  auto: true
+- id: G-mha-g-eq-1
+  seed:
+    N1: 4
+    N2: 4
+  auto: true
+- id: G-prefix-old
+  seed:
+    sparse_mode: 5
+  auto: true
+- id: G-prefix-compress
+  seed:
+    sparse_mode: 6
+  auto: true

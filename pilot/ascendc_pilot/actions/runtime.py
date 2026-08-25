@@ -336,6 +336,15 @@ def _repo_root(project_root: Path) -> Path:
     return root
 
 
+def _rel_repo_path(repo: Path, path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        return path.resolve().relative_to(Path(repo).resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _action_spec(
     workflow_id: str,
     action_id: str,
@@ -1115,10 +1124,15 @@ def _complete_bind_review_prepare(
         )
         return result
     if prompted.is_file() and not parsed:
-        result["ok"] = False
-        result["error"] = "NEED_BIND_REVIEW_INTENT"
+        result["ok"] = True
+        result["host_step_kind"] = "primary_review"
+        result["required_verdicts"] = ["PASS", "REWORK bind", "REWORK harness,bind"]
         result["message_zh"] = (
-            "需要 PASS 或 REWORK bind / REWORK harness,bind，不要空跑 pilot_run。"
+            "请通读 harness.yaml 与 bind.yaml（不要只做字段差集）。"
+            "不要写文件、不要问用户。parts 已齐时禁止 force_new。"
+            "没问题：下一发 `pilot_run(tg-init)` intent=`PASS`；"
+            "有问题：intent=`REWORK bind` 或 `REWORK harness,bind`，后面跟原因。"
+            "必须点名 harness 和/或 bind，不要只写 REWORK。"
         )
         return result
     _dump(prompted, {"schema": "tg-bind-review-prompted/v1"})
@@ -1962,6 +1976,8 @@ def prepare_action(
         prompt_has_unresolved,
         staging_dir,
         unresolved_placeholders,
+        locate_unresolved_placeholders,
+        format_unresolved_message,
     )
 
     execution_mode = infer_execution_mode(
@@ -2162,13 +2178,27 @@ def prepare_action(
                 }
 
     # Fail-closed: never dispatch a half-rendered prompt/method.
-    unresolved = unresolved_placeholders(prompt_r) + unresolved_placeholders(method_r)
-    if unresolved or prompt_has_unresolved(prompt_r) or prompt_has_unresolved(method_r):
+    prompt_file = ""
+    tpid = str(action.get("task_prompt_id") or "").strip()
+    if tpid:
+        prompt_file = _rel_repo_path(repo, _task_prompt_path(repo, tpid))
+    method_file = ""
+    mp = _resolve_capability_method(repo, action)
+    if mp is not None:
+        method_file = _rel_repo_path(repo, mp)
+    unresolved_rows = locate_unresolved_placeholders(
+        prompt_r, source="prompt", file=prompt_file
+    ) + locate_unresolved_placeholders(method_r, source="method", file=method_file)
+    unresolved = [str(row.get("token") or "") for row in unresolved_rows] or (
+        unresolved_placeholders(prompt_r) + unresolved_placeholders(method_r)
+    )
+    if unresolved_rows or unresolved or prompt_has_unresolved(prompt_r) or prompt_has_unresolved(method_r):
+        message_zh = format_unresolved_message(unresolved_rows)
         return {
             "ok": False,
             "error": "PROMPT_IDENTITY_UNRESOLVED",
-            "unresolved": unresolved,
-            "message_zh": "Task Prompt / METHOD 仍有未解析占位符；禁止派发",
+            "unresolved": unresolved_rows or [{"token": t} for t in unresolved],
+            "message_zh": message_zh,
         }
 
     prompt_path = (sdir / "prompt.md").as_posix()

@@ -52,11 +52,11 @@ unresolved_must_gap:
   - Atten_mask_shape
 
 scoring:
-  required_ids: [R1, R2, R3, R4, R5, R6, R7, R9, R10, R11, R12]
+  required_ids: [R1, R2, R3, R4, R5, R6, R7, R9, R10, R11, R12, R13]
   informational_ids: [R8]
   min_dimensions: 4
   min_partitions: 8
   min_guards: 3
   require_l1: true
   budget_seconds: 300
-  budget_required: false
+  budget_required: true

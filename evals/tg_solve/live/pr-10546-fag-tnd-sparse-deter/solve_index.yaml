@@ -1,0 +1,103 @@
+schema: tg-solve-index/v1
+needs_hit:
+- dim: D-pair-small
+  arm: p-small
+  cuts: &id001
+  - probe.isSmall
+  seed: {}
+- dim: D-pair-small
+  arm: p-line
+  cuts: *id001
+  seed: {}
+auto:
+- dim: D-sparse-mode
+  arm: p-left-up
+  cuts: &id002
+  - case.sparse_mode
+  seed:
+    sparse_mode: 2
+- dim: D-sparse-mode
+  arm: p-right-down
+  cuts: *id002
+  seed:
+    sparse_mode: 3
+- dim: D-sparse-mode
+  arm: p-band
+  cuts: *id002
+  seed:
+    sparse_mode: 4
+- dim: D-n1n2
+  arm: p-mha-44
+  cuts: &id003
+  - case.N1
+  - case.N2
+  seed:
+    N1: 4
+    N2: 4
+- dim: D-n1n2
+  arm: p-mha-22
+  cuts: *id003
+  seed:
+    N1: 2
+    N2: 2
+- dim: D-seqlens
+  arm: p-uniform
+  cuts: &id004
+  - case.seqlens_list_q
+  - case.seqlens_list_kv
+  seed:
+    seqlens_list_q: '[16,16]'
+    seqlens_list_kv: '[16,16]'
+- dim: D-seqlens
+  arm: p-skew
+  cuts: *id004
+  seed:
+    seqlens_list_q: '[32,8]'
+    seqlens_list_kv: '[16,16]'
+- dim: D-band-window
+  arm: p-narrow
+  cuts: &id005
+  - case.Pre_Tockens
+  - case.Next_Tockens
+  seed:
+    Pre_Tockens: 0
+    Next_Tockens: 0
+- dim: D-band-window
+  arm: p-wide
+  cuts: *id005
+  seed:
+    Pre_Tockens: 65536
+    Next_Tockens: 65536
+guards:
+- id: G-not-tnd
+  seed:
+    Input_Layout: BNSD
+  auto: true
+- id: G-non-deter
+  seed:
+    is_deter: 0
+  auto: true
+- id: G-gqa-n2-2
+  seed:
+    N2: 2
+  auto: true
+- id: G-gqa-n2-ne-4
+  seed:
+    N2: '2'
+  auto: true
+- id: G-sparse-0
+  seed:
+    sparse_mode: 0
+  auto: true
+- id: G-sparse-1
+  seed:
+    sparse_mode: 1
+  auto: true
+- id: G-sparse-5
+  seed:
+    sparse_mode: 5
+  auto: true
+- id: G-sparse-6
+  seed:
+    sparse_mode: 6
+  auto: true

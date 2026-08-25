@@ -345,7 +345,30 @@ def check_invariants(doc: dict[str, Any], repo: Path | None, rep: Report) -> Non
 
 
 # ------------------------------------------------------------------ rubric checks
+def _is_part_product(doc: dict[str, Any]) -> bool:
+    schema = _s(doc.get("schema")).lower()
+    if "part" in schema:
+        return True
+    return isinstance(doc.get("chunk"), dict)
+
+
+def _is_harness_product(doc: dict[str, Any]) -> bool:
+    schema = _s(doc.get("schema")).lower()
+    if "harness" in schema:
+        return True
+    return bool(doc.get("generate_inputs") or doc.get("golden") or doc.get("compare"))
+
+
+def _is_bind_product(doc: dict[str, Any]) -> bool:
+    schema = _s(doc.get("schema")).lower()
+    if "bind" in schema and "harness" not in schema:
+        return True
+    return bool(doc.get("mapping") or doc.get("chunk"))
+
+
 def check_engine(doc: dict[str, Any], rubric: dict[str, Any], repo: Path | None, rep: Report) -> None:
+    if _is_part_product(doc):
+        return
     want = rubric.get("engine") if isinstance(rubric.get("engine"), dict) else {}
     if not want:
         return
@@ -403,6 +426,8 @@ def check_engine(doc: dict[str, Any], rubric: dict[str, Any], repo: Path | None,
 def check_harness(doc: dict[str, Any], rubric: dict[str, Any], rep: Report) -> None:
     want = rubric.get("harness") if isinstance(rubric.get("harness"), dict) else {}
     if not want:
+        return
+    if _is_bind_product(doc) and not _is_harness_product(doc):
         return
 
     call = doc.get("call") if isinstance(doc.get("call"), dict) else {}
@@ -484,6 +509,10 @@ def check_columns(doc: dict[str, Any], rubric: dict[str, Any], rep: Report) -> N
     for col, spec in want.items():
         row = mapping.get(col)
         if not isinstance(row, dict):
+            present = {str(k) for k in mapping}
+            want_keys = {str(k) for k in want}
+            if present and present < want_keys:
+                continue
             rep.add("columns", f"C-{col}", False, f"{col} missing from mapping")
             continue
         status = _norm((row.get("control") or {}).get("status"))
@@ -508,6 +537,39 @@ def check_columns(doc: dict[str, Any], rubric: dict[str, Any], rep: Report) -> N
             if uid in banned:
                 problems.append(f"uo.id={uid!r} is banned")
         rep.add("columns", f"C-{col}", not problems, "; ".join(problems))
+    check_slice_call_args(doc, rubric, rep)
+
+
+def check_slice_call_args(doc: dict[str, Any], rubric: dict[str, Any], rep: Report) -> None:
+    slice_cfg = rubric.get("slice") if isinstance(rubric.get("slice"), dict) else {}
+    if not slice_cfg.get("call_args_sources_must_be_local"):
+        return
+    mapping = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
+    chunk = doc.get("chunk") if isinstance(doc.get("chunk"), dict) else {}
+    local = {str(c).strip() for c in (chunk.get("columns") or []) if str(c).strip()}
+    if not local and mapping:
+        want = rubric.get("columns") if isinstance(rubric.get("columns"), dict) else {}
+        map_keys = {str(k) for k in mapping}
+        want_keys = {str(k) for k in want}
+        if want_keys and map_keys < want_keys:
+            local = map_keys
+    if not local:
+        return
+    for arg in doc.get("call_args") or []:
+        if not isinstance(arg, dict):
+            continue
+        aname = _s(arg.get("name"))
+        for src in arg.get("sources") or []:
+            if not isinstance(src, dict):
+                continue
+            col = str(src.get("column") or "").strip()
+            if col and col not in local:
+                rep.add(
+                    "columns",
+                    f"S-foreign:{aname}:{col}",
+                    False,
+                    f"call_args {aname!r} sources column {col!r} is not in this slice",
+                )
 
 
 # ------------------------------------------------------------------------- driver

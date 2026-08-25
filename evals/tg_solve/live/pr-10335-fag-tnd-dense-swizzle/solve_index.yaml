@@ -1,0 +1,71 @@
+schema: tg-solve-index/v1
+needs_hit:
+- dim: D-swizzle-safe
+  arm: p-safe
+  cuts: &id001
+  - probe.deterTndSwizzleSafe
+  seed: {}
+- dim: D-swizzle-safe
+  arm: p-unsafe
+  cuts: *id001
+  seed: {}
+auto:
+- dim: D-deter
+  arm: p-on
+  cuts: &id002
+  - case.is_deter
+  seed:
+    is_deter: 1
+- dim: D-deter
+  arm: p-off
+  cuts: *id002
+  seed:
+    is_deter: 0
+- dim: D-mha
+  arm: p-mha
+  cuts: &id003
+  - case.N1
+  - case.N2
+  seed:
+    N1: 4
+    N2: 4
+- dim: D-mha
+  arm: p-gqa
+  cuts: *id003
+  seed:
+    N1: 8
+    N2: 2
+- dim: D-sparse
+  arm: p-dense
+  cuts: &id004
+  - case.sparse_mode
+  seed:
+    sparse_mode: 0
+- dim: D-sparse
+  arm: p-causal
+  cuts: *id004
+  seed:
+    sparse_mode: 2
+- dim: D-seq-ratio
+  arm: p-safe
+  cuts: &id005
+  - case.seqlens_list_q
+  - case.seqlens_list_kv
+  seed:
+    seqlens_list_q: '[512]'
+    seqlens_list_kv: '[128]'
+- dim: D-seq-ratio
+  arm: p-unsafe
+  cuts: *id005
+  seed:
+    seqlens_list_q: '[16]'
+    seqlens_list_kv: '[1024]'
+guards:
+- id: G-not-tnd
+  seed:
+    Input_Layout: BNSD
+  auto: true
+- id: G-large-batch
+  seed:
+    B: 129
+  auto: true

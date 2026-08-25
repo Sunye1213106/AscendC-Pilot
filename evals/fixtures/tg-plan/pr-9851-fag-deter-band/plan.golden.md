@@ -268,11 +268,12 @@ coverage:
     - dims: [D-schedule-mode, D-headdim-split]
       reason: "cubeBase 变化改变 p,q,m,n 的比例关系，可能翻转三路 argmin"
   L2:
-    combinations:
-    - dims: [D-token-normalize, D-band-geometry, D-schedule-mode]
-      reason: "完整因果链 token 符号 → (p,q) → bandBlocks/几何区间 → 三路 argmin，本次改动的核心路径"
-    - dims: [D-entry-route, D-layout, D-headdim-split]
-      reason: "入口路由 × layout × headdim 共同决定进选择器的 (m,n) 与 cubeBase，是 tiling 形状面的三元交互"
+    mode: full_cross
+    exclusions:
+    - partitions: {D-schedule-mode: p-mode-causal, D-causal-embedding: p-causal-not-embeddable}
+      reason: "useLowerCausal==0 时 CAUSAL 不参与三路竞争，replay.deterBandScheduleMode 到不了 1"
+    - partitions: {D-entry-route: p-entry-right-down-causal, D-causal-tail-parity: p-batch-even}
+      reason: "sparse_mode=3 且 B 偶时，S1 大到能进选择器会触发 RIGHT_DOWN_CAUSAL 早退；该组合不是合法 HIT 格，精确边界交 Solve"
   L3:
     guards:
     - G-is-deter-off

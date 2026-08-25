@@ -20,6 +20,10 @@ from typing import Any
 
 import yaml
 
+_ENGINE = Path(__file__).resolve().parents[2] / "engines" / "testcase-generation"
+if str(_ENGINE) not in sys.path:
+    sys.path.insert(0, str(_ENGINE))
+
 _FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
@@ -32,11 +36,12 @@ def _norm(val: Any) -> str:
 
 
 def _load(path: Path) -> dict[str, Any]:
+    from testcase_agent.plan_fill import load_yaml
+
     text = path.read_text(encoding="utf-8")
     fence = _FENCE_RE.search(text)
     blob = fence.group(1) if fence else text
-    doc = yaml.safe_load(blob) or {}
-    return doc if isinstance(doc, dict) else {}
+    return load_yaml(blob)
 
 
 def _walk_preds(node: Any) -> list[dict[str, Any]]:
@@ -76,6 +81,22 @@ class Report:
 
     def add(self, cid: str, ok: bool, detail: str = "") -> None:
         self.checks.append({"id": cid, "ok": bool(ok), "detail": detail if not ok else ""})
+
+
+def add_l2_sizing_gate(rep: Report, doc: dict[str, Any]) -> None:
+    """R13: L2 is a full crossing; empty exclusions = no analysis; empty leftover = over-pruned."""
+    from testcase_agent.coverage.compile import ledger_counts
+
+    ledger = ledger_counts(doc)
+    full = ledger["l2_mode"] == "full_cross"
+    excluded = int(ledger["l2_excluded"] or 0)
+    leftover = int(ledger["l2_obligations"] or 0)
+    r13_ok = full and excluded > 0 and leftover > 0 and not ledger["error"]
+    rep.add(
+        "R13",
+        r13_ok,
+        f"mode={ledger['l2_mode']} excluded={excluded} leftover={leftover} err={ledger['error'][:2]}",
+    )
 
 
 def _eq_value(pred: dict[str, Any], field: str, value: Any) -> bool:
@@ -126,7 +147,22 @@ def _cmp(pred: dict[str, Any], field: str, ops: set[str], bound: int, *, want_be
     return False
 
 
+def prepare_doc(doc: dict[str, Any], init: dict[str, Any] | None) -> dict[str, Any]:
+    """Accept tg-plan-fill/v1 or tg-plan/v3. Engine expands fill-in."""
+    from testcase_agent.plan_fill import ensure_v3
+
+    return ensure_v3(doc, init)
+
+
 def grade(doc: dict[str, Any], rubric: dict[str, Any], init: dict[str, Any] | None) -> Report:
+    from testcase_agent.plan_fill import AssembleError
+
+    try:
+        doc = prepare_doc(doc, init)
+    except AssembleError as exc:
+        rep = Report()
+        rep.add("R11", False, "; ".join(exc.errors)[:240])
+        return rep
     rep = Report()
     scoring = rubric.get("scoring") if isinstance(rubric.get("scoring"), dict) else {}
     req_text = _blob((doc.get("requirement") or {}).get("text"))
@@ -348,6 +384,7 @@ def grade(doc: dict[str, Any], rubric: dict[str, Any], init: dict[str, Any] | No
     fallback = [_s(c) for c in (rubric.get("confirmed_columns") or [])]
     solve_err = solve_contract_errors(doc, init, fallback_columns=fallback)
     rep.add("R12", not solve_err, "; ".join(solve_err)[:240])
+    add_l2_sizing_gate(rep, doc)
     return rep
 
 

@@ -126,3 +126,49 @@ def test_modes_candidates_come_from_entry_not_sidecar_help(tmp_path: Path) -> No
     flags = [str(row.get("flag") or row) for row in candidates] if candidates and isinstance(candidates[0], dict) else [str(x) for x in candidates]
     assert any("pta_mode" in f for f in flags)
     assert not any("wait" in f for f in flags)
+
+
+def test_scan_canonical_call_prefers_precision_over_profiler(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "cases.csv").write_text("Testcase_Name,Dtype\na,fp16\n", encoding="utf-8")
+    (root / "runner.py").write_text(
+        "import torch_npu\n"
+        "def run(pta_mode, q, k, v, dx, Nq):\n"
+        "    if pta_mode == 'only_grad':\n"
+        "        torch_npu.npu_fusion_attention_grad_v2(\n"
+        "            q, k, v, dx, Nq, keep_prob=0.9, input_layout='BSH',\n"
+        "            query_rope=q, key_rope=k, scale_value=1.0,\n"
+        "        )\n"
+        "    else:\n"
+        "        with torch_npu.profiler.profile():\n"
+        "            torch_npu.npu_fusion_attention_grad(q, k, v, dx, Nq, keep_prob=0.9)\n",
+        encoding="utf-8",
+    )
+    (root / "run_op.py").write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--case')\n"
+        "if __name__ == '__main__':\n"
+        "    p.parse_args()\n",
+        encoding="utf-8",
+    )
+    inv = TR.scan(root)
+    call = inv.get("canonical_call") or {}
+    assert call.get("kind") == "pta"
+    assert "npu_fusion_attention_grad_v2" in str(call.get("api") or "")
+    assert str(call.get("site") or "").endswith("runner.py:4")
+    assert "keep_prob" in (call.get("args") or [])
+    contract = TR.contract_from_inventory(inv)
+    assert contract.get("canonical_call", {}).get("api") == call.get("api")
+
+
+def test_scan_fag_canonical_call_site() -> None:
+    fag = Path(r"d:\PR-review\pr_workspace\.ascendc-harness\gitcode.com--coder_linx--fag_debug_tools")
+    if not fag.is_dir():
+        return
+    inv = TR.scan(fag)
+    call = inv.get("canonical_call") or {}
+    assert call.get("kind") == "pta"
+    assert "npu_fusion_attention_grad_v2" in str(call.get("api") or "")
+    assert "runner.py:333" in str(call.get("site") or "")

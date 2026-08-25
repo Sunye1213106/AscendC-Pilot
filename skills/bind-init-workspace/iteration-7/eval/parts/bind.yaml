@@ -1,0 +1,1439 @@
+schema: tg-bind-part/v1
+kind: script_repo
+table_kind: csv
+entry: run_fag.py
+case_arg: --case
+call:
+  kind: pta
+  api: torch_npu.npu_fusion_attention_grad_v2
+  site: fag_test/runner.py:333
+call_args:
+- name: query_rope
+  runtime_expr: q_rope
+  sources:
+  - column: rope
+    relation: presence
+- name: key_rope
+  runtime_expr: k_rope
+  sources:
+  - column: rope
+    relation: presence
+- name: pse
+  runtime_expr: pse1
+  sources:
+  - column: PSE_shape
+    relation: tensor_shape
+- name: padding_mask
+  runtime_expr: ''
+  sources: []
+- name: atten_mask
+  runtime_expr: atten_masks
+  sources:
+  - column: Atten_mask_dtype
+    relation: tensor_dtype
+  - column: Atten_mask_shape
+    relation: tensor_shape
+- name: softmax_max
+  runtime_expr: ''
+  sources: []
+- name: softmax_sum
+  runtime_expr: ''
+  sources: []
+- name: softmax_in
+  runtime_expr: ''
+  sources: []
+- name: attention_in
+  runtime_expr: out.to(pttype).to(device)
+  sources:
+  - column: Dtype
+    relation: tensor_dtype
+  - column: out_dtype
+    relation: tensor_dtype
+- name: scale_value
+  runtime_expr: scalar
+  sources:
+  - column: D
+    relation: derived
+- name: keep_prob
+  runtime_expr: keep_prob
+  sources:
+  - column: Drop_Out_Possibility
+    relation: direct
+- name: input_layout
+  runtime_expr: input_layout
+  sources:
+  - column: Input_Layout
+    relation: direct
+- name: actual_seq_qlen
+  runtime_expr: tuple(cu_seqlens_q)
+  sources:
+  - column: seqlens_list_q
+    relation: derived
+- name: actual_seq_kvlen
+  runtime_expr: tuple(cu_seqlens_kv)
+  sources:
+  - column: seqlens_list_kv
+    relation: derived
+- name: pre_tokens
+  runtime_expr: pre_tockens
+  sources:
+  - column: Pre_Tockens
+    relation: direct
+- name: next_tokens
+  runtime_expr: next_tockens
+  sources:
+  - column: Next_Tockens
+    relation: direct
+- name: seed
+  runtime_expr: seed
+  sources:
+  - column: seed
+    relation: direct
+- name: offset
+  runtime_expr: offset
+  sources:
+  - column: offset
+    relation: direct
+- name: numels
+  runtime_expr: (seqlens_list_q * seqlens_list_kv).sum() * Nq
+  sources:
+  - column: seqlens_list_q
+    relation: derived
+  - column: seqlens_list_kv
+    relation: derived
+- name: inner_precise
+  runtime_expr: ''
+  sources: []
+- name: prefix
+  runtime_expr: prefix
+  sources:
+  - column: prefix
+    relation: direct
+- name: sparse_mode
+  runtime_expr: case.sparse_mode
+  sources:
+  - column: sparse_mode
+    relation: direct
+- name: pse_type
+  runtime_expr: int(case.pse_type)
+  sources:
+  - column: PSE_type
+    relation: direct
+- name: softmax_layout
+  runtime_expr: same_as_input_str
+  sources:
+  - column: same_as_input
+    relation: derived
+- name: sink
+  runtime_expr: sink if is_sink else None
+  sources:
+  - column: is_sink
+    relation: presence
+- name: head_num
+  runtime_expr: Nq
+  sources:
+  - column: N1
+    relation: direct
+columns:
+- name: Testcase_Name
+- name: Enable
+- name: Dtype
+- name: out_dtype
+- name: Input_Layout
+- name: B
+- name: N1
+- name: N2
+- name: S1
+- name: S2
+- name: D
+- name: D_V
+- name: Drop_Out_Possibility
+- name: Pre_Tockens
+- name: Next_Tockens
+- name: Atten_mask_dtype
+- name: Atten_mask_shape
+- name: sparse_mode
+- name: PSE_type
+- name: PSE_shape
+- name: seqlens_list_q
+- name: seqlens_list_kv
+- name: cu_seqlens_q
+- name: cu_seqlens_kv
+- name: eod
+- name: same_as_input
+- name: seed
+- name: offset
+- name: is_deter
+- name: rope
+- name: inner_drop
+- name: is_sink
+- name: prefix
+- name: Actual_dq_pricision
+- name: Actual_dk_pricision
+- name: Actual_dv_pricision
+- name: Actual_kernel_time_backward
+- name: Actual_dq_Md5sum
+- name: Actual_dk_Md5sum
+- name: Actual_dv_Md5sum
+mapping:
+  Testcase_Name:
+    control:
+      status: metadata
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Enable:
+    control:
+      status: metadata
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Dtype:
+    control:
+      status: active
+    relation: tensor_dtype
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  out_dtype:
+    control:
+      status: active
+    relation: tensor_dtype
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Input_Layout:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: input_layout
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:402
+  B:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: b
+      candidate: ''
+    encoding: ''
+    evidence: b
+  N1:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: head_num
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:39
+  N2:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: n2
+      candidate: ''
+    encoding: ''
+    evidence: n2
+  S1:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: s1
+      candidate: ''
+    encoding: ''
+    evidence: s1
+  S2:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: s2
+      candidate: ''
+    encoding: ''
+    evidence: s2
+  D:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: d
+      candidate: ''
+    encoding: ''
+    evidence: d
+  D_V:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: d1
+      candidate: ''
+    encoding: ''
+    evidence: d1
+  Drop_Out_Possibility:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: keep_prob
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:401
+  Pre_Tockens:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: pre_tokens
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:403
+  Next_Tockens:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: next_tokens
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:404
+  Atten_mask_dtype:
+    control:
+      status: active
+    relation: tensor_dtype
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Atten_mask_shape:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  sparse_mode:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: sparse_mode
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:410
+  PSE_type:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: pse_type
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:411
+  PSE_shape:
+    control:
+      status: active
+    relation: tensor_shape
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  seqlens_list_q:
+    control:
+      status: active
+    relation: derived
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: actual_seq_qlen
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:347
+  seqlens_list_kv:
+    control:
+      status: active
+    relation: derived
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: actual_seq_kvlen
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:348
+  cu_seqlens_q:
+    control:
+      status: shadowed
+    relation: derived
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  cu_seqlens_kv:
+    control:
+      status: shadowed
+    relation: derived
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  eod:
+    control:
+      status: active
+    relation: derived
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  same_as_input:
+    control:
+      status: active
+    relation: derived
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: softmax_layout
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:330
+  seed:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: seed
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:351
+  offset:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: offset
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:352
+  is_deter:
+    control:
+      status: active
+    relation: derived
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: DeterType
+      candidate: ''
+    encoding: ''
+    evidence: op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:790
+  rope:
+    control:
+      status: active
+    relation: presence
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: IsRope
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:332
+  inner_drop:
+    control:
+      status: active
+    relation: derived
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: IsDrop
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/test_utils.py:275
+  is_sink:
+    control:
+      status: active
+    relation: presence
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: sink
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:359
+  prefix:
+    control:
+      status: active
+    relation: direct
+    confidence: confirmed
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: prefix
+      candidate: ''
+    encoding: ''
+    evidence: fag_test/runner.py:355
+  Actual_dq_pricision:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_dk_pricision:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_dv_pricision:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_kernel_time_backward:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_dq_Md5sum:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_dk_Md5sum:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+  Actual_dv_Md5sum:
+    control:
+      status: result
+    relation: ''
+    confidence: unresolved
+    runtime:
+      target: ''
+      path: []
+    uo:
+      id: ''
+      candidate: ''
+    encoding: ''
+    evidence: ''
+domains:
+  Testcase_Name:
+    profile:
+      inferred_type: enum-string
+      n_unique: 113
+      empty_rate: 0.0
+      topk:
+      - value: pse_reg_001_t0_bn1s_none
+        count: 1
+      - value: pse_reg_002_t0_bnss_ss
+        count: 1
+      - value: pse_reg_003_t0_1nss_b1ss
+        count: 1
+      - value: pse_reg_004_t0_bnhs_11ss_causal
+        count: 1
+      unique_truncated: true
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Enable:
+    profile:
+      inferred_type: enum-string
+      n_unique: 2
+      empty_rate: 0.0
+      topk:
+      - value: Enable
+        count: 97
+      - value: Disable
+        count: 16
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Dtype:
+    profile:
+      inferred_type: enum-string
+      n_unique: 3
+      empty_rate: 0.0
+      topk:
+      - value: fp16
+        count: 71
+      - value: bf16
+        count: 38
+      - value: fp32
+        count: 4
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  out_dtype:
+    profile:
+      inferred_type: enum-string
+      n_unique: 3
+      empty_rate: 0.0
+      topk:
+      - value: fp16
+        count: 71
+      - value: bf16
+        count: 38
+      - value: fp32
+        count: 4
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Input_Layout:
+    profile:
+      inferred_type: enum-string
+      n_unique: 5
+      empty_rate: 0.0
+      topk:
+      - value: BNSD
+        count: 64
+      - value: TND
+        count: 29
+      - value: BSND
+        count: 12
+      - value: BSH
+        count: 5
+      - value: SBH
+        count: 3
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  B:
+    profile:
+      inferred_type: int
+      n_unique: 4
+      empty_rate: 0.0
+      min: 1
+      max: 8
+      topk:
+      - value: '2'
+        count: 91
+      - value: '3'
+        count: 11
+      - value: '1'
+        count: 9
+      - value: '8'
+        count: 2
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  N1:
+    profile:
+      inferred_type: int
+      n_unique: 6
+      empty_rate: 0.0
+      min: 2
+      max: 32
+      topk:
+      - value: '4'
+        count: 80
+      - value: '8'
+        count: 20
+      - value: '6'
+        count: 8
+      - value: '16'
+        count: 3
+      - value: '2'
+        count: 1
+      - value: '32'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  N2:
+    profile:
+      inferred_type: int
+      n_unique: 5
+      empty_rate: 0.0
+      min: 2
+      max: 16
+      topk:
+      - value: '2'
+        count: 95
+      - value: '4'
+        count: 8
+      - value: '3'
+        count: 8
+      - value: '16'
+        count: 1
+      - value: '8'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  S1:
+    profile:
+      inferred_type: int
+      n_unique: 11
+      empty_rate: 0.0
+      min: 12
+      max: 2048
+      topk:
+      - value: '16'
+        count: 39
+      - value: '32'
+        count: 30
+      - value: '24'
+        count: 17
+      - value: '64'
+        count: 17
+      - value: '128'
+        count: 3
+      - value: '1280'
+        count: 2
+      - value: '12'
+        count: 1
+      - value: '1536'
+        count: 1
+      - value: '2048'
+        count: 1
+      - value: '512'
+        count: 1
+      - value: '1200'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  S2:
+    profile:
+      inferred_type: int
+      n_unique: 12
+      empty_rate: 0.0
+      min: 12
+      max: 2048
+      topk:
+      - value: '16'
+        count: 30
+      - value: '32'
+        count: 30
+      - value: '24'
+        count: 22
+      - value: '64'
+        count: 17
+      - value: '48'
+        count: 4
+      - value: '128'
+        count: 3
+      - value: '1280'
+        count: 2
+      - value: '12'
+        count: 1
+      - value: '1536'
+        count: 1
+      - value: '2048'
+        count: 1
+      - value: '512'
+        count: 1
+      - value: '1200'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  D:
+    profile:
+      inferred_type: int
+      n_unique: 6
+      empty_rate: 0.0
+      min: 64
+      max: 192
+      topk:
+      - value: '64'
+        count: 103
+      - value: '192'
+        count: 5
+      - value: '128'
+        count: 2
+      - value: '80'
+        count: 1
+      - value: '96'
+        count: 1
+      - value: '72'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  D_V:
+    profile:
+      inferred_type: int
+      n_unique: 4
+      empty_rate: 0.0
+      min: 64
+      max: 128
+      topk:
+      - value: '64'
+        count: 105
+      - value: '128'
+        count: 6
+      - value: '96'
+        count: 1
+      - value: '72'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Drop_Out_Possibility:
+    profile:
+      inferred_type: float
+      n_unique: 3
+      empty_rate: 0.0
+      min: 0.8
+      max: 1.0
+      topk:
+      - value: '1'
+        count: 107
+      - value: '0.9'
+        count: 4
+      - value: '0.8'
+        count: 2
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Pre_Tockens:
+    profile:
+      inferred_type: int
+      n_unique: 3
+      empty_rate: 0.0
+      min: 8
+      max: 65536
+      topk:
+      - value: '65536'
+        count: 108
+      - value: '8'
+        count: 4
+      - value: '16'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Next_Tockens:
+    profile:
+      inferred_type: int
+      n_unique: 3
+      empty_rate: 0.0
+      min: 0
+      max: 65536
+      topk:
+      - value: '65536'
+        count: 86
+      - value: '0'
+        count: 23
+      - value: '16'
+        count: 4
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Atten_mask_dtype:
+    profile:
+      inferred_type: enum-string
+      n_unique: 1
+      empty_rate: 0.0
+      topk:
+      - value: bool
+        count: 113
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Atten_mask_shape:
+    profile:
+      inferred_type: enum-string
+      n_unique: 5
+      empty_rate: 0.0
+      topk:
+      - value: NONE
+        count: 61
+      - value: B1SS
+        count: 16
+      - value: 11SS
+        count: 16
+      - value: SS
+        count: 10
+      - value: BNSS
+        count: 10
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  sparse_mode:
+    profile:
+      inferred_type: int
+      n_unique: 7
+      empty_rate: 0.0
+      min: 0
+      max: 6
+      topk:
+      - value: '0'
+        count: 73
+      - value: '2'
+        count: 16
+      - value: '1'
+        count: 14
+      - value: '3'
+        count: 4
+      - value: '4'
+        count: 4
+      - value: '5'
+        count: 1
+      - value: '6'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  PSE_type:
+    profile:
+      inferred_type: int
+      n_unique: 4
+      empty_rate: 0.0
+      min: 0
+      max: 3
+      topk:
+      - value: '0'
+        count: 42
+      - value: '1'
+        count: 32
+      - value: '2'
+        count: 23
+      - value: '3'
+        count: 16
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  PSE_shape:
+    profile:
+      inferred_type: enum-string
+      n_unique: 7
+      empty_rate: 0.0
+      topk:
+      - value: BNSS
+        count: 23
+      - value: N
+        count: 21
+      - value: BN
+        count: 18
+      - value: BN1S
+        count: 15
+      - value: 1NSS
+        count: 14
+      - value: BNHS
+        count: 12
+      - value: 1NHS
+        count: 10
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  seqlens_list_q:
+    profile:
+      inferred_type: list-literal
+      n_unique: 4
+      empty_rate: 0.7434
+      topk:
+      - value: '[8, 16]'
+        count: 15
+      - value: '[8, 16, 24]'
+        count: 11
+      - value: '[16, 32]'
+        count: 2
+      - value: '[1100, 1200]'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  seqlens_list_kv:
+    profile:
+      inferred_type: list-literal
+      n_unique: 4
+      empty_rate: 0.7434
+      topk:
+      - value: '[8, 16]'
+        count: 15
+      - value: '[8, 16, 24]'
+        count: 11
+      - value: '[16, 32]'
+        count: 2
+      - value: '[1100, 1200]'
+        count: 1
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  cu_seqlens_q:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  cu_seqlens_kv:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  eod:
+    profile:
+      inferred_type: int
+      n_unique: 2
+      empty_rate: 0.0
+      min: 0
+      max: 1
+      topk:
+      - value: '0'
+        count: 111
+      - value: '1'
+        count: 2
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  same_as_input:
+    profile:
+      inferred_type: int
+      n_unique: 2
+      empty_rate: 0.0
+      min: 0
+      max: 1
+      topk:
+      - value: '0'
+        count: 111
+      - value: '1'
+        count: 2
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  seed:
+    profile:
+      inferred_type: int
+      n_unique: 1
+      empty_rate: 0.0
+      min: 2
+      max: 2
+      topk:
+      - value: '2'
+        count: 113
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  offset:
+    profile:
+      inferred_type: int
+      n_unique: 1
+      empty_rate: 0.0
+      min: 0
+      max: 0
+      topk:
+      - value: '0'
+        count: 113
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  is_deter:
+    profile:
+      inferred_type: enum-string
+      n_unique: 2
+      empty_rate: 0.0
+      topk:
+      - value: 'false'
+        count: 110
+      - value: 'true'
+        count: 3
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  rope:
+    profile:
+      inferred_type: int
+      n_unique: 2
+      empty_rate: 0.0
+      min: 0
+      max: 1
+      topk:
+      - value: '0'
+        count: 108
+      - value: '1'
+        count: 5
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  inner_drop:
+    profile:
+      inferred_type: int
+      n_unique: 2
+      empty_rate: 0.0
+      min: 0
+      max: 1
+      topk:
+      - value: '0'
+        count: 109
+      - value: '1'
+        count: 4
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  is_sink:
+    profile:
+      inferred_type: int
+      n_unique: 2
+      empty_rate: 0.0
+      min: 0
+      max: 1
+      topk:
+      - value: '0'
+        count: 108
+      - value: '1'
+        count: 5
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  prefix:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dq_pricision:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dk_pricision:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dv_pricision:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_kernel_time_backward:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dq_Md5sum:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dk_Md5sum:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+  Actual_dv_Md5sum:
+    profile:
+      inferred_type: empty-heavy
+      n_unique: 0
+      empty_rate: 1.0
+      topk: []
+    applicability: ''
+    value: ''
+    projection: ''
+    operator: ''
+    compare: ''
+findings:
+- code: PARTIAL
+  detail: Dtype/out_dtype tensor_dtype not bound to host dtype switch dims
+- code: PARTIAL
+  detail: Atten_mask_dtype/shape and PSE_shape drive tensor generation only
+- code: PARTIAL
+  detail: eod trims batch in test_utils but has no call-site kwarg or UO dim
+- code: PARTIAL
+  detail: Dtype/out_dtype tensor_dtype not bound to host dtype switch dims
+- code: PARTIAL
+  detail: Atten_mask_dtype/shape and PSE_shape drive tensor generation only
+- code: PARTIAL
+  detail: eod trims batch in test_utils but has no call-site kwarg or UO dim
+llm_edit: true
+artifact_identity:
+  run_id: EVAL7
+  workflow_id: tg-init
+  action_id: bind_init
+run_id: EVAL7
+workflow_id: tg-init
+action_id: bind_init

@@ -1101,11 +1101,31 @@ def run_compile_obligations(project_root: Path, ctx: dict[str, Any]) -> dict[str
         ledger["signatures"] = list(old.get("signatures") or [])
     isolation.assert_tg_write_path(path)
     path.write_text(dump_worklog(ledger, prose=""), encoding="utf-8")
+    try:
+        from testcase_agent.plan_fill import ensure_v3
+        from testcase_agent.solve_fill import index_plan
+
+        indexed = index_plan(ensure_v3(fence, init_doc), init_doc)
+        idx_path = tg / "solve_index.yaml"
+        isolation.assert_tg_write_path(idx_path)
+        _dump_yaml(
+            idx_path,
+            {
+                "schema": "tg-solve-index/v1",
+                "needs_hit": indexed.get("needs_hit") or [],
+                "auto": indexed.get("auto") or [],
+                "guards": indexed.get("guards") or [],
+                "obligation_count": len(ledger.get("obligations") or {}),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        idx_path = None
     return {
         "ok": True,
         "engine": "compile_obligations",
         "artifact": path.as_posix(),
         "count": len(ledger.get("obligations") or {}),
+        "solve_index": None if idx_path is None else idx_path.as_posix(),
     }
 
 
@@ -1116,6 +1136,15 @@ def run_construct_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     staged = _parse_captured_mapping(str(captured.get("text") or ""), captured.get("doc") if isinstance(captured.get("doc"), dict) else None)
     if not staged:
         staged = _collect_staging_mapping(_action_dir(project_root, ctx, "construct_cases"))
+    try:
+        from testcase_agent.plan_fill import load_yaml
+        from testcase_agent.solve_fill import assemble_solve, is_solve_fill
+
+        if is_solve_fill(staged):
+            _, plan_doc = products.load_plan(tg)
+            staged = assemble_solve(staged, plan_doc, init_doc)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "construct_promote", "error": str(exc)}
     rows = staged.get("rows") or staged.get("cases") or []
     if rows and not isinstance(rows, list):
         return {"ok": False, "engine": "construct_promote", "error": "rows is not a list"}

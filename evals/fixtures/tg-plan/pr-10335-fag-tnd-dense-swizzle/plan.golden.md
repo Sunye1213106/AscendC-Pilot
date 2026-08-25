@@ -200,7 +200,13 @@ coverage:
         reason: enableSwizzle 与 nondeter S1 内层 || 不相交；deter 臂不依赖该阈值
       - dims: [D-nondeter-s1-threshold, D-g-eq1]
         reason: S1/S2 与 N1/N2 不相交；g>1 不阻断 nondeter 臂
-  L2: []
+  L2:
+    mode: full_cross
+    exclusions:
+    - partitions: {D-template-deter-nondeter: p-template-deter-arm, D-g-eq1: p-g-gt1-gqa}
+      reason: "g>1 只杀 deter 析取支；与 is_deter=1 同格是死格，HIT 只能走 nondeter"
+    - partitions: {D-template-deter-nondeter: p-template-deter-arm, D-deterTndSwizzleSafe: p-deter-swizzle-unsafe-nondeter-fallback}
+      reason: "deterTndSwizzleSafe==0 只杀 deter 支；与 is_deter=1 同格是死格，unsafe 格靠 nondeter HIT"
   L3:
     guards:
       - G-layout-not-tnd

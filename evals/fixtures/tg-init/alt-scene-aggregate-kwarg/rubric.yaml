@@ -59,8 +59,11 @@ columns:
     status_in: [result]
     uo_ok: ['']
 
+slice:
+  call_args_sources_must_be_local: true
+
 scoring:
   required_families: [invariant]
   min_pass_rate:
     columns: 1.0
-  budget_seconds: 240
+  budget_seconds: 300

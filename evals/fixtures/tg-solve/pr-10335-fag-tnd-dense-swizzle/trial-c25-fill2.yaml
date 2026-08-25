@@ -1,0 +1,18 @@
+schema: tg-solve-fill/v1
+baseline:
+  Input_Layout: TND
+  B: 1
+  same_as_input: 1
+hits:
+  - dim: D-swizzle-safe
+    arm: p-safe
+    seed:
+      seqlens_list_q: '[512]'
+      seqlens_list_kv: '[128]'
+  - dim: D-swizzle-safe
+    arm: p-unsafe
+    seed:
+      seqlens_list_q: '[16]'
+      seqlens_list_kv: '[1024]'
+guard_hits: []
+unreachable: []

@@ -65,6 +65,15 @@ def _dim_is_g1_off(dim: dict[str, Any]) -> bool:
 
 
 def grade(doc: dict[str, Any], rubric: dict[str, Any], init: dict[str, Any] | None = None) -> Report:
+    from grade_plan import prepare_doc
+    from testcase_agent.plan_fill import AssembleError
+
+    try:
+        doc = prepare_doc(doc, init)
+    except AssembleError as exc:
+        rep = Report()
+        rep.add("R11", False, "; ".join(exc.errors)[:240])
+        return rep
     rep = Report()
     scoring = rubric.get("scoring") if isinstance(rubric.get("scoring"), dict) else {}
     req_text = _blob((doc.get("requirement") or {}).get("text"))
@@ -318,6 +327,9 @@ def grade(doc: dict[str, Any], rubric: dict[str, Any], init: dict[str, Any] | No
     fallback = [_s(c) for c in (rubric.get("confirmed_columns") or [])]
     solve_err = solve_contract_errors(doc, init, fallback_columns=fallback)
     rep.add("R12", not solve_err, "; ".join(solve_err)[:240])
+    from grade_plan import add_l2_sizing_gate
+
+    add_l2_sizing_gate(rep, doc)
     return rep
 
 

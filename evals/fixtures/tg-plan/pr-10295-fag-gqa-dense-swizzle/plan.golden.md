@@ -230,7 +230,15 @@ coverage:
         reason: "m 改变 ceil(n/m) 与 ceil(bng/k)，可翻转 baseRound 奇偶；不要和 D-gqa-ratio 交叉（H7 撞 N1/N2）"
       - dims: [D-align-early-return, D-entry-route]
         reason: "对齐早退在选择器内部，入口 sparse_mode 析取在 GetDeterSparseTilingKey，字段不相交"
-  L2: []
+  L2:
+    mode: full_cross
+    exclusions:
+    - partitions: {D-gqa-ratio: p-g-eq-4, D-align-early-return: p-base-aligned}
+      reason: "D-align-early-return 两格都钉 N1=4/N2=2；与 g=4（N1=8/N2=2）列值冲突"
+    - partitions: {D-gqa-ratio: p-g-eq-4, D-align-early-return: p-base-unaligned}
+      reason: "同上，g=4 与对齐维钉死的 N1/N2 不能同时成立"
+    - partitions: {D-k-clamp: p-k-full-aic, D-align-early-return: p-base-unaligned}
+      reason: "k 夹到 aicNum 且 g=2 时 baseRound 常恒偶，unaligned 格不可达；精确证明交 Solve"
   L3:
     guards:
       - G-is-deter-off

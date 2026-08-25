@@ -1,0 +1,85 @@
+schema: tg-harness-part/v1
+kind: script_repo
+entry: run_fag.py
+case_arg: --case
+call:
+  kind: pta
+  api: torch_npu.npu_fusion_attention_grad_v2
+  site: fag_test/runner.py:333
+golden:
+  match: Host numpy/torch reference from pipeline.attention_score_with_grad (BNSD-family layouts) or pipeline.run_unpad (TND); dq/dk/dv golden written via GoldenStore to {--data}/{casename}/*.pt (or in-memory golden_cache with --no-save-golden); reload with --cache-data
+  mismatch: check_result fails on shape mismatch or per-tensor diff_max > 0.1 (logs error with element count over ratio threshold)
+  gaps: Enable=disable rows skipped in main.py; --golden-only generates golden only and skips pta_test; --only_input_golden stops before compare; auto_grad path also compares npu_out vs forward out golden
+compare:
+  how: runner.pta_test calls check_result (test_utils.py) on flattened float32 NPU dq/dk/dv vs golden numpy; optional dq_rope/dk_rope/dsink and auto_grad npu_out; ratio_threshold=0.005, threshold_diff=0.005, per-element threshold=max(|a|,|b|)*0.005 with floor 0.000025; exact match sets ratio=1 and diff max/sum=0; fail when diff_max>0.1 else info; ratio=(1-ratio_diff); shape mismatch sets ratio=0, max=99999, sum=99999
+  atol_rtol: absent
+modes:
+  precision:
+  - --pta_mode
+  - only_grad
+  perf:
+  - --pta_mode
+  - profiler
+  candidates:
+  - flag: --data
+    values: []
+    slot: ''
+  - flag: --cache-data
+    values: []
+    slot: ''
+  - flag: --backend
+    values: []
+    slot: ''
+  - flag: --no-tiling
+    values: []
+    slot: ''
+  - flag: --pta
+    values: []
+    slot: ''
+  - flag: --pta_mode
+    values: []
+    slot: ''
+  - flag: --end-at
+    values: []
+    slot: ''
+  - flag: --device
+    values: []
+    slot: ''
+  - flag: --old-data
+    values: []
+    slot: ''
+  - flag: --flash-golden
+    values: []
+    slot: ''
+generate_inputs:
+  can:
+  - case-table dims B/N1/N2/S1/S2/D/D_V with fp16/bf16/fp32/fp8_e4m3fn/fp8_e5m2
+  - layouts BNSD BSH SBH BSND TND (TND via seqlens_list_q/kv)
+  - PSE shapes/types sparse_mode atten_mask variants rope sink prefix
+  - deterministic inputs when is_deter=true (torch.use_deterministic_algorithms)
+  - flash reference path via --flash-golden
+  cannot:
+    empty_tensor: generate_inputs/pipeline always randn positive-rank tensors from case dims; no S=0 or zero-length seqlens generation
+    scalar: no 0-d or scalar-only tensor paths; all inputs are shaped from case columns
+    inf_nan: only np.random.randn / uniform sampling; no inf or nan injection hooks
+    align_plus_1: shapes taken directly from table columns; no last-dim+1 misalignment sweep
+    illegal_range: table may carry negative pre_tockens/next_tockens but generator does not systematically reject illegal ranges beyond sparse_mode skip heuristics
+findings:
+- code: default_mode_is_perf
+  detail: fag_test/main.py:35 --pta_mode default profiler (单反向性能); not a precision run unless overridden
+- code: golden_only_is_not_precision
+  detail: fag_test/main.py:44 --golden-only help 仅生成golden数据，不调用pta_test(无需NPU环境); pta_test_all returns before compare
+- code: threshold_in_function_not_argparse
+  detail: test_utils.py check_result ratio_threshold=0.005 min=0.000025 fail when diff_max>0.1; no --atol/--rtol flags
+- code: call_kind_pta
+  detail: call.kind pta; only_grad invokes torch_npu.npu_fusion_attention_grad_v2 at fag_test/runner.py:333
+- code: deterministic_mode
+  detail: is_deter=true writes dq/dk/dv .bin under result_esl and md5sum backfill to Actual_dq/dk/dv_Md5sum columns
+llm_edit: true
+artifact_identity:
+  run_id: EVAL7
+  workflow_id: tg-init
+  action_id: bind_init
+run_id: EVAL7
+workflow_id: tg-init
+action_id: bind_init

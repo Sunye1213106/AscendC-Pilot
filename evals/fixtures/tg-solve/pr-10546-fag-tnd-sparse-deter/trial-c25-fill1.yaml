@@ -1,0 +1,21 @@
+schema: tg-solve-fill/v1
+baseline:
+  Input_Layout: TND
+  is_deter: 1
+  same_as_input: 1
+  B: 2
+  seqlens_list_q: '[16,16]'
+  seqlens_list_kv: '[16,16]'
+hits:
+  - dim: D-pair-small
+    arm: p-small
+    seed:
+      seqlens_list_q: '[16,16]'
+      seqlens_list_kv: '[16,16]'
+  - dim: D-pair-small
+    arm: p-line
+    seed:
+      B: 4
+      seqlens_list_q: '[64,64,64,64]'
+      seqlens_list_kv: '[64,64,64,64]'
+unreachable: []

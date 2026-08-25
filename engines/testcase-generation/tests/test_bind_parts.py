@@ -295,3 +295,87 @@ def test_dump_part_does_not_wrap_long_evidence_path(tmp_path: Path) -> None:
     loaded = yaml.safe_load(raw)
     assert loaded["mapping"]["B"]["evidence"] == evidence
 
+
+def test_emit_prefills_canonical_call_and_arg_names(tmp_path: Path) -> None:
+    scan = {
+        "kind": "script_repo",
+        "canonical_call": {
+            "kind": "pta",
+            "api": "torch_npu.npu_fusion_attention_grad_v2",
+            "site": "fag_test/runner.py:333",
+            "args": ["keep_prob", "input_layout", "head_num"],
+        },
+        "contract": {
+            "kind": "script_repo",
+            "entry": "run.py",
+            "case_arg": "--case",
+            "columns": ["N1", "D"] + [f"C{i}" for i in range(18)],
+        },
+        "inventory": {
+            "tables": [
+                {
+                    "columns": ["N1", "D"] + [f"C{i}" for i in range(18)],
+                    "kind": "csv",
+                }
+            ]
+        },
+    }
+    parts = tmp_path / "parts"
+    BP.emit_bind_parts(parts, scan=scan, identity={"run_id": "RUN_1"})
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind["call"]["kind"] == "pta"
+    assert bind["call"]["api"].endswith("npu_fusion_attention_grad_v2")
+    assert bind["call"]["site"] == "fag_test/runner.py:333"
+    assert [row["name"] for row in bind["call_args"]] == [
+        "keep_prob",
+        "input_layout",
+        "head_num",
+    ]
+    assert bind["call_args"][0]["sources"] == []
+    harness = yaml.safe_load((parts / "harness.yaml").read_text(encoding="utf-8"))
+    assert harness["call"]["kind"] == "pta"
+    assert harness["call"]["site"] == "fag_test/runner.py:333"
+    c0 = yaml.safe_load((parts / "bind0.yaml").read_text(encoding="utf-8"))
+    assert c0["call"]["site"] == "fag_test/runner.py:333"
+    assert [row["name"] for row in c0["call_args"]] == [
+        "keep_prob",
+        "input_layout",
+        "head_num",
+    ]
+    assert "N1" in c0["chunk"]["columns"]
+    assert "D" in c0["chunk"]["columns"]
+
+
+def test_merge_unions_sources_for_same_arg(tmp_path: Path) -> None:
+    names = [f"C{i}" for i in range(25)]
+    scan = {
+        "kind": "script_repo",
+        "canonical_call": {
+            "kind": "pta",
+            "api": "torch_npu.foo",
+            "site": "a.py:1",
+            "args": ["x"],
+        },
+        "contract": {"entry": "run.py", "case_arg": "--case", "columns": names},
+        "inventory": {"tables": [{"columns": names, "kind": "csv"}]},
+    }
+    parts = tmp_path / "parts"
+    BP.emit_bind_parts(parts, scan=scan, identity={"run_id": "RUN_1"})
+    c0 = yaml.safe_load((parts / "bind0.yaml").read_text(encoding="utf-8"))
+    c0["call_args"] = [{"name": "x", "sources": [{"column": "C0", "relation": "direct"}]}]
+    c0["mapping"]["C0"]["control"] = {"status": "active"}
+    c0["mapping"]["C0"]["confidence"] = "confirmed"
+    (parts / "bind0.yaml").write_text(yaml.safe_dump(c0, allow_unicode=True), encoding="utf-8")
+    c1 = yaml.safe_load((parts / "bind1.yaml").read_text(encoding="utf-8"))
+    c1["call_args"] = [{"name": "x", "sources": [{"column": "C20", "relation": "direct"}]}]
+    c1["mapping"]["C20"]["control"] = {"status": "active"}
+    c1["mapping"]["C20"]["confidence"] = "confirmed"
+    (parts / "bind1.yaml").write_text(yaml.safe_dump(c1, allow_unicode=True), encoding="utf-8")
+    merged = BP.merge_bind_chunks(parts)
+    assert merged["ok"] is True
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    xs = [row for row in bind["call_args"] if row["name"] == "x"]
+    assert len(xs) == 1
+    cols = {s["column"] for s in xs[0]["sources"]}
+    assert cols == {"C0", "C20"}
+

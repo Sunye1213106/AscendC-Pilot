@@ -1213,6 +1213,26 @@ def _attach_host_step_body(
         issues = fail.get("issues") or eng.get("issues") or out.get("issues")
         if issues:
             extra["issues"] = issues
+        unresolved = out.get("unresolved")
+        if unresolved is None:
+            prep = out.get("prepare") if isinstance(out.get("prepare"), dict) else {}
+            unresolved = prep.get("unresolved")
+        if unresolved:
+            extra["unresolved"] = unresolved
+            try:
+                from ascendc_pilot.observation import record_prepare_failure
+
+                record_prepare_failure(
+                    project_root,
+                    action_id=str(out.get("failed_action") or ""),
+                    result={
+                        "error": out.get("error") or error_detail,
+                        "message_zh": detail,
+                        "unresolved": unresolved,
+                    },
+                )
+            except Exception:
+                pass
         out["host_step"] = build_host_step(
             kind="failed",
             project_root=project_root,
@@ -1358,6 +1378,11 @@ def _attach_host_step_body(
                 "bind_path": str(prep.get("bind_path") or ""),
                 "verdict_path": str(prep.get("verdict_path") or ""),
             }
+            unresolved = prep.get("unresolved") or []
+            if unresolved:
+                extra_review["unresolved"] = unresolved
+            if prep.get("error"):
+                extra_review["error_detail"] = str(prep.get("error") or "")
             review_msg = str(prep.get("message_zh") or "")
             if action_id == "plan_ingest":
                 review_msg = review_msg or (
@@ -1379,19 +1404,36 @@ def _attach_host_step_body(
 
         if kind == "primary_review" and existing_prep:
             if existing_prep.get("ok") is False:
+                unresolved = existing_prep.get("unresolved") or []
+                msg = str(
+                    existing_prep.get("message_zh")
+                    or existing_prep.get("error")
+                    or "prepare failed"
+                )
+                try:
+                    from ascendc_pilot.observation import record_prepare_failure
+
+                    record_prepare_failure(
+                        project_root,
+                        action_id=action_id,
+                        result=existing_prep,
+                    )
+                except Exception:
+                    pass
+                extra_fail: dict[str, Any] = {"prepare": existing_prep}
+                if unresolved:
+                    extra_fail["unresolved"] = unresolved
+                extra_fail["error_detail"] = str(existing_prep.get("error") or "")
                 out["host_step"] = build_host_step(
                     kind="failed",
                     project_root=project_root,
                     action_id=action_id,
                     actor_id=actor_id or str(existing_prep.get("actor_id") or "ascendc-pilot"),
-                    message_zh=str(
-                        existing_prep.get("message_zh")
-                        or existing_prep.get("error")
-                        or "prepare failed"
-                    ),
-                    extra={"prepare": existing_prep},
+                    message_zh=msg,
+                    extra=extra_fail,
                 )
                 out["prepare"] = existing_prep
+                out["unresolved"] = unresolved
                 return out
             if existing_prep.get("auto_finalize") or existing_prep.get("continue_drive"):
                 return _drain_after_auto()

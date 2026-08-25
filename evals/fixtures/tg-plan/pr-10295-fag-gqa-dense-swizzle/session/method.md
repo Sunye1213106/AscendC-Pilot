@@ -10,7 +10,7 @@
 2. **L1 每对做 2×2。** helper 只出现在臂 A 时，`(臂A, helperOff)` 是死格 → **删这条 L1**（helper 维只留 L0）。切析取臂的维（含 `is_deter`）不要和「只杀其中一支」的 helper/g 维交叉。
 3. **`constraints` 默认 `[]`。** 只有「所有 HIT 行都成立、且不是 Guard.controls、也不是 Dimension 正在切的列」才加。不确定就删。禁止把 legacy 早退的奇偶/S1 下界整包抄进来。
 4. **早退是合取 `A∧B` 时，不要把 `A` 的某一个枚举单独写成 Guard。** `A` 取反后仍 HIT → Dimension 或不要 Guard。
-5. **每个两格都能 HIT 的 host `<name> =` 必须有 probe Dimension**（classifier=`probe.<name>`）。只有 case 枚举、零 probe → 漏覆盖。
+5. **每个两格都能 HIT 的 host `{name} =` 必须有 probe Dimension**（classifier=`probe.<name>`）。只有 case 枚举、零 probe → 漏覆盖。
 6. **H6 对齐的是字段名，不是值。** 列出每个 Dimension 各 partition 谓词里的 `case.*`/`probe.*`/`replay.*` 集合，必须全相等。一格用了 `mod_eq case.B` / `eq case.N2`，另一格也必须出现 `case.B` 和 `case.N2`（给仍 HIT 的合法值）。禁止一格 `{sparse_mode,B,N2}`、另一格改成 `{sparse_mode,S2}`。
 7. **`controls` 不算切到。** Solve / 覆盖检查只看 partition 谓词。token / band 宽度若要切，两格谓词都必须有 `case.Pre_Tockens` 和 `case.Next_Tockens`；只写在 `controls:` 等于没写。
 8. **requirement.text 用 ASCII 写出每个 Guard 的杀整事实。** 写 `g==1`、`g<=1`、`layout==TND`，不要 `≤`/`≥`，也不要只靠 Guard YAML、text 里不出现。
@@ -47,7 +47,7 @@
         └─ untestable control_gap（点列名）或 opaque
 ```
 
-host 有 `<name> =` → `probe.<name>`，不是 opaque，也禁止用无关列组合去**猜**这个量。
+host 有 `{name} =` → `probe.<name>`，不是 opaque，也禁止用无关列组合去**猜**这个量。
 两格都能 HIT 的 probe 必须自己一维（classifier=`probe.<name>`）；不要只出现在 constraints。
 
 ## 硬规则
@@ -65,7 +65,7 @@ H1–H7 管形式，H8 管可达，H9–H10 管覆盖面。漏掉写点上的析
 | H6 | 一个 Dimension 的所有 partition 切在同一组字段上（按谓词里出现的 `case.*`/`probe.*`/`replay.*` 名字，不是按值）。同一层 `\|\|` 每格都要带上该层用到的全部 case 列；一格多出来的列，另一格也要写上 HIT 合法值。禁止把不同层 `\|\|` / helper 折进同一维的 `and` |
 | H7 | 同一条 L1/L2 里各 Dimension 的谓词字段集合不相交；跨层（case/probe/replay）可以配 |
 | H8 | `partition ∧ constraints ∧ environment ∧ 路径条件 ∧ Target HIT` 可满足。L0 每格、L1 每个笛卡尔格都不能是死格。路径条件含每个被跨过早退的**否定项**。兄弟/legacy 整串门不是本行为前置约束 |
-| H9 | 观测面：`replay.<TILING_FIELD>` → `probe.<host 赋值名>` → `case.<col>` → 才允许 opaque |
+| H9 | 观测面：`replay.{tiling_field}` → `probe.<host 赋值名>` → `case.<col>` → 才允许 opaque |
 | H10 | 多值字段：Target 用 `derived`+`in`；Dimension 每值 `eq` 一格。禁止 `replay_field` expected 写成列表，禁止拆 Target，禁止 `ne`/off 第二格 |
 
 `constraints` 与任何 Guard 的 `controls`、任何 Dimension 正在切的列**不相交**。否则 Guard 造不出来，等于没写。
@@ -89,11 +89,11 @@ init 已标明 deterministic md5，或改动重排累加顺序仍声称结果不
 
 ## 可达性（H8）
 
-packet 的 changed files / 新增符号是本 PR 的符号清单。先 Grep 这些文件里的新 helper 与 `<name> =`，再 `uo_query`。`count:0` 或 `write_sites_complete:false` **不是**「源码里没有」：以 packet 文件里的赋值为准，不要停在图上旧的兄弟写点。packet 的 changed files 是文件白名单，不是把文件里每个 helper 都做成 Target。每个 Target 必须能指到**本次改动引入或新接上的那条赋值**；同文件里已有、但这次调用链没改的兄弟 scheduler 不要单开第二 Target，也不要把它们的前置抄进本写点。
+packet 的 changed files / 新增符号是本 PR 的符号清单。先 Grep 这些文件里的新 helper 与 `{name} =`，再 `uo_query`。`count:0` 或 `write_sites_complete:false` **不是**「源码里没有」：以 packet 文件里的赋值为准，不要停在图上旧的兄弟写点。packet 的 changed files 是文件白名单，不是把文件里每个 helper 都做成 Target。每个 Target 必须能指到**本次改动引入或新接上的那条赋值**；同文件里已有、但这次调用链没改的兄弟 scheduler 不要单开第二 Target，也不要把它们的前置抄进本写点。
 
 路径条件 = 沿途每个 `if (...) return` 的否定 ∧ 写点前必须成立的合取。只抄离写点最近那个 if 的正向条件，往往正好触发早退。
 
-Target evidence 必须能把本次写点从兄弟写点里分开：若 `replay.<field>` 还有别的臂会写成同样的非零/同值，改观测本次 helper 的 `<name> =`（`probe.<name>`），不要只用 `replay.field>0`。
+Target evidence 必须能把本次写点从兄弟写点里分开：若 `replay.<field>` 还有别的臂会写成同样的非零/同值，改观测本次 helper 的 `{name} =`（`probe.<name>`），不要只用 `replay.field>0`。
 
 - 否定项优先用 partition 消掉，不要用 constraints 把空间收死。
 - 每条 `constraints[]` 必须能指出对应路径条件哪一项；指不出或被蕴含 → 删。
@@ -108,7 +108,7 @@ Target evidence 必须能把本次写点从兄弟写点里分开：若 `replay.<
 classifier 给跑完的行贴标签。`case.*` / `probe.*` / `replay.*` 都合法。
 
 - probe 用有辨识度的长名（禁 `p`/`q`/`m`/`n`/`l1`）；赋值须无条件执行。
-- 发出前清点写点每一层 `||` 和每个 helper：同一层两支同一维；不同层才分维。每个 host `<name> =` 若两格都能 HIT，必须有 probe Dimension。判定点远多于 partition → 漏覆盖、误判 opaque、或把判定点堆进了 constraints。
+- 发出前清点写点每一层 `||` 和每个 helper：同一层两支同一维；不同层才分维。每个 host `{name} =` 若两格都能 HIT，必须有 probe Dimension。判定点远多于 partition → 漏覆盖、误判 opaque、或把判定点堆进了 constraints。
 - 谓词跨 case/probe/replay 时 L1 通常不该空。
 
 ## 谓词
@@ -118,7 +118,7 @@ classifier 给跑完的行贴标签。`case.*` / `probe.*` / `replay.*` 都合�
 - `and`/`or`：`{op: and, args: [<pred>, <pred>]}`；`not`：`{op: not, arg: <pred>}`
 - `in`/`not_in` 用 `values:`；`mod_eq`：`{op: mod_eq, left: <field>, divisor: <n>, value: <expect>}`
 - 字段只有两段：`case.<列>` / `replay.<叶子字段>` / `probe.<长名>`。禁止 `replay.<struct>.<field>`、禁止 `environment.*`
-- `constraints[]` 必须有 `id`；`eq` 用 `{op: eq, field: probe.x, value: <标量>}`，禁止 `left`/`right` 对象
+- `constraints[]` 必须有 `id`；`eq` 用 `{op: eq, field: probe.x, value: {scalar}}`，禁止 `left`/`right` 对象
 - 字面量对齐 init `inferred_type`：int 不加引号
 - `evidence.field` 不能是 precision / md5（进 `oracle`）
 - 多值 Target：`kind: derived` + `{op: in, field: replay.x, values: [1,2,3]}`。`replay_field`/`probe` 的 `expected` 必须是标量
@@ -135,10 +135,10 @@ requirement:
 
 targets:
   - id: T-<slug>
-    evidence: {kind: replay_field, field: replay.<tiling_field>, expected: 1}
+    evidence: {kind: replay_field, field: replay.{tiling_field}, expected: 1}
   # 多值字段：
   #   kind: derived
-  #   predicate: {op: in, field: replay.<tiling_field>, values: [1, 2, 3]}
+  #   predicate: {op: in, field: replay.{tiling_field}, values: [1, 2, 3]}
   # 该 replay 字段还有兄弟写点时，观测本次 helper 赋值：
   #   kind: derived
   #   predicate: {op: gt, field: probe.<helper_local>, value: 0}
@@ -154,10 +154,10 @@ dimensions:
   - id: D-<mode>
     target: T-<slug>
     controls: [<confirmed_col>]
-    classifier: {requires: [replay.<tiling_field>]}
+    classifier: {requires: [replay.{tiling_field}]}
     partitions:
-      - {id: p-1, predicate: {op: eq, field: replay.<tiling_field>, value: 1}}
-      - {id: p-2, predicate: {op: eq, field: replay.<tiling_field>, value: 2}}
+      - {id: p-1, predicate: {op: eq, field: replay.{tiling_field}, value: 1}}
+      - {id: p-2, predicate: {op: eq, field: replay.{tiling_field}, value: 2}}
   - id: D-<probe>
     target: T-<slug>
     controls: [<confirmed_col>]
@@ -236,7 +236,7 @@ untestable:
 | 同一合取既 off 格又 Guard | 取反后整 Target 不可达 → 只留 Guard |
 | case.* 自造列名 | 用 init 列名原文 |
 | 同一 Dimension 两格谓词相同 | 废维；去切尚未覆盖的 if/min-max |
-| host 局部量有 `<name> =` | `probe.<name>`，不要用无关列组合冒充；不要自造源码里没有的赋值名 |
+| host 局部量有 `{name} =` | `probe.<name>`，不要用无关列组合冒充；不要自造源码里没有的赋值名 |
 | 两格只改幅度、没有实现分岔 | 不要用它凑数；去切尚未覆盖的 if/min-max |
 | 判定点很多 partition 个位数 | 漏覆盖、误判 opaque、或把 if/probe 堆进了 constraints；补**写点上的**析取/helper 维，不要加 Drop_Out 凑数 |
 | 两臂需要的 splitAxis / isDeterministic 互斥，却用全局 constraint 钉 rope/D | 把耦合写进该维两格 |

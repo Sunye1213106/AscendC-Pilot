@@ -614,6 +614,38 @@ def build_failure_summary(observation: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def record_prepare_failure(
+    project_root: Path,
+    *,
+    action_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist Host prepare fail-close so inspect-failure can see it."""
+    from ascendc_pilot.state import load_state, save_state
+
+    st = load_state(project_root) or {}
+    unresolved = result.get("unresolved") if isinstance(result.get("unresolved"), list) else []
+    error = str(result.get("error") or "PROMPT_IDENTITY_UNRESOLVED")
+    message = str(result.get("message_zh") or error or "prepare failed")
+    summary = {
+        "action_id": action_id,
+        "step_id": action_id,
+        "error_code": error,
+        "reason_code": error,
+        "failure_class": IDENTITY_CONTRACT,
+        "retryable": True,
+        "message_zh": message,
+        "unresolved": unresolved,
+        "legal_recovery_actions": ["inspect_failure"],
+        "forbidden_recovery_actions": [],
+        "rework_action_ids": [action_id] if action_id else [],
+    }
+    st["last_failure"] = summary
+    st["failure_card"] = render_failure_card(st)
+    save_state(project_root, st)
+    return summary
+
+
 def _failure_message_zh(observation: dict[str, Any]) -> str:
     findings = observation.get("findings") or []
     msgs = [str(f.get("message") or "") for f in findings if isinstance(f, dict)]
@@ -969,5 +1001,6 @@ __all__ = [
     "failure_fingerprint",
     "persist_observation",
     "record_pilot_result",
+    "record_prepare_failure",
     "render_failure_card",
 ]

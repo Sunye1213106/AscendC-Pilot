@@ -65,6 +65,7 @@ def scan(root: str | Path | None) -> dict[str, Any]:
             "entries": [],
             "flags": [],
             "tables": [],
+            "canonical_call": {},
             "error": "",
         }
     path = Path(root).expanduser()
@@ -80,6 +81,7 @@ def scan(root: str | Path | None) -> dict[str, Any]:
             "entries": [],
             "flags": [],
             "tables": [],
+            "canonical_call": {},
             "error": f"test_script_root is not a directory: {path}",
         }
     entries: list[dict[str, Any]] = []
@@ -128,6 +130,7 @@ def scan(root: str | Path | None) -> dict[str, Any]:
         "entries": entries,
         "flags": flags,
         "tables": tables,
+        "canonical_call": scan_canonical_call(path),
         "error": "",
     }
 
@@ -207,6 +210,9 @@ def contract_from_inventory(
         "mapping": {},
         "findings": findings,
         "column_profile": profile,
+        "canonical_call": inventory.get("canonical_call")
+        if isinstance(inventory.get("canonical_call"), dict)
+        else {},
         "reason": "",
     }
 
@@ -333,6 +339,105 @@ def _call_name(func: ast.AST) -> str:
     if isinstance(func, ast.Attribute):
         return func.attr
     return ""
+
+
+def _dotted_call(func: ast.AST) -> str:
+    parts: list[str] = []
+    cur: ast.AST | None = func
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+    parts.reverse()
+    return ".".join(parts)
+
+
+def scan_canonical_call(root: Path) -> dict[str, Any]:
+    """Precision-path operator call with the most kwargs; skip profiler wrappers."""
+    candidates: list[dict[str, Any]] = []
+    path = Path(root)
+    for file in _iter_files(path):
+        if file.suffix.lower() != ".py":
+            continue
+        try:
+            tree = ast.parse(file.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        rel = file.relative_to(path).as_posix()
+        if_blobs: list[str] = []
+        with_blobs: list[str] = []
+
+        class _Visitor(ast.NodeVisitor):
+            def visit_If(self, node: ast.If) -> None:
+                if_blobs.append(ast.dump(node.test).lower())
+                self.generic_visit(node)
+                if_blobs.pop()
+
+            def visit_With(self, node: ast.With) -> None:
+                names = [_dotted_call(item.context_expr).lower() for item in node.items]
+                with_blobs.append(" ".join(names))
+                self.generic_visit(node)
+                with_blobs.pop()
+
+            def visit_Call(self, node: ast.Call) -> None:
+                api = _dotted_call(node.func)
+                leaf = api.rsplit(".", 1)[-1].lower() if api else ""
+                if not (leaf.startswith("npu_") or "aclnn" in leaf):
+                    self.generic_visit(node)
+                    return
+                if "profiler" in api.lower():
+                    self.generic_visit(node)
+                    return
+                ctx_if = " ".join(if_blobs)
+                ctx_with = " ".join(with_blobs)
+                profiler_ctx = "profiler" in ctx_with or (
+                    "profiler" in ctx_if
+                    and "only_grad" not in ctx_if
+                    and "precision" not in ctx_if
+                )
+                precision_ctx = any(
+                    token in ctx_if for token in ("only_grad", "precision", "auto_grad")
+                )
+                args = [str(kw.arg) for kw in node.keywords if kw.arg]
+                kind = "aclnn" if "aclnn" in api.lower() else "pta"
+                candidates.append(
+                    {
+                        "kind": kind,
+                        "api": api,
+                        "site": f"{rel}:{getattr(node, 'lineno', 0)}",
+                        "args": args,
+                        "score": len(node.args) + len(node.keywords),
+                        "profiler": profiler_ctx,
+                        "precision": precision_ctx,
+                        "v2": "_v2" in leaf,
+                        "grad": "grad" in leaf,
+                    }
+                )
+                self.generic_visit(node)
+
+        _Visitor().visit(tree)
+
+    if not candidates:
+        return {}
+    usable = [row for row in candidates if not row["profiler"]] or candidates
+    usable.sort(
+        key=lambda row: (
+            int(row["precision"]),
+            int(row["v2"]),
+            int(row["grad"]),
+            int(row["score"]),
+        ),
+        reverse=True,
+    )
+    best = usable[0]
+    return {
+        "kind": str(best["kind"]),
+        "api": str(best["api"]),
+        "site": str(best["site"]),
+        "args": list(best["args"]),
+        "variant": "precision" if best["precision"] else "",
+    }
 
 
 def _const_str(node: ast.AST) -> str:

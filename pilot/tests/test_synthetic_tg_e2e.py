@@ -822,8 +822,9 @@ def test_bind_review_empty_after_prompt_needs_intent(synthetic_root: Path) -> No
         result={"ok": True},
         intent="",
     )
-    assert second.get("ok") is False
-    assert second.get("error") == "NEED_BIND_REVIEW_INTENT"
+    assert second.get("ok") is True
+    assert second.get("host_step_kind") == "primary_review"
+    assert not second.get("error")
     assert not (sdir / "verdict.yaml").is_file()
 
 

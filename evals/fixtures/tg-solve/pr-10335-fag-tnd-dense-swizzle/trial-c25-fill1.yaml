@@ -1,0 +1,26 @@
+schema: tg-solve-fill/v1
+baseline:
+  Input_Layout: TND
+  B: 2
+  same_as_input: 1
+  S1: 2048
+  S2: 2048
+hits:
+  - dim: D-swizzle-safe
+    arm: p-safe
+    seed: {}
+  - dim: D-swizzle-safe
+    arm: p-unsafe
+    seed:
+      is_deter: 1
+unreachable:
+  - partitions: {D-deter: p-on, D-mha: p-gqa}
+    reason: "确定性 templateSupportCond 要求 fBaseParams.g==1，GQA 无法同时满足 deter 臂"
+  - partitions: {D-deter: p-on, D-sparse: p-causal}
+    reason: "确定性 swizzle 臂要求 deterSparseType==DETER_DENSE，LEFT_UP_CAUSAL 映射为 DETER_CAUSAL"
+  - partitions: {D-seq-ratio: p-unsafe, D-swizzle-safe: p-safe}
+    reason: "IsTndDeterSwizzleScheduleSafe 在 m<min(aicNum,n) 时返回 false，与 probe _safe 矛盾"
+  - partitions: {D-deter: p-off, D-swizzle-safe: p-unsafe}
+    reason: "deterTndSwizzleSafe=!isDeterministic||safe，非确定性行 probe 恒为 safe"
+  - partitions: {D-deter: p-on, D-swizzle-safe: p-unsafe}
+    reason: "isDeterministic 且 IsTndDeterSwizzleScheduleSafe 为 false 时 deterTndSwizzleSafe 阻断 templateSupportCond"

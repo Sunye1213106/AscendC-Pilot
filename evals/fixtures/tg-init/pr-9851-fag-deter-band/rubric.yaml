@@ -255,6 +255,13 @@ columns:
   Actual_dk_Md5sum: {status_in: [result], uo_ok: ['']}
   Actual_dv_Md5sum: {status_in: [result], uo_ok: ['']}
 
+slice:
+  call_args_sources_must_be_local: true
+
+review:
+  pass_prefix: PASS
+  rework_if_n1_is_n2: REWORK bind
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -265,4 +272,4 @@ scoring:
   min_pass_rate:
     harness: 1.0
     columns: 0.95
-  budget_seconds: 240
+  budget_seconds: 300

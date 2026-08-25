@@ -1,0 +1,11 @@
+schema: tg-solve-fill/v1
+baseline:
+  is_deter: 1
+hits:
+  - dim: D-align-early-return
+    arm: p-base-aligned
+    seed: {S2: 256}
+  - dim: D-align-early-return
+    arm: p-base-unaligned
+    seed: {S2: 384}
+unreachable: []

@@ -1,0 +1,140 @@
+schema: tg-solve-index/v1
+needs_hit:
+- dim: D-schedule-mode
+  arm: p-causal
+  cuts: &id001
+  - replay.deterBandScheduleMode
+  seed: {}
+- dim: D-schedule-mode
+  arm: p-dense
+  cuts: *id001
+  seed: {}
+- dim: D-schedule-mode
+  arm: p-band
+  cuts: *id001
+  seed: {}
+- dim: D-use-lower-causal
+  arm: p-on
+  cuts: &id002
+  - probe.useLowerCausal
+  seed: {}
+- dim: D-use-lower-causal
+  arm: p-off
+  cuts: *id002
+  seed: {}
+- dim: D-dense-eligible
+  arm: p-denseK-eq-k
+  cuts: &id003
+  - probe.denseKEqualsK
+  seed: {}
+- dim: D-dense-eligible
+  arm: p-denseK-ne-k
+  cuts: *id003
+  seed: {}
+- dim: D-tail-round
+  arm: p-zero
+  cuts: &id004
+  - probe.tailRound
+  seed: {}
+- dim: D-tail-round
+  arm: p-nonzero
+  cuts: *id004
+  seed: {}
+auto:
+- dim: D-sparse-band-entry
+  arm: p-no-mask
+  cuts: &id005
+  - case.sparse_mode
+  seed:
+    sparse_mode: 0
+- dim: D-sparse-band-entry
+  arm: p-band-sparse
+  cuts: *id005
+  seed:
+    sparse_mode: 4
+- dim: D-sparse-band-entry
+  arm: p-rdc-band
+  cuts: *id005
+  seed:
+    sparse_mode: 3
+- dim: D-pre-next-window
+  arm: p-band-win
+  cuts: &id006
+  - case.Pre_Tockens
+  - case.Next_Tockens
+  seed:
+    Pre_Tockens: 128
+    Next_Tockens: 128
+- dim: D-pre-next-window
+  arm: p-wide-win
+  cuts: *id006
+  seed:
+    Pre_Tockens: 65536
+    Next_Tockens: 65536
+- dim: D-s1-s2-shape
+  arm: p-s1-eq-s2
+  cuts: &id007
+  - case.S1
+  - case.S2
+  seed:
+    S1: 4096
+    S2: 4096
+- dim: D-s1-s2-shape
+  arm: p-s1-lt-s2
+  cuts: *id007
+  seed:
+    S1: 4096
+    S2: 8192
+- dim: D-s1-aic128-gate
+  arm: p-ge-gate
+  cuts: &id008
+  - case.S1
+  seed:
+    S1: 4096
+- dim: D-s1-aic128-gate
+  arm: p-lt-gate
+  cuts: *id008
+  seed:
+    S1: 4095
+- dim: D-batch-parity
+  arm: p-even
+  cuts: &id009
+  - case.B
+  seed:
+    B: 2
+- dim: D-batch-parity
+  arm: p-odd
+  cuts: *id009
+  seed:
+    B: 3
+- dim: D-n1-n2-g1
+  arm: p-g1
+  cuts: &id010
+  - case.N1
+  - case.N2
+  seed:
+    N1: 4
+    N2: 4
+- dim: D-n1-n2-g1
+  arm: p-gqa
+  cuts: *id010
+  seed:
+    N1: 8
+    N2: 4
+guards:
+- id: G-is-deter-off
+  seed:
+    is_deter: 0
+  auto: true
+- id: G-not-tnd
+  seed:
+    Input_Layout: BNSD
+  auto: true
+- id: G-all-mask-dense
+  seed:
+    sparse_mode: 1
+  auto: true
+- id: G-left-up-causal
+  seed:
+    sparse_mode: 2
+  auto: true

@@ -585,6 +585,56 @@ def unresolved_placeholders(text: str) -> list[str]:
     return out
 
 
+def locate_unresolved_placeholders(
+    text: str,
+    *,
+    source: str = "",
+    file: str = "",
+) -> list[dict[str, Any]]:
+    """Line-level unresolved tokens for fail-close / render-lint."""
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for i, line in enumerate((text or "").splitlines(), 1):
+        hits: list[str] = []
+        for m in _UNRESOLVED_RE.finditer(line):
+            token = m.group(0)
+            inner = token[len("[UNRESOLVED:") : -1] if token.startswith("[UNRESOLVED:") else token
+            hits.append(f"<{inner}>" if inner and not str(token).startswith("<") else token)
+        for m in _ANGLE_TOKEN_RE.finditer(line):
+            hits.append(f"<{m.group(1)}>")
+        for token in hits:
+            key = (token, i, file)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "source": source,
+                    "file": file,
+                    "token": token,
+                    "line": i,
+                }
+            )
+    return rows
+
+
+def format_unresolved_message(rows: list[dict[str, Any]], *, fallback: str = "") -> str:
+    if not rows:
+        return fallback or "Task Prompt / METHOD 仍有未解析占位符；禁止派发"
+    parts: list[str] = []
+    for row in rows[:8]:
+        loc = str(row.get("file") or row.get("source") or "")
+        line = row.get("line")
+        token = str(row.get("token") or "")
+        if loc and line:
+            parts.append(f"{loc}:{line} {token}")
+        elif loc:
+            parts.append(f"{loc} {token}")
+        else:
+            parts.append(token)
+    return "Task Prompt / METHOD 仍有未解析占位符；禁止派发。" + "；".join(parts)
+
+
 def prompt_has_unresolved(text: str) -> bool:
     return bool(unresolved_placeholders(text))
 
@@ -831,5 +881,7 @@ __all__ = [
     "staging_dir",
     "staging_output_path",
     "unresolved_placeholders",
+    "locate_unresolved_placeholders",
+    "format_unresolved_message",
     "write_roots_as_scopes",
 ]

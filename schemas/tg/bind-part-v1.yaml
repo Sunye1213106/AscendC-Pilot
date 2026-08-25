@@ -18,6 +18,10 @@ engine_owned:
   - domains_keys
   - domains_profile
   - llm_edit
+  - call.kind
+  - call.api
+  - call.site
+  - call_args.name
 llm_owned:
   - call
   - call_args

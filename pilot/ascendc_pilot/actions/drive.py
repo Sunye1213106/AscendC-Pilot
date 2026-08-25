@@ -264,6 +264,12 @@ def drive_until_interaction(
                         continue
                     if exec_kind == "primary_review" and not result.get("ok"):
                         _progress(f"{action_id} FAIL")
+                        try:
+                            from ascendc_pilot.observation import record_prepare_failure
+
+                            record_prepare_failure(root, action_id=action_id, result=result)
+                        except Exception:
+                            pass
                         return _done(
                             {
                                 "ok": False,
@@ -277,6 +283,7 @@ def drive_until_interaction(
                                 "next": descriptor,
                                 "executed": executed,
                                 "error": str(result.get("error") or "primary_review_failed"),
+                                "unresolved": result.get("unresolved") or [],
                                 "message_zh": str(
                                     result.get("message_zh")
                                     or f"主控裁判 `{action_id}` 未完成。"
