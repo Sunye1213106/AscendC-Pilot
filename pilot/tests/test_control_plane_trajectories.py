@@ -141,7 +141,9 @@ def test_nl_pr_url_does_not_script_route_to_ce_review() -> None:
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
     assert "ce-review" not in wids
-    assert "uo-init" not in wids
+    assert "uo-init" in wids
+    assert "tg-init" in wids
+    assert "tg-plan" in wids
     assert "goal-impact" not in wids
     assert "tg-solve" in wids
 

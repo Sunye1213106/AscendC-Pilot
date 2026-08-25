@@ -9,7 +9,7 @@ from testcase_agent.coverage.compile import compile_obligations
 from testcase_agent.coverage.eval import evaluate_obligation
 from testcase_agent.coverage.ledger import ledger_closed, seed_ledger, upsert_obligation
 from testcase_agent.coverage.predicate import Truth, evaluate
-from testcase_agent.coverage.probe import inject_probes
+from testcase_agent.coverage.probe import inject_probes, required_fields
 from testcase_agent.coverage.signature import semantic_signature
 
 
@@ -29,8 +29,8 @@ def _plan(**overrides: object) -> dict:
                 "id": "G-v-null",
                 "target": "T-kvmerge",
                 "controls": ["v"],
-                "predicate": {"op": "is_null", "field": "case.v"},
-                "negate_hint": {"v": "present"},
+                "predicate": {"op": "is_present", "field": "case.v"},
+                "negate_hint": {"v": None},
                 "fallback": {"target": "T-separate-kv", "optional": True},
             }
         ],
@@ -208,12 +208,12 @@ def test_l3_guard_leak_vs_miss() -> None:
         observe={"case": {"v": "present", "dtype": "fp16"}, "replay": {"kvMerge": True, "s2Inner": 128}},
     )
     assert leak["status"] == "GUARD_LEAK"
-    miss = evaluate_obligation(
+    closed = evaluate_obligation(
         l3,
         plan,
-        observe={"case": {"v": "present", "dtype": "fp16"}, "replay": {"kvMerge": False, "s2Inner": 128}},
+        observe={"case": {"v": None, "dtype": "fp16"}, "replay": {"kvMerge": False, "s2Inner": 128}},
     )
-    assert miss["status"] == "CLOSED"
+    assert closed["status"] == "CLOSED"
 
 
 def test_ledger_closed_requires_all_mandatory() -> None:
@@ -240,3 +240,44 @@ def test_inject_probes_does_not_touch_original(tmp_path: Path) -> None:
     assert out.get("patched")
     assert "TG_PROBE kvMerge=" in (sandbox / "host.cpp").read_text(encoding="utf-8")
     assert "TG_PROBE" not in (original / "host.cpp").read_text(encoding="utf-8")
+
+
+def test_probe_fields_from_partition_and_guard_predicates() -> None:
+    fence = _plan()
+    fence["dimensions"].append(
+        {
+            "id": "D-round",
+            "target": "T-kvmerge",
+            "controls": ["S2"],
+            "partitions": [
+                {"id": "even", "predicate": {"op": "eq", "field": "probe.baseRound", "value": 0}},
+                {"id": "odd", "predicate": {"op": "eq", "field": "probe.baseRound", "value": 1}},
+            ],
+        }
+    )
+    fence["guards"].append(
+        {
+            "id": "G-swizzle",
+            "target": "T-kvmerge",
+            "controls": ["S2"],
+            "predicate": {"op": "eq", "field": "probe.enableSwizzle", "value": 1},
+            "negate_hint": {"S2": 0},
+        }
+    )
+    names = required_fields(fence)
+    assert "baseRound" in names
+    assert "enableSwizzle" in names
+
+
+def test_inject_probes_scope_unique_vs_ambiguous(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "a.cpp").write_text("int foo = 1;\n", encoding="utf-8")
+    (sandbox / "b.cpp").write_text("int foo = 2;\n", encoding="utf-8")
+    amb = inject_probes(sandbox, ["foo"])
+    assert amb.get("error") == "PROBE_AMBIGUOUS"
+    assert "TG_PROBE" not in (sandbox / "a.cpp").read_text(encoding="utf-8")
+    scoped = inject_probes(sandbox, ["foo"], scope=["a.cpp"])
+    assert scoped.get("ok")
+    assert "TG_PROBE foo=" in (sandbox / "a.cpp").read_text(encoding="utf-8")
+    assert "TG_PROBE" not in (sandbox / "b.cpp").read_text(encoding="utf-8")

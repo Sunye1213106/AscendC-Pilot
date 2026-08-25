@@ -35,7 +35,7 @@ exclusions 要落在两端之间：
 
 ## 步骤
 
-1. **读 init**：筛出 `confidence: confirmed` 且 `control.status: active` 的列 —— 只有这些列能进 `controls` 与 `case.*` 谓词。同时记下 `unresolved` + `active` 的列名，它们最后要出现在 `untestable`。
+1. **读 init**：筛出 `confidence: confirmed` 且 `control.status: active` 的列 —— 只有这些列能进 `controls` 与 `case.*` 谓词。落在本次 Target 路径闭包里的 `unresolved` + `active` 列最后要出现在 `untestable`；其余留在 init findings，不要把 harness 全局缺口写进本份 Plan。
 
 2. **读 packet，Grep 改动文件**：找本次新增的 helper 与新出现的 `{name} =` 赋值。这是 Target 的候选来源。
 
@@ -45,7 +45,7 @@ exclusions 要落在两端之间：
 
 5. **分盘**：把路径条件的每一项按下面的判据放进一个格子。
 
-6. **枚举 host 局部量**：把写点所在函数、以及它调用的新 helper 里每个 `{name} =` 局部赋值列出来，每个都建一个 probe Dimension。有赋值就能观测。
+6. **枚举 host 局部量**：把写点所在函数、以及它调用的新 helper 里被分支消费的 `{name} =` 列出来。只有改变后仍造成独立、可区分实现分支的量才建 probe Dimension；中间事实只作 observation，不升维。
 
 7. **定 oracle**：先判一句话 —— **本次改动会不会改变累加/归约的次序？** 调度、分块、切核、轮次这类改动都会（同样的数学，不同的相加顺序）。会改变次序，就必须给出能验证「逐位一致」的判据，也就是拿输出的校验和/哈希去比：精度阈值比对放得过宽，恰好会漏掉重排引入的位级偏差，而「结果应当不变」正是这类改动最需要守住的性质。只有确实不碰数值通路的改动（纯字段透传、日志一类）才写 `oracle: []`。
 
@@ -54,7 +54,7 @@ exclusions 要落在两端之间：
 9. **交卷前扫一遍语义**（形式由引擎接手后校验，不要 Write、不要跑脚本）：
    - `requirement.text` 点名 packet 里每个新增/改动符号，并写出路径条件（含早退否定项）。
    - 每个 Dimension 对应写点里一个真实分岔；每个被分支消费的 `{name} =` 都有 probe 维。
-   - Guard 只关断真的使 Target 整体 MISS 的门。
+   - Guard predicate 写 Target 的启用条件；`negate_hint` 写证伪赋值（翻到它则 Target 必须 MISS）。
    - exclusions 非空、没把账本排空；reason 指得到实现。
    - `environment` 的值从源码或环境事实读出来；路径条件若是常量之间的关系，每个常量都要记上。
 
@@ -67,7 +67,7 @@ exclusions 要落在两端之间：
 | 取反后 | 归属 | 形态 |
 | --- | --- | --- |
 | 仍能打到 | **Dimension** | 两格都是可达 ON，切的是实现里的两条臂 |
-| 再也打不到 | **Guard** | 关断整个 Target，`negate_hint` 翻回可达 |
+| 再也打不到 | **Guard** | predicate 写启用条件（TRUE=SATISFIED）；`negate_hint` 写证伪赋值 |
 | 恒成立（所有命中行都满足的派生等式） | `constraints` | 默认 `[]`，确有才写 |
 | 平台/UT 常量 | `environment` | 整数，指得出 file:line |
 | 三层都观测不到 | `untestable` | 缺列写 `control_gap` 并点名列 |
@@ -83,14 +83,14 @@ exclusions 要落在两端之间：
 ```
 replay.{tiling_field}      落盘的 tiling 字段，直接回读
   ↓ 图上没有
-probe.{host_name}          host 局部量，源码里有 `{name} =` 就能插探针观测
+probe.{host_name}          host 局部量；packet 改动文件内有唯一 `{name} =` 才可插桩
   ↓ 没有赋值
 case.{column}              测试表列，构造时直接给定
   ↓ 都不行
 untestable                 点名缺的列或真正的不可观测量
 ```
 
-**有 `{name} =` 赋值的 host 局部量都是可观测的** —— 探针会自动插桩重编。「值算不出来」是不可预测，不是不可观测：覆盖靠跑完回读贴标签，不靠事前预测。
+**packet 改动文件内有唯一 `{name} =` 赋值的 host 局部量可观测** —— 引擎在 sandbox 拷贝里插桩 `TG_PROBE` 并重编。同一标识符有多处赋值、或赋值落在改动范围外，按 `untestable`/`opaque` 处理，不要假设一定能观测。「值算不出来」是不可预测，不是不可观测：覆盖靠跑完回读贴标签，不靠事前预测。
 
 哪些局部量要开 probe Dimension：**被分支消费的都要开** —— 被 `if` 判断的、参与 min/max 或大小比较的、以及作为这些判据**输入**的中间量。看着像纯算术的量（计数、轮次、每批列数一类）只要喂给了上面任何一个比较，它就是分支判据的一部分，开维才能把覆盖标签贴准；否则跑完只知道最终选了哪条臂，不知道是被哪个量推过去的。真正无分支后果的量（只用于填日志、或算完没人读）才不开。
 

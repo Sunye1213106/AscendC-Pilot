@@ -522,6 +522,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     ``uo-init``.
     """
     from ascendc_pilot.harness.intent import validate_intent_staging
+    from ascendc_pilot.planning.prerequisites import available_state
     from ascendc_pilot.planning.task_plan import (
         current_workflow_id,
         mark_step_passed,
@@ -680,7 +681,22 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "message_zh": "没有可执行 workflow。自然语言应由 Primary 先写 Todo，再按格 pilot_run。",
         }
 
-    task_plan = plan_for(llm_intent)
+    avail_root = project_pin
+    avail_arch = arch_pin
+    for target in llm_intent.get("operator_targets") or []:
+        if not isinstance(target, dict):
+            continue
+        raw_root = str(target.get("operator_root") or "").strip()
+        raw_arch = str(target.get("architecture") or "").strip()
+        if raw_root:
+            avail_root = Path(raw_root).expanduser()
+        if raw_arch:
+            avail_arch = raw_arch
+        break
+    task_plan = plan_for(
+        llm_intent,
+        available_state(avail_root, architecture=avail_arch),
+    )
     if any(
         str(step.get("id") or "") == "workspace_acquire"
         for step in task_plan.get("steps") or []

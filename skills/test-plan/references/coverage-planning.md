@@ -32,7 +32,7 @@
 | --- | --- |
 | `targets` | 本次改动写入的行为面。默认 1 个；`packet.identifiers` 非空时只点名其中的新赋值 |
 | `dimensions` | 写点里的实现分岔，每维 ≥2 个可达 partition |
-| `guards` | 使整个 Target 不成立的门。谓词根是 `case.*`，带 `negate_hint` |
+| `guards` | Target 的启用条件。predicate TRUE = SATISFIED；`negate_hint` 是证伪赋值，翻到它则 Target 必须 MISS。谓词根是 `case.*` |
 | `constraints` | 所有命中行都成立的派生等式。默认 `[]` |
 | `environment` | 平台/UT 常量，整数，指得出 file:line |
 | `untestable` | 缺绑定的列（`control_gap`，点名列）或真正不可观测的量（`opaque`） |
@@ -53,7 +53,7 @@
 | F7 | 多值字段：Target 用 `derived` + `in`，Dimension 每值 `eq` 一格。`replay_field` 的 `expected` 是标量 |
 | F8 | L1 每对的笛卡尔每格都能与 Target 同时成立 |
 | F9 | L2 用 `mode: full_cross`，exclusions 非空，每条 ≥2 维 partition 组合 + reason |
-| F10 | 每个 unresolved + active 的列名原样出现在 `untestable` |
+| F10 | 落在本次 Target 路径闭包里的 unresolved + active 列名出现在 `untestable` |
 
 L0–L3 的义务条数由引擎从这份 IR 机械展开，plan 里不写数字，也不写 `obligations`。
 
@@ -105,8 +105,8 @@ guards:
   - id: G-{slug}
     target: T-{slug}
     controls: [{column}]
-    predicate: {op: eq, field: case.{column}, value: {miss_value}}
-    negate_hint: {{column}: {reachable_value}}
+    predicate: {op: eq, field: case.{column}, value: {activation_value}}
+    negate_hint: {{column}: {violating_value}}
 
 coverage:
   L0:

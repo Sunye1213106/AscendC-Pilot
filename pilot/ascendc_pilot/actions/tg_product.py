@@ -1486,6 +1486,35 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "engine": "replay_round", "artifact": out.as_posix(), "replayed": replayed, "count": len(rows)}
 
 
+def _probe_scope_files(project_root: Path, ctx: dict[str, Any]) -> list[str]:
+    """Packet changed files first, then environment source_scope.file_paths."""
+    paths: list[str] = []
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        arch = str(ctx.get("architecture") or "")
+        rid = _run_id(ctx)
+        packet_path = agent_root(project_root, arch) / "runs" / rid / "receipts" / "plan_scope_packet.yaml"
+        packet = _load_yaml(packet_path) if packet_path.is_file() else {}
+        for raw in packet.get("changed_files") or []:
+            text = str(raw or "").strip()
+            if text and text not in paths:
+                paths.append(text)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ascendc_pilot.environment_capabilities import source_scope_for_lease
+
+        scope = source_scope_for_lease(project_root, run_id=_run_id(ctx))
+        for raw in scope.get("allowed_source_files") or scope.get("file_paths") or []:
+            text = str(raw or "").strip()
+            if text and text not in paths:
+                paths.append(text)
+    except Exception:  # noqa: BLE001
+        pass
+    return paths
+
+
 def _try_inject_probes(project_root: Path, ctx: dict[str, Any], fields: list[str]) -> dict[str, Any]:
     from testcase_agent.coverage.probe import inject_probes
     from testcase_agent.closure.workspace import replay_runner
@@ -1495,7 +1524,6 @@ def _try_inject_probes(project_root: Path, ctx: dict[str, Any], fields: list[str
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
     runner = replay_runner()
-    _ = (project_root, ctx)
     boot = ensure_runner(runner, force_copy=True)
     if not boot.get("ok"):
         return {"ok": False, "error": boot.get("error")}
@@ -1509,7 +1537,9 @@ def _try_inject_probes(project_root: Path, ctx: dict[str, Any], fields: list[str
         return {"ok": False, "error": "SANDBOX_OPS_UNRESOLVED"}
     if not local.is_dir():
         return {"ok": False, "error": "SANDBOX_OPS_MISSING"}
-    injected = inject_probes(local, fields)
+    injected = inject_probes(local, fields, scope=_probe_scope_files(project_root, ctx) or None)
+    if injected.get("error") == "PROBE_AMBIGUOUS" or injected.get("ambiguous"):
+        return {**injected, "ok": False, "error": "PROBE_AMBIGUOUS"}
     if injected.get("missing") and not injected.get("patched"):
         return {**injected, "ok": False, "error": "PROBE_UNTESTABLE"}
     rebuilt = ensure_runner(runner, rebuild=True)

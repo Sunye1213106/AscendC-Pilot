@@ -193,7 +193,12 @@ def test_user_goal_match_and_advance(tmp_path: Path) -> None:
     ]
     assert "tg-plan" in wids
     assert "tg-solve" in wids
+    assert "tg-init" in wids
+    assert "uo-init" not in wids
 
+    adv0 = mark_workflow_passed(tmp_path, "tg-init")
+    assert adv0 is not None
+    assert str(adv0.get("next_workflow_id") or "").strip() == "tg-plan"
     adv = mark_workflow_passed(tmp_path, "tg-plan")
     assert adv is not None
     assert str(adv.get("next_workflow_id") or "").strip() == "tg-solve"

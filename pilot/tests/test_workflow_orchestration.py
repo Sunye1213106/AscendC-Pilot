@@ -34,13 +34,15 @@ def test_plan_for_never_inserts_goal_impact() -> None:
     assert "goal-impact" not in wids
     assert "goal-impact" not in WORKFLOWS
     assert "uo-init" not in wids
-    assert "tg-init" not in wids
+    assert "uo-update" in wids
+    assert "tg-init" in wids
     assert "ce-review" in wids
     assert "tg-plan" in wids
     assert "tg-solve" in wids
+    assert wids.index("uo-update") < wids.index("tg-init") < wids.index("ce-review")
 
 
-def test_plan_for_does_not_expand_multi_operator_from_one_slash() -> None:
+def test_plan_for_closes_multi_operator_prerequisites() -> None:
     planned = plan_for(
         {
             "needed_workflows": ["tg-solve"],
@@ -60,8 +62,16 @@ def test_plan_for_does_not_expand_multi_operator_from_one_slash() -> None:
         }
     )
     ids = [str(s.get("id")) for s in planned["steps"] if str(s.get("kind")) == "workflow"]
-    assert ids == ["tg-solve#0", "tg-solve#1"]
-    assert "uo-init#0" not in ids
+    assert ids == [
+        "uo-init#0",
+        "tg-init#0",
+        "tg-plan#0",
+        "tg-solve#0",
+        "uo-init#1",
+        "tg-init#1",
+        "tg-plan#1",
+        "tg-solve#1",
+    ]
     assert "ce-review#0" not in ids
 
 

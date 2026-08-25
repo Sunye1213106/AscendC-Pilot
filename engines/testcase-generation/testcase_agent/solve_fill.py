@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from testcase_agent.coverage.compile import compile_obligations
-from testcase_agent.plan_fill import AssembleError, ensure_v3, load_yaml
+from testcase_agent.plan_fill import AssembleError, ensure_v3
 
 SOLVE_FILL_SCHEMA = "tg-solve-fill/v1"
 
@@ -39,6 +39,17 @@ def _eq_val(left: Any, right: Any) -> bool:
     return str(left).strip() == str(right).strip()
 
 
+def _case_col(field: str) -> str | None:
+    text = _s(field)
+    if text.startswith("probe.") or text.startswith("replay."):
+        return None
+    if text.startswith("case."):
+        return text.split(".", 1)[-1] or None
+    if text and "." not in text:
+        return text
+    return None
+
+
 def seed_from_predicate(pred: Any) -> tuple[dict[str, Any], bool]:
     """Return (case seed, complete). complete=False when probe/replay must be inverted."""
     seed: dict[str, Any] = {}
@@ -64,18 +75,21 @@ def seed_from_predicate(pred: Any) -> tuple[dict[str, Any], bool]:
         return seed, False
     if field.startswith("probe.") or field.startswith("replay."):
         return seed, False
-    col = field.split(".", 1)[-1] if field.startswith("case.") else ""
+    col = _case_col(field)
     if not col:
-        if field and "." not in field:
-            col = field
-        else:
-            return seed, False
+        return seed, False
     if op in {"", "eq"} and "value" in pred:
         seed[col] = pred.get("value")
         return seed, True
-    if op in {"ge", "gt"} and pred.get("value") is not None:
+    if op == "ge" and pred.get("value") is not None:
         seed[col] = pred.get("value")
         return seed, True
+    if op == "gt" and pred.get("value") is not None:
+        try:
+            seed[col] = int(pred.get("value")) + 1
+            return seed, True
+        except (TypeError, ValueError):
+            return seed, False
     if op == "le" and pred.get("value") is not None:
         seed[col] = pred.get("value")
         return seed, True
@@ -223,23 +237,136 @@ def _ne_witness(init: dict[str, Any] | None, col: str, banned: Any) -> Any | Non
     return None
 
 
+def _int_offset(value: Any, delta: int) -> Any | None:
+    try:
+        return int(value) + delta
+    except (TypeError, ValueError):
+        return None
+
+
+def falsify_predicate(pred: Any, init: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
+    """Return a case seed that makes ``pred`` FALSE. probe/replay cannot be seeded."""
+    if not isinstance(pred, dict) or not pred:
+        return {}, False
+    op = _s(pred.get("op")).lower()
+    field = _s(pred.get("field") or pred.get("left"))
+    if op in {"and", "all"}:
+        for item in pred.get("args") or pred.get("all") or []:
+            seed, ok = falsify_predicate(item, init)
+            if ok and seed:
+                return seed, True
+        return {}, False
+    if op in {"or", "any"}:
+        seed: dict[str, Any] = {}
+        for item in pred.get("args") or pred.get("any") or []:
+            part, ok = falsify_predicate(item, init)
+            if not ok or not part:
+                return {}, False
+            merged, conflict = _merge(seed, part)
+            if conflict:
+                return {}, False
+            seed = merged
+        return seed, bool(seed)
+    if op == "not":
+        return seed_from_predicate(pred.get("arg"))
+    col = _case_col(field)
+    if not col:
+        return {}, False
+    if op in {"", "eq"}:
+        wit = _ne_witness(init, col, pred.get("value"))
+        if wit is not None:
+            return {col: wit}, True
+        return {}, False
+    if op == "ne":
+        if "value" not in pred:
+            return {}, False
+        return {col: pred.get("value")}, True
+    if op == "in":
+        values = list(pred.get("values") or [])
+        for val in _domain_values(init, col):
+            if not any(_eq_val(val, banned) for banned in values):
+                return {col: val}, True
+        wit = _ne_witness(init, col, values[0] if values else None)
+        if wit is not None and not any(_eq_val(wit, banned) for banned in values):
+            return {col: wit}, True
+        return {}, False
+    if op == "not_in":
+        values = list(pred.get("values") or [])
+        if values:
+            return {col: values[0]}, True
+        return {}, False
+    if op == "ge":
+        off = _int_offset(pred.get("value"), -1)
+        if off is not None:
+            return {col: off}, True
+        return {}, False
+    if op == "gt":
+        if pred.get("value") is None:
+            return {}, False
+        return {col: pred.get("value")}, True
+    if op == "le":
+        off = _int_offset(pred.get("value"), 1)
+        if off is not None:
+            return {col: off}, True
+        return {}, False
+    if op == "lt":
+        if pred.get("value") is None:
+            return {}, False
+        return {col: pred.get("value")}, True
+    if op == "is_null":
+        wit = _ne_witness(init, col, None)
+        if wit is not None:
+            return {col: wit}, True
+        return {col: 0}, True
+    if op == "is_present":
+        return {col: None}, True
+    return {}, False
+
+
 def _guard_seed(guard: dict[str, Any], fill_seed: dict[str, Any], init: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
+    """Violating seed for L3: fill_seed > negate_hint > falsify_predicate."""
     if fill_seed:
         return dict(fill_seed), True
-    pred = guard.get("predicate") if isinstance(guard.get("predicate"), dict) else {}
-    seed, complete = seed_from_predicate(pred)
-    if complete and seed:
-        return seed, True
-    if _s(pred.get("op")).lower() == "ne":
-        field = _s(pred.get("field"))
-        col = field.split(".", 1)[-1] if field.startswith("case.") else field
-        wit = _ne_witness(init, col, pred.get("value"))
-        if col and wit is not None:
-            return {col: wit}, True
     hint = guard.get("negate_hint") if isinstance(guard.get("negate_hint"), dict) else {}
-    # negate_hint is the HIT side; miss is the predicate. If still empty, fail.
-    del hint
-    return seed, bool(seed)
+    if hint:
+        return {str(k): v for k, v in hint.items()}, True
+    pred = guard.get("predicate") if isinstance(guard.get("predicate"), dict) else {}
+    seed, ok = falsify_predicate(pred, init)
+    if ok and seed:
+        return seed, True
+    return {}, False
+
+
+def constraint_seed(
+    plan: dict[str, Any],
+    init: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str], dict[str, str]]:
+    """Seed case columns from plan.constraints. Unseedable predicates are listed, not dropped silently."""
+    del init
+    seed: dict[str, Any] = {}
+    unseedable: list[str] = []
+    owners: dict[str, str] = {}
+    rows = plan.get("constraints") or []
+    if not isinstance(rows, list):
+        return seed, unseedable, owners
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        cid = _s(row.get("id")) or f"constraints[{idx}]"
+        pred = row.get("predicate") if row.get("predicate") is not None else row.get("expr")
+        part, ok = seed_from_predicate(pred)
+        if not ok or not part:
+            unseedable.append(cid)
+            continue
+        for col, val in part.items():
+            if col in seed and not _eq_val(seed[col], val):
+                other = owners.get(col, "?")
+                raise AssembleError(
+                    [f"PLAN_UNCONSTRUCTIBLE: constraint {other} vs {cid} on {col}"]
+                )
+            seed[col] = val
+            owners[col] = cid
+    return seed, unseedable, owners
 
 
 def _pad_row(seed: dict[str, Any], columns: list[str], defaults: dict[str, Any], oid: str) -> dict[str, Any]:
@@ -294,7 +421,6 @@ def assemble_solve(
     if errors:
         raise AssembleError(errors)
 
-    dims = _dim_map(plan_v3)
     arm_seed: dict[tuple[str, str], dict[str, Any]] = {}
     for row in idx["auto"]:
         arm_seed[(row["dim"], row["arm"])] = dict(row["seed"])
@@ -308,6 +434,15 @@ def assemble_solve(
     extra_defaults = fill.get("defaults") if isinstance(fill.get("defaults"), dict) else {}
     defaults = {**defaults, **extra_defaults}
     baseline = fill.get("baseline") if isinstance(fill.get("baseline"), dict) else {}
+    cseed, unseedable, c_owners = constraint_seed(plan_v3, init)
+    global_base, conflict = _merge(dict(baseline), cseed)
+    if conflict:
+        raise AssembleError(
+            [f"PLAN_UNCONSTRUCTIBLE: baseline vs constraint {c_owners.get(conflict, '')} on {conflict}"]
+        )
+    notes: list[str] = []
+    if unseedable:
+        notes.append(f"constraint_unseedable: {', '.join(unseedable)}")
     guard_hits = _guard_hit_map(fill)
     extra_unreach = _extra_unreachable(fill)
     obligations = compile_obligations(plan_v3)
@@ -328,12 +463,10 @@ def assemble_solve(
             guard = _guard_map(plan_v3).get(gid) or {}
             gseed, ok = _guard_seed(guard, guard_hits.get(gid) or {}, init)
             if not ok:
-                unreachable.append({"obligation": oid, "reason": f"guard {gid} has no miss seed"})
+                unreachable.append({"obligation": oid, "reason": f"guard {gid} has no violating seed"})
                 continue
-            merged, conflict = _merge(dict(baseline), gseed)
-            if conflict:
-                unreachable.append({"obligation": oid, "reason": f"guard {gid} conflicts on {conflict}"})
-                continue
+            merged = dict(global_base)
+            merged.update(gseed)
             rows.append(_pad_row(merged, columns, defaults, oid))
             continue
 
@@ -345,22 +478,33 @@ def assemble_solve(
             )
             unreachable.append({"obligation": oid, "dimensions": dict(cell), "reason": reason})
             continue
-        merged = dict(baseline)
+        merged = dict(global_base)
         conflict_col = None
+        conflict_did = ""
+        conflict_arm = ""
         for did, arm in cell.items():
             overlay = arm_seed.get((_s(did), _s(arm)))
             if overlay is None:
                 conflict_col = f"{did}.{arm}"
+                conflict_did, conflict_arm = _s(did), _s(arm)
                 break
             merged, conflict_col = _merge(merged, overlay)
             if conflict_col:
+                conflict_did, conflict_arm = _s(did), _s(arm)
                 break
         if conflict_col:
+            if conflict_col in c_owners:
+                reason = (
+                    f"constraint {c_owners[conflict_col]} conflicts with "
+                    f"{conflict_did}.{conflict_arm} on {conflict_col}"
+                )
+            else:
+                reason = f"seed conflict on {conflict_col}"
             unreachable.append(
                 {
                     "obligation": oid,
                     "dimensions": dict(cell),
-                    "reason": f"seed conflict on {conflict_col}",
+                    "reason": reason,
                 }
             )
             continue
@@ -372,9 +516,12 @@ def assemble_solve(
         "rows": rows,
         "unreachable": unreachable,
         "index": idx,
+        "notes": notes,
         "stats": {
             "obligations": len(obligations),
             "rows": len(rows),
             "unreachable": len(unreachable),
+            "constraint_columns": sorted(c_owners),
+            "constraint_unseedable": list(unseedable),
         },
     }

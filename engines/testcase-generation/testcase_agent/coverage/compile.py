@@ -122,10 +122,12 @@ def _l2_tuples(cov: dict[str, Any]) -> tuple[list[list[str]], list[str]]:
 
 L2_FULL_CROSS_MODES = frozenset({"full_cross", "full_cartesian", "all_dimensions"})
 
-# A full crossing is exponential in the dimension count. Past this many nominal
+# A full crossing is exponential in the dimension count. Past this many remaining
 # cells the plan has not converged enough to hand Solve a finite ledger, so we
-# refuse instead of materializing millions of rows.
+# refuse instead of materializing millions of rows. Nominal size is checked
+# after exclusions; HARD_CAP only bounds the enumeration loop itself.
 L2_FULL_CROSS_CAP = 200_000
+L2_ENUMERATION_HARD_CAP = 2_000_000
 
 
 def l2_is_full_cross(cov: dict[str, Any]) -> bool:
@@ -374,19 +376,32 @@ def compile_obligations(
             nominal = 1
             for row in parts_list:
                 nominal *= len(row)
-            if nominal > L2_FULL_CROSS_CAP:
+            if nominal > L2_ENUMERATION_HARD_CAP:
                 errors.append(
                     f"PLAN_INVALID: coverage.L2 full_cross for {tid} is {nominal} cells "
-                    f"(cap {L2_FULL_CROSS_CAP}); split the Target or exclude conflicting "
-                    "Dimension pairs"
+                    f"(enumeration cap {L2_ENUMERATION_HARD_CAP}); split the Target or "
+                    "exclude conflicting Dimension pairs"
                 )
                 continue
             from itertools import product as _product
 
+            kept: list[dict[str, str]] = []
+            excluded_n = 0
             for combo_parts in _product(*parts_list):
                 cell = {tdims[i]: str(combo_parts[i].get("id")) for i in range(len(tdims))}
                 if _cell_excluded(cell, specs):
+                    excluded_n += 1
                     continue
+                kept.append(cell)
+            remaining = len(kept)
+            if remaining > L2_FULL_CROSS_CAP:
+                errors.append(
+                    f"PLAN_INVALID: coverage.L2 full_cross for {tid} remaining {remaining} cells "
+                    f"(nominal {nominal}, excluded {excluded_n}, cap {L2_FULL_CROSS_CAP}); "
+                    "split the Target or exclude conflicting Dimension pairs"
+                )
+                continue
+            for cell in kept:
                 oid = _next_id("O")
                 out.append(
                     {

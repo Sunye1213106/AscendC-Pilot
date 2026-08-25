@@ -47,8 +47,8 @@ def _fill() -> dict:
             },
         ],
         "guards": [
-            {"id": "G-deter-off", "field": "is_deter", "eq": 0, "hit": 1},
-            {"id": "G-mha", "eq": {"N1": 4, "N2": 4}, "hit": {"N1": 4, "N2": 2}},
+            {"id": "G-deter-on", "field": "is_deter", "eq": 1, "violate": 0},
+            {"id": "G-mha", "eq": {"N1": 4, "N2": 2}, "violate": {"N1": 4, "N2": 4}},
         ],
         "l1": [{"dims": ["D-sparse", "D-gqa"], "reason": "entry route and ratio are independent"}],
         "exclusions": [
@@ -83,11 +83,12 @@ def test_assemble_builds_v3_predicates_and_scaffold():
     assert "N1" in align["controls"]
     g = plan["guards"][0]
     assert g["predicate"]["field"] == "case.is_deter"
-    assert g["negate_hint"] == {"is_deter": 1}
+    assert g["predicate"]["value"] == 1
+    assert g["negate_hint"] == {"is_deter": 0}
     cover = plan["coverage"]
     assert cover["L0"]["dimensions"] == ["D-sparse", "D-gqa", "D-align"]
     assert cover["L2"]["mode"] == "full_cross"
-    assert cover["L3"]["guards"] == ["G-deter-off", "G-mha"]
+    assert cover["L3"]["guards"] == ["G-deter-on", "G-mha"]
     assert cover["L1"]["combinations"][0]["dims"] == ["D-sparse", "D-gqa"]
     assert any(u["needs_binding"][0]["column"] == "Dtype" for u in plan["untestable"])
     assert plan["oracle"][0]["kind"] == "md5"

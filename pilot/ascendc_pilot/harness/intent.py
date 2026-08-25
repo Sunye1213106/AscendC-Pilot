@@ -95,7 +95,7 @@ def render_workflow_catalog() -> str:
         "# 用户工作流目录",
         "",
         "从下面选出用户要交付的工作流 id（并集、无序）。",
-        "不要发明目录外的 id。执行顺序由 Primary Todo 决定，不由本目录脚本补链。",
+        "不要发明目录外的 id。交付工作流由 Primary 选出；TG/UO 前置由 TaskPlan Engine 闭包。",
         "",
     ]
     for row in workflow_catalog():

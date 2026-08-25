@@ -59,7 +59,7 @@ def test_disallowed_pr_host_rejected() -> None:
     assert checked["error"] == "PR_HOST_NOT_ALLOWED"
 
 
-def test_plan_for_test_generation_does_not_insert_pr_dependencies() -> None:
+def test_plan_for_test_generation_closes_prerequisites() -> None:
     planned = plan_for(
         {
             "needed_workflows": ["tg-plan", "tg-solve"],
@@ -68,10 +68,13 @@ def test_plan_for_test_generation_does_not_insert_pr_dependencies() -> None:
         {"has_uo": False, "uo_stale": False},
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert "uo-init" not in wids
+    assert "workspace_acquire" in wids
+    assert "uo-init" in wids
+    assert "tg-init" in wids
+    assert "tg-plan" in wids and "tg-solve" in wids
     assert "ce-review" not in wids
     assert "goal-impact" not in wids
-    assert "tg-plan" in wids and "tg-solve" in wids
+    assert wids.index("uo-init") < wids.index("tg-init") < wids.index("tg-plan") < wids.index("tg-solve")
 
 
 def test_plan_for_review_and_tg_union() -> None:
@@ -85,9 +88,10 @@ def test_plan_for_review_and_tg_union() -> None:
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
     assert "ce-review" in wids
     assert "tg-plan" in wids
-    assert wids.index("ce-review") < wids.index("tg-plan")
+    assert "tg-init" in wids
+    assert "uo-init" in wids
+    assert wids.index("uo-init") < wids.index("tg-init") < wids.index("ce-review") < wids.index("tg-plan")
     assert "goal-impact" not in wids
-    assert "uo-init" not in wids
 
 
 def test_public_plan_for_cases_omits_review() -> None:
@@ -772,6 +776,7 @@ def test_acceptance_not_passed_without_replay(tmp_path: Path) -> None:
     }
     create_user_goal(tmp_path, intent_text="生成 case", llm_intent=llm, architecture="arch35")
     plan = plan_for(llm, {"has_uo": True, "uo_stale": False})
+    plan = mark_step_passed(plan, "tg-init")
     plan = mark_step_passed(plan, "tg-plan")
     write_task_plan(tmp_path, plan)
     assert acceptance_satisfied(plan, tmp_path, architecture="arch35") is False

@@ -798,10 +798,12 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         ]
         if "ce-review" in wids:
             errors.append("PR + tg-plan/tg-solve must not invent ce-review")
-        if "uo-init" in wids:
-            errors.append("plan_for must not invent uo-init")
         if "goal-impact" in wids:
             errors.append("plan_for must not insert goal-impact")
+        if "uo-init" not in wids:
+            errors.append("tg-plan/tg-solve with no CodeMap must close uo-init")
+        if "tg-init" not in wids:
+            errors.append("tg-plan/tg-solve must close tg-init")
         if "tg-plan" not in wids or "tg-solve" not in wids:
             errors.append("listed tg-plan/tg-solve must remain in the recorded plan")
         ordered = plan_for(

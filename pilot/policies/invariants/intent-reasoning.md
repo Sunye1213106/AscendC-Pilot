@@ -41,7 +41,7 @@
 
 ## 执行顺序
 
-**init 先于调查与消费。** 缺什么先补上，再调查，再消费。不要先跑后续流程再回头补初始化。按产物缺口选 slash，不要背固定黄金链。
+**init 先于调查与消费。** 缺什么先补上，再调查，再消费。不要先跑后续流程再回头补初始化。用户已明确选择 `/tg-solve` 或 `/tg-plan` 后，TaskPlan Engine 做确定性依赖闭包（补 `/tg-init`、缺的 `/tg-plan`、以及按缺口二选一的 `/uo-init` 或 `/uo-update`）。这不是猜用户意图，不要因此加入 `/ce-review`。其余交付工作流仍按产物缺口选 slash，不要背固定黄金链。
 
 CodeMap 准备（按缺口二选一，不要当固定串）：
 
@@ -86,7 +86,7 @@ enumerate: legal_keys 仅上述本地覆盖 pin
 
 用户只要求 Code Review 时，只执行 `/ce-review`。
 
-用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；`plan_precheck` 后回到 Primary，原生 Task 派 Plan Owner，不要在中间再派自由查询。
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。Engine 会把 `/tg-solve` 闭包成 `/uo-*` → `/tg-init` → `/tg-plan` → `/tg-solve`；`plan_precheck` 后回到 Primary，原生 Task 派 Plan Owner，不要在中间再派自由查询。
 
 用户只要求语义查询时：
 

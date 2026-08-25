@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
+import testcase_agent.coverage.compile as compile_mod
 from testcase_agent import products
 from testcase_agent.coverage.compile import (
-    L2_FULL_CROSS_CAP,
     PlanCompileError,
     compile_obligations,
 )
@@ -130,16 +130,24 @@ def test_exclusion_on_unknown_dimension_is_rejected() -> None:
     assert any("unknown dimension D-nope" in e for e in exc.value.errors)
 
 
-def test_full_cross_over_cap_is_refused_instead_of_materialized() -> None:
-    # 2**18 = 262144 > cap, so the plan has not converged enough to hand over.
-    dims = [_dim(f"D-{i}", COLUMNS[i % 3], [0, 1]) for i in range(18)]
-    plan = _plan(
-        exclusions=[{"partitions": {"D-0": "p-D-0-0", "D-1": "p-D-1-0"}, "reason": "conflict"}],
-        dims=dims,
-    )
+def test_full_cross_over_cap_is_refused_instead_of_materialized(monkeypatch) -> None:
+    monkeypatch.setattr(compile_mod, "L2_FULL_CROSS_CAP", 5)
+    excl = [{"partitions": {"D-a": "p-D-a-0", "D-b": "p-D-b-0"}, "reason": "conflict"}]
     with pytest.raises(PlanCompileError) as exc:
-        compile_obligations(plan)
-    assert any(str(L2_FULL_CROSS_CAP) in e for e in exc.value.errors)
+        compile_obligations(_plan(exclusions=excl))
+    text = " ".join(exc.value.errors)
+    assert "remaining 10" in text
+    assert "nominal 12" in text
+    assert "excluded 2" in text
+    assert "cap 5" in text
+
+
+def test_cap_applies_after_exclusions(monkeypatch) -> None:
+    monkeypatch.setattr(compile_mod, "L2_FULL_CROSS_CAP", 10)
+    excl = [{"partitions": {"D-a": "p-D-a-0", "D-b": "p-D-b-0"}, "reason": "conflict"}]
+    obligations = compile_obligations(_plan(exclusions=excl))
+    levels = _levels(obligations)
+    assert levels["L2"] == 10
 
 
 def test_validator_rejects_full_cross_without_exclusions() -> None:

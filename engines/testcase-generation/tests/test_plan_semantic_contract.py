@@ -13,6 +13,7 @@ from testcase_agent.coverage.contract import (
     PLAN_PROSE_CONTRACT_DRIFT,
     PRIMARY_BEHAVIOR_UNCOVERED,
 )
+from testcase_agent.coverage.eval import classify_guard
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -172,3 +173,28 @@ def test_primary_behavior_opaque_with_blocking_gap_ok() -> None:
     )
     assert not any(PRIMARY_BEHAVIOR_UNCOVERED in e for e in errors), errors
     assert not any(GUARD_TARGET_INCONSISTENT in e for e in errors), errors
+
+
+def test_all_l3_fixtures_violate_on_negate_hint() -> None:
+    for path in sorted(FIXTURES.glob("plan_*.yaml")):
+        fence = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(fence, dict):
+            continue
+        cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
+        l3 = cov.get("L3")
+        if isinstance(l3, dict):
+            gids = [str(x).strip() for x in (l3.get("guards") or []) if str(x).strip()]
+        elif isinstance(l3, list):
+            gids = [str(x).strip() for x in l3 if str(x).strip()]
+        else:
+            gids = []
+        guards = {
+            str(row.get("id") or "").strip(): row
+            for row in (fence.get("guards") or [])
+            if isinstance(row, dict) and str(row.get("id") or "").strip()
+        }
+        for gid in gids:
+            guard = guards.get(gid) or {}
+            hint = guard.get("negate_hint") if isinstance(guard.get("negate_hint"), dict) else {}
+            got = classify_guard(guard, {"case": hint})
+            assert got["status"] == "violated", (path.name, gid, got)

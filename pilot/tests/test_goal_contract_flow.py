@@ -82,7 +82,7 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
     }
     out = goal_engines.run_intent_promote(host, ctx)
     assert out["ok"] is True
-    assert out["next_workflow_id"] == "tg-solve"
+    assert out["next_workflow_id"] == "uo-init"
     assert Path(str(out["project"])).resolve() == op.resolve()
 
     plan = load_task_plan(op)
@@ -90,10 +90,13 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
     steps = plan["steps"]
     assert [s["id"] for s in steps] == [
         "workspace_acquire",
+        "uo-init",
+        "tg-init",
+        "tg-plan",
         "tg-solve",
     ]
     assert steps[0]["status"] == "passed"
-    assert current_workflow_id(plan) == "tg-solve"
+    assert current_workflow_id(plan) == "uo-init"
 
     goal = load_user_goal(op)
     assert goal is not None

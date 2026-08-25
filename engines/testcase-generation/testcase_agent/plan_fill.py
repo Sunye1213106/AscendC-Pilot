@@ -335,7 +335,11 @@ def _assemble_guard(raw: dict[str, Any], target_id: str, errors: list[str]) -> d
     gid = str(raw.get("id") or "").strip() or "G-unnamed"
     field = raw.get("field")
     cuts = [_qualify(field)] if field else []
-    atom = {k: v for k, v in raw.items() if k not in {"id", "target", "hit", "negate_hint", "controls", "construct_hint"}}
+    atom = {
+        k: v
+        for k, v in raw.items()
+        if k not in {"id", "target", "violate", "negate_hint", "controls", "construct_hint"}
+    }
     pred = _atom_predicate(atom, cuts, gid, errors)
     cols = _pred_case_columns(pred)
     extra = [str(c).strip() for c in (raw.get("controls") or []) if str(c).strip()]
@@ -344,16 +348,16 @@ def _assemble_guard(raw: dict[str, Any], target_id: str, errors: list[str]) -> d
     for c in cols + extra:
         if c and c not in controls:
             controls.append(c)
-    hit = raw.get("hit")
-    if hit is None:
+    violate = raw.get("violate")
+    if violate is None:
         hint = raw.get("negate_hint") if isinstance(raw.get("negate_hint"), dict) else {}
-    elif isinstance(hit, dict):
-        hint = {_bare(k): v for k, v in hit.items()}
+    elif isinstance(violate, dict):
+        hint = {_bare(k): v for k, v in violate.items()}
     else:
         key = cols[0] if cols else _bare(field or "value")
-        hint = {key: hit}
+        hint = {key: violate}
     if not hint:
-        errors.append(f"{gid}: hit (negate_hint) is required")
+        errors.append(f"{gid}: violate (negate_hint) is required")
     return {
         "id": gid,
         "target": str(raw.get("target") or target_id),

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Persist an explicitly listed workflow Task Plan.
+"""Persist a Task Plan from listed delivery workflows plus Engine prerequisite closure.
 
-Primary decides what the user means via OpenCode Todos. This module does not
-parse natural language or invent prerequisite slashes; it records the listed
-workflow ids, optional PR acquire tool-step, progress, and acceptance.
+Primary names the delivery slashes (tg-solve, ce-review, …). This module does not
+parse natural language and does not invent review/implement intent. It does close
+TG/UO prerequisites from on-disk available_state, then records progress and acceptance.
 """
 
 from __future__ import annotations
@@ -59,8 +59,7 @@ _WORKFLOW_TO_PUBLIC = {
     "tg-solve": "validate_cases",
 }
 
-# Order only. uo-init vs uo-update is chosen by Primary from on-disk gaps
-# (see intent-reasoning); this list must not be read as "always run both".
+# Order only. uo-init vs uo-update is chosen from available_state (not both).
 _STEP_ORDER = (
     "workspace_acquire",
     "uo-init",
@@ -74,6 +73,48 @@ _STEP_ORDER = (
     "tg-solve",
     "handoff",
 )
+
+_TG_DELIVER = frozenset({"tg-init", "tg-plan", "tg-solve"})
+_UO_CHOICES = frozenset({"uo-init", "uo-update"})
+_SKIP_INTAKE = frozenset({"uo-query", "goal-impact"})
+
+
+def close_listed_workflows(
+    listed: list[str],
+    available: dict[str, Any] | None = None,
+) -> list[str]:
+    """Close TG/UO prerequisites. Never invents ce-review / ce-plan / goal-impact.
+
+    ``tg-solve`` requires ``tg-plan`` and ``tg-init``. ``tg-plan`` requires ``tg-init``.
+    UO is filled only when a TG workflow is present and the user did not already
+    name ``uo-init``/``uo-update``: absent → ``uo-init``, stale → ``uo-update``,
+    fresh → skip. Missing ``available`` is treated as no CodeMap (fail-closed).
+    """
+    selected: list[str] = []
+    for wid in listed:
+        text = str(wid or "").strip()
+        if not text or text in _SKIP_INTAKE:
+            continue
+        if text not in selected:
+            selected.append(text)
+    bag = set(selected)
+    if "tg-solve" in bag:
+        if "tg-plan" not in bag:
+            selected.append("tg-plan")
+            bag.add("tg-plan")
+        if "tg-init" not in bag:
+            selected.append("tg-init")
+            bag.add("tg-init")
+    elif "tg-plan" in bag and "tg-init" not in bag:
+        selected.append("tg-init")
+        bag.add("tg-init")
+    if bag & _TG_DELIVER and not (bag & _UO_CHOICES):
+        avail = available if isinstance(available, dict) else {}
+        if not bool(avail.get("has_uo")):
+            selected.append("uo-init")
+        elif bool(avail.get("uo_stale")):
+            selected.append("uo-update")
+    return selected
 
 
 def _now() -> str:
@@ -170,7 +211,7 @@ def plan_for(
     llm_intent: dict[str, Any],
     available: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist explicitly listed workflows. Do not invent prerequisite slashes.
+    """Record listed delivery workflows plus TG/UO prerequisite closure.
 
     ``llm_intent`` is a compatibility API name. No NL parsing happens here.
     """
@@ -179,7 +220,6 @@ def plan_for(
         capabilities_from_workflows,
     )
 
-    del available
     raw_wfs = [
         str(w).strip()
         for w in (llm_intent.get("needed_workflows") or [])
@@ -190,12 +230,7 @@ def plan_for(
         for c in (llm_intent.get("needed_capabilities") or [])
         if str(c).strip()
     ]
-    selected: list[str] = []
-    for wid in raw_wfs:
-        if not wid or wid in {"uo-query", "goal-impact"}:
-            continue
-        if wid not in selected:
-            selected.append(wid)
+    selected = close_listed_workflows(raw_wfs, available)
 
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
 
