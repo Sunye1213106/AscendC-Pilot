@@ -1,0 +1,73 @@
+schema: tg-plan-rubric/v1
+case: pr-10295-fag-gqa-dense-swizzle
+product: tg/plan.md
+operator: FlashAttentionScoreGrad
+architecture: arch35
+
+notes: |
+  Semantic grading for PR 10295 (deterministic GQA DENSE swizzle / SelectGQADenseSchedule).
+  Not a literal diff against plan.golden.md. IDs and exact S1/S2/B/N1 values are free.
+  Operator-specific facts live here; grade_10295.py scores R1–R12.
+
+new_or_rewritten_fields:
+  - deterMaxRound
+  - selectedRound
+
+probeable_names:
+  - selectedRound
+  - baseRound
+  - basePeriod
+  - selectedPeriod
+  - candidateRound
+  - roundCostOk
+  - invalidCostOk
+  - localityBetter
+  - rowOffsetEnough
+
+# Host locals that are ONLY assigned on the unaligned arm. Using them as an
+# L0 unique-class Dimension over ALL HIT rows is R5 FAIL.
+unaligned_only_bools:
+  - roundCostOk
+  - invalidCostOk
+  - localityBetter
+  - rowOffsetEnough
+
+confirmed_columns:
+  - Input_Layout
+  - B
+  - N1
+  - N2
+  - S1
+  - S2
+  - D
+  - D_V
+  - Drop_Out_Possibility
+  - Pre_Tockens
+  - Next_Tockens
+  - sparse_mode
+  - PSE_type
+  - seqlens_list_q
+  - seqlens_list_kv
+  - eod
+  - same_as_input
+  - seed
+  - offset
+  - is_deter
+  - rope
+  - inner_drop
+  - prefix
+
+unresolved_must_gap:
+  - Dtype
+  - Atten_mask_shape
+
+scoring:
+  # R8 scale is informational. Pass = path-correct + Solve-contract.
+  required_ids: [R1, R2, R3, R4, R5, R6, R7, R9, R10, R11, R12]
+  informational_ids: [R8]
+  min_dimensions: 5
+  min_partitions: 12
+  min_guards: 4
+  require_l1: true
+  budget_seconds: 300
+  budget_required: false

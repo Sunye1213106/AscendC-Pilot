@@ -73,6 +73,9 @@ Thumbs.db
 session-ses_*.md
 session-*.md
 
+# Local Plan Owner trial dumps (never commit)
+evals/fixtures/**/session/trial*.yaml
+
 # One-off probe dumps / local operator copies (never commit)
 _uo_probe_new/
 operators/

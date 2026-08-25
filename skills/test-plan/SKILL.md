@@ -20,6 +20,16 @@ description: 把测试要求编译为 Target、Dimension、Guard 与 L0–L3 覆
 核数/平台字面量 → environment（必须有 file:line）
 可切 probe 做 Dimension（classifier=`probe.<name>`），不要丢进 constraints
 unresolved+active 列 → untestable 点名
+packet 文件里的新赋值优先于 UO 空结果（count:0 不是不存在）
+packet.identifiers 非空 → Target 只点名其中的新赋值（默认 1 个 Target）
+L1 先做 2×2：helper 只杀一支就不要和切臂维交叉
+constraints 默认 []；早退合取不要把单因子枚举写成 Guard
+H6：各 partition 谓词字段集合必须相等（多出来的列补 HIT 合法值，禁止换一组列）
+controls 不算切到；token 列必须出现在两格谓词里
+requirement.text 用 ASCII 写杀整事实（`g==1`/`g<=1`，不要 `≤`）
+仍 HIT 的默认枚举必须有 partition `eq`；`in` values 禁止重叠
+helper 初值/候选/合取布尔要在 requirement.text 点名
+两臂 splitAxis / isDeterministic 互斥 → 耦合列写进该维两格，勿全局钉死一侧
 ```
 
 详情与骨架：`references/coverage-planning.md`。

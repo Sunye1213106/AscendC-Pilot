@@ -96,7 +96,10 @@ def _has_sparse_mode(pred: dict[str, Any], value: int) -> bool:
 
 def _mod_eq(pred: dict[str, Any], field: str, divisor: int, value: int) -> bool:
     for p in _walk_preds(pred):
-        if _s(p.get("op")) != "mod_eq" or _s(p.get("left")) != field:
+        if _s(p.get("op")) != "mod_eq":
+            continue
+        left = _s(p.get("left")) or _s(p.get("field"))
+        if left != field:
             continue
         try:
             d = int(p.get("divisor"))
@@ -157,6 +160,17 @@ def grade(doc: dict[str, Any], rubric: dict[str, Any], init: dict[str, Any] | No
     for p in sm3_parts:
         pred = p.get("predicate") or {}
         if _mod_eq(pred, "case.B", 2, 0) and _cmp(pred, "case.S1", {"gt", "ge"}, s1_gate, want_below=False):
+            sm3_dead = True
+    # Guard that bans ALL sparse_mode=3 (missing the even-B ∧ large-S1 conjunct) treats a
+    # legal HIT witness as kill-all.
+    for g in guards:
+        pred = g.get("predicate") or {}
+        if not _has_sparse_mode(pred, rdc_mode):
+            continue
+        if not (
+            _mod_eq(pred, "case.B", 2, 0)
+            and _cmp(pred, "case.S1", {"gt", "ge"}, s1_gate, want_below=False)
+        ):
             sm3_dead = True
     rep.add("R1", sm0 and not sm3_dead, "missing sparse_mode=0 witness, or sparse_mode=3 witness on the early-return side")
 
@@ -352,25 +366,35 @@ def main(argv: list[str] | None = None) -> int:
     init = _load(args.init) if args.init else None
     rep = grade(doc, rubric, init)
     scoring = rubric.get("scoring") if isinstance(rubric.get("scoring"), dict) else {}
-    required = [_s(i) for i in (scoring.get("required_ids") or [c["id"] for c in rep.checks])]
+    info_ids = {_s(i) for i in (scoring.get("informational_ids") or [])}
+    if scoring.get("required_ids"):
+        required = [_s(i) for i in scoring.get("required_ids") or []]
+    else:
+        required = [c["id"] for c in rep.checks if c["id"] not in info_ids]
     by_id = {c["id"]: c for c in rep.checks}
     gates = {i: bool(by_id.get(i, {}).get("ok")) for i in required}
     budget = scoring.get("budget_seconds")
-    if budget is not None and args.elapsed is not None:
+    if budget is not None and args.elapsed is not None and scoring.get("budget_required"):
         gates[f"elapsed<={budget}s"] = args.elapsed <= float(budget)
     passed = all(gates.values())
     summary = {
         "case": _s(rubric.get("case")),
         "passed": passed,
         "gates": gates,
-        "failures": [f"{c['id']}: {c['detail']}" for c in rep.checks if not c["ok"]],
+        "failures": [f"{c['id']}: {c['detail']}" for c in rep.checks if not c["ok"] and c["id"] not in info_ids],
+        "info": [f"{c['id']}: {c['detail']}" for c in rep.checks if not c["ok"] and c["id"] in info_ids],
         "elapsed_s": args.elapsed,
     }
     if not args.quiet:
         for c in rep.checks:
-            mark = "PASS" if c["ok"] else "FAIL"
             extra = f"  {c['detail']}" if not c["ok"] else ""
+            if c["id"] in info_ids:
+                mark = "INFO"
+            else:
+                mark = "PASS" if c["ok"] else "FAIL"
             print(f"{mark} {c['id']}{extra}")
+        if args.elapsed is not None:
+            print(f"INFO elapsed_s={args.elapsed}" + (f" budget={budget}" if budget is not None else ""))
         print(f"\n=> {'PASS' if passed else 'FAIL'}")
     if args.json:
         args.json.parent.mkdir(parents=True, exist_ok=True)

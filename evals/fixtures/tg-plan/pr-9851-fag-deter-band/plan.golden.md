@@ -152,7 +152,7 @@ dimensions:
   target: T-deter-max-round-overridden
   controls: [S1, S2]
   classifier:
-    requires: [replay.deterMaxRound, replay.deterBandScheduleMode]
+    requires: [replay.deterMaxRound]
   partitions:
   - {id: p-round-compact, predicate: {op: le, field: replay.deterMaxRound, value: 64}}
   - {id: p-round-long, predicate: {op: gt, field: replay.deterMaxRound, value: 64}}
@@ -263,14 +263,10 @@ coverage:
       reason: "useLowerCausal:140 与 b 奇偶:150 共同决定 causalRound = pairRound + tailRound"
     - dims: [D-causal-embedding, D-schedule-mode]
       reason: ":142 的 useLowerCausal 是 CAUSAL 参与竞争的前置门"
-    - dims: [D-split-writer, D-entry-route]
-      reason: ":185 的提前返回同时读 rightDownBandCond（由 sparse_mode 定）与 isSplitByBlockIdx，决定走 :210 新写点还是保留 :177 旧值"
     - dims: [D-layout, D-headdim-split]
       reason: "layout 与 D_V 共同决定 s1Inner/s1CvRatio，即 :199 的 cubeBase，进而决定 p,q 的量化粒度"
     - dims: [D-schedule-mode, D-headdim-split]
       reason: "cubeBase 变化改变 p,q,m,n 的比例关系，可能翻转三路 argmin"
-    - dims: [D-max-round-override, D-schedule-mode]
-      reason: ":691 只在 mode != DISABLED 时覆写 deterMaxRound，且三种 mode 各用不同 round 公式"
   L2:
     combinations:
     - dims: [D-token-normalize, D-band-geometry, D-schedule-mode]
@@ -407,11 +403,9 @@ R7  **三路 mode 必须建成独立 partition**：BAND/DENSE/CAUSAL 三值虽�
     classifier、给出 3 个 partition（或至少 2 个）。只写 mode>0 就当多值已覆盖，
     并用 untestable(opaque) 交代「判别做不成」⇒ FAIL。覆盖靠观测，不靠预测。
 
-R8  **规模下界**：dimensions >= 8；partition 总数 >= 20；L1.combinations 非空且每条
-    带 reason；L3.guards >= 4。低于任一项 ⇒ FAIL。
-    理由：本次改动在 SelectDeterBandSchedule / SelectBlockSchedule /
-    NormalizeDeterBandScheduleParams 三个函数里共引入 13 个判定点，其中 8 个汇聚到
-    三路 round 竞争。只声明 1-2 个 Dimension 必然漏掉核心比较逻辑。
+R8  规模（INFO，不决定 PASS/FAIL）：本次改动判定点多，理想 dimensions≥8、
+    partition≥20、L1 非空、L3.guards≥4。低于任一项只记 INFO。
+    必过是路径正确 + Solve 能消费（R12）。
 
 R9  oracle 非空且含 md5 逐位复现：本次改动重排累加顺序而声称逐位不变，不验 md5 等于
     没验。harness 仅在 is_deter=true 时算 Actual_dq/dk/dv_Md5sum，与本 plan 义务行

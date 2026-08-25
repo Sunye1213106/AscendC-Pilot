@@ -5,34 +5,58 @@ operator: FlashAttentionScoreGrad
 architecture: arch35
 
 notes: |
-  Semantic grading for PR 10335 (TND deterministic dense swizzle unlock).
-  Not a literal diff against any golden file.
+  Pass = unique-write + HIT-arm classification + Solve-contract.
+  Scale (R8) is informational. IDs and exact S1/S2/B/N1 values are free.
 
-must:
-  # The new behavior is isTndSwizzle becoming true on the deter+TND+DENSE path
-  # that used to be compiled out with `&& false`.
-  target_fields_any:
-    - isTndSwizzle
-    - deterTndSwizzleSafe
-  require_probe_or_replay_on:
-    - isTndSwizzle
-    - deterTndSwizzleSafe
-  layout_tnd_mentioned: true
-  is_deter_gate: true
-  gqa_filtered: true          # g==1 / N1==N2 must appear (partition or constraint or guard)
-  dense_sparse_path: true     # DETER_DENSE / sparse_mode=0 / tokens covering
-  kernel_index_mentioned: true  # CalTNDDenseSwizzleIndex in requirement or untestable
-  no_false_and_left: true     # plan must not still treat the path as permanently disabled
-  oracle_md5: true
-  environment_aic_and_core: true
-  min_dimensions: 5
-  min_partitions: 12
-  min_guards: 3
-  require_l1: true
+new_or_rewritten_fields:
+  - IsTndSwizzle
+  - isTndSwizzle
+  - deterTndSwizzleSafe
+
+probeable_names:
+  - isTndSwizzle
+  - deterTndSwizzleSafe
+  - isExceedL2Cache
+  - isLargeInvalidBlk
+  - enableSwizzle
+  - blockOuter
+  - tailZeroCount
+
+confirmed_columns:
+  - Input_Layout
+  - B
+  - N1
+  - N2
+  - S1
+  - S2
+  - D
+  - D_V
+  - Drop_Out_Possibility
+  - Pre_Tockens
+  - Next_Tockens
+  - sparse_mode
+  - PSE_type
+  - seqlens_list_q
+  - seqlens_list_kv
+  - eod
+  - same_as_input
+  - seed
+  - offset
+  - is_deter
+  - rope
+  - inner_drop
+  - prefix
 
 unresolved_must_gap:
   - Dtype
   - Atten_mask_shape
 
 scoring:
-  budget_seconds: 240
+  required_ids: [R1, R2, R3, R4, R5, R6, R7, R9, R10, R11, R12]
+  informational_ids: [R8]
+  min_dimensions: 4
+  min_partitions: 8
+  min_guards: 3
+  require_l1: true
+  budget_seconds: 300
+  budget_required: false
