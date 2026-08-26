@@ -8,7 +8,7 @@ def test_prepare_router_restores_runtime_engine(monkeypatch, tmp_path) -> None:
     original = runtime_module.invoke_engine
     seen = {}
 
-    def fake_prepare(_root, _action_id):
+    def fake_prepare(_root, _action_id, **_kwargs):
         seen["during"] = runtime_module.invoke_engine is not original
         return {"ok": True, "action_id": _action_id}
 

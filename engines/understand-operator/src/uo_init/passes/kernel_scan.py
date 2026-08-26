@@ -192,10 +192,9 @@ def _kernel_api_include_roots(source_root: Path) -> list[Path]:
 
 
 def _resolved(path: Path) -> Path:
-    try:
-        return path.expanduser().resolve()
-    except OSError:
-        return path
+    from uo_init.paths import resolved
+
+    return resolved(path)
 
 
 def _under(path: Path, root: Path) -> bool:
@@ -323,10 +322,7 @@ def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
             continue
         if is_foreign_arch_entry_tu(path, arch) or is_other_arch_path(path, arch):
             continue
-        try:
-            key = path.resolve()
-        except OSError:
-            key = path
+        key = _resolved(path)
         if key in seen:
             continue
         seen.add(key)

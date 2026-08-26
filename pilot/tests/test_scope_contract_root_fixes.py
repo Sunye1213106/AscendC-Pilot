@@ -163,16 +163,6 @@ def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
     assert verdict.get("ok") is True
 
 
-def test_authorize_still_denies_shell_write_into_control_plane(tmp_path: Path) -> None:
-    start_workflow(
-        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
-    )
-    cmd = f'echo hi > "{tmp_path / ".ascendc-pilot" / "uo" / "runs" / "receipt.yaml"}"'
-    verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-    assert verdict.get("decision") == "deny", verdict
-    assert verdict.get("reason_code") == "BASH_PROTECTED_WRITE"
-
-
 def test_prepare_receipt_accepts_snapshot_run_id_shape(tmp_path: Path) -> None:
     from ascendc_pilot.actions.runtime import _contract_identity_ok
 

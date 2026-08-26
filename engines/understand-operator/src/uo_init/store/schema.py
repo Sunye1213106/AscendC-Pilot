@@ -84,14 +84,20 @@ CREATE TABLE IF NOT EXISTS view_blob(
   data TEXT NOT NULL
 );
 
+-- Every index here is chosen by a plan the query layer actually runs; the set
+-- was pruned by replaying the query surface under EXPLAIN QUERY PLAN. Four more
+-- existed and no plan ever mentioned them, which cost 4 MB per product to index
+-- lookups nothing asks for:
+--   entity(name)                       -- name lookup goes through entity_name_leaf
+--   entity_name_leaf(entity_id)        -- the leaf table is only read leaf-first
+--   source_span(file, line_start, ...) -- spans are reached by entity_id
+--   legal_key_dim(key_id)              -- a strict prefix of PRIMARY KEY(key_id, dim)
+-- Before adding one back, confirm a plan names it.
 CREATE INDEX IF NOT EXISTS idx_uo_entity_kind ON entity(kind);
-CREATE INDEX IF NOT EXISTS idx_uo_entity_name ON entity(name);
 CREATE INDEX IF NOT EXISTS idx_uo_rel_src ON relation(src, kind);
 CREATE INDEX IF NOT EXISTS idx_uo_rel_dst ON relation(dst, kind);
 CREATE INDEX IF NOT EXISTS idx_span_entity ON source_span(entity_id);
-CREATE INDEX IF NOT EXISTS idx_span_file_line ON source_span(file, line_start, line_end);
 CREATE INDEX IF NOT EXISTS idx_entity_file_line ON entity(file, line_start, line_end);
 CREATE INDEX IF NOT EXISTS idx_entity_kind_name_nocase ON entity(kind, name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_legal_key_dim_value ON legal_key_dim(dim, value, key_id);
-CREATE INDEX IF NOT EXISTS idx_legal_key_dim_key ON legal_key_dim(key_id);
 """

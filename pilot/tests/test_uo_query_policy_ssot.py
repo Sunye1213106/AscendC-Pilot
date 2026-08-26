@@ -21,9 +21,9 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     skill = _text("skills/uo-query/SKILL.md")
     capability = _text("tools/codemap/kb-query/METHOD.md")
     prompt = _text("prompts/tasks/uo/codemap-query.md")
-    invariant = _text("pilot/policies/invariants/control-invariants.md")
-    access = _text("pilot/policies/invariants/code-access-invariants.md")
-    reason = _text("pilot/policies/invariants/intent-reasoning.md")
+    invariant = _text("pilot/policies/pilot-control/POLICY.md")
+    access = _text("pilot/policies/code-access/POLICY.md")
+    reason = _text("pilot/policies/pilot-control/POLICY.md")
 
     assert "禁止 Write `answer.yaml`" in invariant
     assert "partial" in skill or "不存在" in skill
@@ -44,7 +44,7 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
 
 
 def test_uo_query_router_owned_by_primary() -> None:
-    reason = _text("pilot/policies/invariants/intent-reasoning.md")
+    reason = _text("pilot/policies/pilot-control/POLICY.md")
     skill = _text("skills/uo-query/SKILL.md")
     assert "compile" not in reason
     assert "FIRST_QUERY" not in reason
@@ -52,7 +52,7 @@ def test_uo_query_router_owned_by_primary() -> None:
     assert "综合只在主控" in reason
     assert "相关 ≠ 单域" in reason
     assert "相关 ≠ 单域" not in skill
-    assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
+    assert "禁止 `--mode`" in _text("pilot/policies/code-access/POLICY.md")
     assert "routing/uo-query.md" not in skill
     ctx = _text("agents/CONTEXT.md")
     assert "主控当前会话 `acp uo-query`" not in ctx
@@ -60,7 +60,7 @@ def test_uo_query_router_owned_by_primary() -> None:
 
 def test_uo_query_host_behavior_not_phrase_sync() -> None:
     policy = _text("pilot/policies/pilot-control/POLICY.md")
-    invariant = _text("pilot/policies/invariants/control-invariants.md")
+    invariant = policy
     command_src = _text("scripts/compose_opencode_commands.py")
     driver_facade = _text("opencode-plugin/pilot-driver.ts")
     driver_core = _text("opencode-plugin/pilot-driver-core.ts")
@@ -72,7 +72,7 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "不要 `pilot_run`" in command_src
     assert "routing/uo-query.md" not in command_src
     assert "禁止在 Task 正文写 `--mode`" not in command_src
-    assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
+    assert "禁止 `--mode`" in _text("pilot/policies/code-access/POLICY.md")
     assert "丢掉" not in command_src
     assert "--mode locate" not in hook
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
@@ -83,7 +83,6 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
 def test_splitaxis_example_is_non_normative() -> None:
     product_map = _text("skills/uo-query/references/uo-product-map.md")
     assert "non-normative" in product_map
-    assert "examples/uo-query-splitaxis/" in product_map
 
 
 def test_ce_plan_draft_keeps_grill_fields_in_skill() -> None:

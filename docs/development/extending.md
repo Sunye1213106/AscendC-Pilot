@@ -5,7 +5,7 @@
 ```text
 确定性计算              -> Engine
 当前 Action 怎么做      -> skills/<id>/SKILL.md（confirm/deterministic 不挂 Skill）
-主控查询拆路            -> intent-reasoning.md（不是 Skill）
+主控查询拆路            -> pilot-control（不是 Skill）
 一次任务说明            -> Prompt（task/input/delta/output）
 状态与迁移              -> Workflow Spec（LLM Action 写 skill_id）
 可执行步骤              -> Action
@@ -46,7 +46,7 @@ python scripts/check_ownership_contracts.py
 
 Skill 是自包含的 runtime method bundle。修改 `skills/<domain>/SKILL.md`，将必要的证据、完整性和易错点规则放在 `references/`，将可执行示例放在 `examples/`。行为改变时更新 `evals/skills/<domain>/`。
 
-不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。全局纪律改对应 `pilot/policies/<id>/POLICY.md`（模型面改 `invariants/`）。运行：
+不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。全局纪律改对应 `pilot/policies/<id>/POLICY.md`（compose 注入这一份）。运行：
 
 ```bash
 python scripts/check_skill_architecture.py

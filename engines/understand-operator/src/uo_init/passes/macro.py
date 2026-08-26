@@ -9,6 +9,10 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 
+#: These macros are the ``-D`` flags of the build variant, read off the
+#: BuildContext. Nothing is parsed or guessed, so the facts are derived.
+_PROV = "build_variant"
+
 
 def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     ctx = context or {}
@@ -30,7 +34,11 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     bv = codemap.upsert(
         EntityKind.BUILD_VARIANT,
         bv_name,
-        attrs={"architecture": codemap.architecture, **dict(build_variant)},
+        attrs={
+            "architecture": codemap.architecture,
+            **dict(build_variant),
+            "provenance": _PROV,
+        },
     )
 
     for item in defines:
@@ -44,16 +52,21 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         macro = codemap.upsert(
             EntityKind.MACRO,
             name.strip(),
-            attrs={"value": value.strip(), "definition": text, "layer": "compile"},
+            attrs={
+                "value": value.strip(),
+                "definition": text,
+                "layer": "compile",
+                "provenance": _PROV,
+            },
         )
-        codemap.link(RelationKind.ACTIVE_UNDER, macro.id, bv.id)
+        codemap.link(RelationKind.ACTIVE_UNDER, macro.id, bv.id, attrs={"provenance": _PROV})
         cvar = codemap.upsert(
             EntityKind.COMPILE_VAR,
             name.strip(),
-            attrs={"value": value.strip(), "layer": "compile"},
+            attrs={"value": value.strip(), "layer": "compile", "provenance": _PROV},
         )
-        codemap.link(RelationKind.EXPANDS_TO, macro.id, cvar.id)
-        codemap.link(RelationKind.BINDS, cvar.id, macro.id)
+        codemap.link(RelationKind.EXPANDS_TO, macro.id, cvar.id, attrs={"provenance": _PROV})
+        codemap.link(RelationKind.BINDS, cvar.id, macro.id, attrs={"provenance": _PROV})
 
     codemap.meta["macro_pass"] = "v1"
     return codemap

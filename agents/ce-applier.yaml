@@ -10,6 +10,7 @@ skill_ids: *skills
 read_scopes:
 - pilot:ce/plan/**
 - pilot:runs/**
+- pilot:context/**
 - source:op_host/**
 - source:op_kernel/**
 - source:common/**
@@ -26,9 +27,9 @@ machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
-- write_canonical_ce_plan
+- write_canonical_ce_yaml
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
-- write_canonical_ce_plan
+- write_canonical_ce_yaml

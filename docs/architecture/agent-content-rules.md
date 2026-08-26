@@ -19,18 +19,20 @@
 两种负载分开算：
 
 - **人**：只记 slash（`/uo-query` `/uo-init` `/uo-investigate` `/tg-init` `/tg-plan` `/tg-solve` `/ce-plan` `/ce-apply` `/ce-review` `/handoff`）。磁盘 `skills/` 目录不是入口。
+- **执行 id**：编排与 `pilot_run.workflow` 写 `uo-init`。聊天 slash 才是 `/uo-init`。入口剥 `/`，两边同一条工作流。模型 playbook 不要把聊天前缀当成工具协议。
 - **窗**：每个 LLM Action 只装一份 `method.md`。磁盘 skill 数 ≠ 常驻 token。
 
 本仓路径对照：
 
 | 层 | 权威位置 |
 | --- | --- |
-| Policy | `pilot/policies/<id>/POLICY.md` |
-| 模型常驻短投影 | `pilot/policies/invariants/*.md`（Primary 只拿编排需要的；全文 POLICY 不进模型） |
+| Policy | `pilot/policies/<id>/POLICY.md`（compose 直接注入这一份；没有第二份「短投影」） |
+| 编排 / 调查拆路 | `pilot-control`。Primary 不读 Skill。 |
+| 与人交互 | `human-voice` |
+| Host 运行时（人 / CI） | `pilot/policies/invariants/host-runtime-contract.md`（不 compose） |
 | Workflow / Spec | `pilot/ascendc_pilot/workflows/*.py`：机器图 + 装载指针（`skill_id` / `method_ref` / `refs` / `knowledge_refs`） |
 | Domain Knowledge | `knowledge/ascendc/*.md`：跨任务仍成立的 AscendC 事实。Action 显式声明才装，无自动选择 |
 | Engine / Gate | 文件在不在、schema、到齐 ACK、scan/promote |
-| 编排 / 调查拆路 | `intent-reasoning.md`。Primary 不读 Skill。 |
 | Skill | `skills/<id>/SKILL.md`（当前窗口怎么判断）+ `references/`（指针后） |
 | Prompt | `prompts/tasks/**`（本题 I/O） |
 | Agent | `agents/*.yaml` 的职责与写面 |
@@ -48,7 +50,7 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
 不适合放：执行步骤、shell、函数名、某 Action 的 I/O、某算子特化、长示例、troubleshooting、workflow 教程。
 
-一个规则只能有一个权威定义。Skill、Prompt、Agent 不得复制 Policy 全文，只引用。`invariants/*.md` 是短投影，不得比全文更严或更松。
+一个规则只能有一个权威定义。Skill、Prompt、Agent 不得复制 Policy 全文，只引用。compose 注入 POLICY.md 本身，不要再写一份 paraphrased 短文。
 
 ---
 
@@ -210,7 +212,7 @@ conflict:
 
 ```text
 pilot/policies/<id>/POLICY.md
-pilot/policies/invariants/*.md
+pilot/policies/invariants/host-runtime-contract.md
 skills/<skill-id>/SKILL.md
 agents/*.yaml
 prompts/tasks/

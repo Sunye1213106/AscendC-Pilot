@@ -36,15 +36,34 @@ _ROOT_FLOW_KINDS = {RelationKind.DERIVES.value, RelationKind.FLOWS_TO.value}
 _RUNTIME_KINDS = {EntityKind.VARIABLE.value, EntityKind.FIELD.value}
 
 
-def _path_exists(codemap: CodeMap, *, start_kind: EntityKind, end_kind: EntityKind, require_kind: EntityKind | None = None) -> bool:
+def _flow_adjacency(codemap: CodeMap, kinds: set[str]) -> dict[str, list[str]]:
+    """Forward edges of `kinds`. Build once per audit, not once per question.
+
+    `_path_exists` rebuilt this over every relation on each of its four calls,
+    which is where 116k of the stage's relation-kind reads came from. The graph
+    does not change between the four questions.
+    """
+    adj: dict[str, list[str]] = defaultdict(list)
+    for rel in codemap.relations.values():
+        if rel.kind_name() in kinds:
+            adj[rel.src].append(rel.dst)
+    return adj
+
+
+def _path_exists(
+    codemap: CodeMap,
+    *,
+    start_kind: EntityKind,
+    end_kind: EntityKind,
+    require_kind: EntityKind | None = None,
+    adj: dict[str, list[str]] | None = None,
+) -> bool:
     starts = codemap.by_kind(start_kind)
     ends = {e.id for e in codemap.by_kind(end_kind)}
     if not starts or not ends:
         return False
-    adj: dict[str, list[str]] = defaultdict(list)
-    for rel in codemap.relations.values():
-        if rel.kind_name() in _FLOW_KINDS:
-            adj[rel.src].append(rel.dst)
+    if adj is None:
+        adj = _flow_adjacency(codemap, _FLOW_KINDS)
     required = require_kind.value if require_kind is not None else ""
     q: deque[tuple[str, bool]] = deque((e.id, e.kind_name() == required if required else True) for e in starts)
     seen = set(q)
@@ -68,11 +87,15 @@ def _trusted_compile_root(entity: Entity) -> bool:
     return bool(entity.attrs.get("compile_root") or provenance.startswith("source_") or provenance.startswith("source_host_") or origin == "constexpr_or_define")
 
 
+_ALWAYS_ROOT = {EntityKind.INPUT.value, EntityKind.BUILD_VARIANT.value, EntityKind.ARCH.value}
+_COMPILE_ROOT = {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}
+
+
 def _trusted_root(entity: Entity) -> bool:
     kind = entity.kind_name()
-    if kind in {EntityKind.INPUT.value, EntityKind.BUILD_VARIANT.value, EntityKind.ARCH.value}:
+    if kind in _ALWAYS_ROOT:
         return True
-    if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
+    if kind in _COMPILE_ROOT:
         return _trusted_compile_root(entity)
     return False
 
@@ -318,14 +341,15 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         warn("PARTIAL_TILINGKEY_DEPENDENCY_SKELETON", f"{len(dependency_partial)}/{len(declared_keys)} TilingKeys retain unresolved runtime dependency leaves", examples=[{"key": row["key"], "unresolved": row["unresolved_dependencies"][:12]} for row in dependency_partial[:12]])
 
     strict_path = evidence_backed_host_kernel_path_exists(codemap)
-    input_key_kernel = _path_exists(codemap, start_kind=EntityKind.INPUT, end_kind=EntityKind.KERNEL, require_kind=EntityKind.TILING_KEY)
-    tdata_kernel = _path_exists(codemap, start_kind=EntityKind.TILING_DATA, end_kind=EntityKind.KERNEL)
-    input_output = _path_exists(codemap, start_kind=EntityKind.INPUT, end_kind=EntityKind.OUTPUT)
+    flow_adj = _flow_adjacency(codemap, _FLOW_KINDS)
+    input_key_kernel = _path_exists(codemap, start_kind=EntityKind.INPUT, end_kind=EntityKind.KERNEL, require_kind=EntityKind.TILING_KEY, adj=flow_adj)
+    tdata_kernel = _path_exists(codemap, start_kind=EntityKind.TILING_DATA, end_kind=EntityKind.KERNEL, adj=flow_adj)
+    input_output = _path_exists(codemap, start_kind=EntityKind.INPUT, end_kind=EntityKind.OUTPUT, adj=flow_adj)
     if kernels and not strict_path:
         block("MISSING_EVIDENCE_BACKED_HOST_KERNEL_PATH", "no semantic INPUT→…→KERNEL path; node presence alone is insufficient")
     if inputs and keys and kernels and not input_key_kernel:
         key_to_kernel = _path_exists(
-            codemap, start_kind=EntityKind.TILING_KEY, end_kind=EntityKind.KERNEL
+            codemap, start_kind=EntityKind.TILING_KEY, end_kind=EntityKind.KERNEL, adj=flow_adj
         )
         # Dtype / compile-rooted keys never flow from INPUT. KEY→KERNEL plus
         # INPUT→KERNEL is still a source-backed selection path.
@@ -398,6 +422,7 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         quality.setdefault("ops", ke.get("operations"))
         quality.setdefault("buffers", ke.get("buffers"))
         quality.setdefault("reached_buffers", ke.get("reached_buffers"))
+        quality.setdefault("reached_registers", ke.get("reached_registers"))
         quality.setdefault("reached_operations", ke.get("reached_operations"))
         quality.setdefault("gap_count", ke.get("gap_count"))
         kernel_root_trace_quality = quality

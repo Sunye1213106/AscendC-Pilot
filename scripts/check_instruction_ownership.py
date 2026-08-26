@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Instruction-ownership lint: investigation routing lives in Primary intent-reasoning."""
+"""Instruction-ownership lint: investigation routing lives in Primary pilot-control."""
 
 from __future__ import annotations
 
@@ -18,13 +18,11 @@ HEURISTIC_PHRASES = (
 )
 
 CONTROL_FILES = (
-    "pilot/policies/pilot-control/POLICY.md",
-    "pilot/policies/invariants/control-invariants.md",
     "pilot/policies/invariants/host-runtime-contract.md",
     "scripts/compose_opencode_commands.py",
 )
 
-ROUTER = "pilot/policies/invariants/intent-reasoning.md"
+ROUTER = "pilot/policies/pilot-control/POLICY.md"
 OWNERS = (
     "skills/uo-query/SKILL.md",
     ROUTER,
@@ -32,8 +30,8 @@ OWNERS = (
 
 ORCH_BANNED_FILES = (
     "pilot/policies/invariants/host-runtime-contract.md",
-    "pilot/policies/invariants/control-invariants.md",
-    "pilot/policies/invariants/human-voice-invariants.md",
+    "pilot/policies/pilot-control/POLICY.md",
+    "pilot/policies/human-voice/POLICY.md",
     "scripts/compose_opencode_commands.py",
     "scripts/compose_runtime.py",
     "scripts/compose_runtime_legacy.py",
@@ -76,8 +74,7 @@ MODEL_FACING_ROOTS = (
     "skills",
     "prompts",
     "tools",
-    "pilot/policies/invariants",
-    "pilot/policies/pilot-control",
+    "pilot/policies",
 )
 GENERATED_ACP_ROOTS = (
     "generated/opencode/agents",
@@ -94,9 +91,9 @@ def errors(repo: Path | None = None) -> list[str]:
         text = (root / rel).read_text(encoding="utf-8")
         for phrase in HEURISTIC_PHRASES:
             if phrase in text:
-                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in intent-reasoning")
+                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in pilot-control")
         if "FIRST_QUERY" in text:
-            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in intent-reasoning")
+            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in pilot-control")
         if "--mode compile" in text:
             out.append(f"STALE_COMPILE {rel}: query compile is removed")
     router = root / ROUTER
@@ -123,7 +120,7 @@ def errors(repo: Path | None = None) -> list[str]:
         if "丢掉" in mtext:
             out.append("uo-query SKILL must not stack 丢掉 recovery on --mode")
         if "相关 ≠ 单域" in mtext:
-            out.append("uo-query SKILL must not own 相关 ≠ 单域; belongs in intent-reasoning")
+            out.append("uo-query SKILL must not own 相关 ≠ 单域; belongs in pilot-control")
         if "Dim=V" not in mtext or "无参数索引" not in mtext:
             out.append("uo-query SKILL must own when to pick each uo-query form")
     cap = root / "tools/codemap/kb-query/METHOD.md"
@@ -133,18 +130,18 @@ def errors(repo: Path | None = None) -> list[str]:
         ctext = cap.read_text(encoding="utf-8")
         if "Dim=V" not in ctext or "无参数索引" not in ctext:
             out.append("kb-query capability must own the four uo-query forms")
-    forms = root / "pilot/policies/invariants/code-access-invariants.md"
+    forms = root / "pilot/policies/code-access/POLICY.md"
     if not forms.is_file():
-        out.append("missing code-access-invariants.md")
+        out.append("missing code-access POLICY.md")
     else:
         ftext = forms.read_text(encoding="utf-8")
         if "禁止 `--mode`" not in ftext:
-            out.append("code-access invariant must own 禁止 `--mode`")
+            out.append("code-access POLICY.md must own 禁止 `--mode`")
         if "四种形态之外" not in ftext:
-            out.append("code-access invariant must keep the hard bound 禁止四种形态之外")
+            out.append("code-access POLICY.md must keep the hard bound 禁止四种形态之外")
         if "Dim=V" in ftext or "Dim=<维名>" in ftext or "--file PATH" in ftext:
             out.append(
-                "code-access invariant must not catalog uo-query forms; belongs in kb-query capability"
+                "code-access POLICY.md must not catalog uo-query forms; belongs in kb-query capability"
             )
     restated = (
         "不要传 `--mode`",

@@ -34,6 +34,17 @@ _IDENTITY_META_KEYS = frozenset(
 
 
 def canonical_counts(codemap: CodeMap) -> dict[str, int]:
+    """Row counts of the canonical graph.
+
+    A CodeMap read with a kind filter carries the counts of the graph it was
+    cut from in `meta`, the same way `canonical_graph_digest` reuses a cached
+    digest. Falling back to `len()` there would stamp a projection with the
+    size of its own slice and make every freshness check fail.
+    """
+    meta_ec = codemap.meta.get("entity_count")
+    meta_rc = codemap.meta.get("relation_count")
+    if isinstance(meta_ec, int) and isinstance(meta_rc, int):
+        return {"entity_count": meta_ec, "relation_count": meta_rc}
     return {
         "entity_count": len(codemap.entities),
         "relation_count": len(codemap.relations),

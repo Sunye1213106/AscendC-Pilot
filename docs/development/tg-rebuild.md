@@ -9,7 +9,7 @@
 - 相位：`semantic_bind`、`init_audit`、`plan_intent`/`plan_build`、`lemma_*`、`closure_*`、`scenario_plan`、`contract_build`
 - Agent：`tg-lemma-producer`、`tg-closure-referee`、`tg-init-audit`
 - 引擎模块：`tg_plan_targets.py`、`tg_full_precheck.py`、`tg_compaction.py`
-- Capability：旧合同骨架 `contract-building`（已从 `pilot/gates/` 删除）
+- Capability：旧合同骨架 `contract-building`（已删除；pilot 侧 capability 目录现为 `pilot/runtime/`）
 - 产物：`tg/init/status.yaml`、`kb_fingerprint.yaml`、`audit_report.yaml`、`tg/plan/levels/**`、`tg/closure/**`、`binding_inventory.yaml`、`tg/plan/plan_intent.yaml`
 - 默认模式：`tilingkey_full_coverage` / T=D。用户说「全量覆盖」仍可串联 init→plan→solve，但那是意图，不是 workflow overlay。
 - 指纹权威：`init.yaml` 的 `uo_digest`，不再写 `init/kb_fingerprint.yaml`

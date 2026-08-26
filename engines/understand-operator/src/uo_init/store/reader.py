@@ -9,7 +9,7 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 _SHARED_LOCK = threading.Lock()
 _SHARED_CONN: OrderedDict[str, sqlite3.Connection] = OrderedDict()
@@ -87,14 +87,23 @@ from uo_init.ir.evidence import (
     SOURCE_UNSPECIFIED,
     STATE_RESOLVED,
     TRUST_LEGACY_UNKNOWN,
+    grow_evidence_attrs,
 )
 from uo_init.ir.relation import Relation, RelationKind
 
 
-def _legacy_trust_attrs(attrs: dict[str, Any], *, legacy: bool) -> dict[str, Any]:
-    """v1 products: missing trust is unknown, not lexical. v2 keeps stored fields."""
+def _legacy_trust_attrs(
+    attrs: dict[str, Any], *, legacy: bool, build_context_id: str = ""
+) -> dict[str, Any]:
+    """Rebuild the evidence fields the writer left out.
+
+    v1 products: missing trust is unknown, not lexical -- there is no
+    provenance to derive it from. v2 stores only what its provenance does not
+    already say, so the absent fields are re-derived here and every consumer
+    still sees a complete record.
+    """
     if not legacy:
-        return attrs
+        return grow_evidence_attrs(attrs, build_context_id=build_context_id)
     if str(attrs.get("trust") or "") in {TRUST_LEGACY_UNKNOWN, "authoritative", "derived", "advisory"}:
         return attrs
     attrs["trust"] = TRUST_LEGACY_UNKNOWN
@@ -114,7 +123,20 @@ def read_meta(path: str | Path) -> dict[str, str]:
     return {str(r["key"]): str(r["value"]) for r in rows}
 
 
-def read_codemap(path: str | Path) -> CodeMap:
+def read_codemap(
+    path: str | Path,
+    *,
+    entity_kinds: Iterable[str] | None = None,
+    relation_kinds: Iterable[str] | None = None,
+) -> CodeMap:
+    """Materialize the graph, or the slice of it named by the kind filters.
+
+    A projection needs a handful of kinds, not all 58k rows: loading BRANCH
+    alone is ~40x cheaper than the whole graph. When a filter is given the
+    canonical counts come from `meta` instead of the loaded rows, so a slice
+    still stamps the identity of the graph it was cut from rather than
+    advertising itself as a smaller graph.
+    """
     conn = open_uo(path)
     try:
         meta = {str(r["key"]): str(r["value"]) for r in conn.execute("SELECT key, value FROM meta")}
@@ -123,15 +145,33 @@ def read_codemap(path: str | Path) -> CodeMap:
             architecture=meta.get("architecture") or "",
         )
         cm.meta = {k[3:]: _maybe_json(v) for k, v in meta.items() if k.startswith("cm_")}
+        partial = entity_kinds is not None or relation_kinds is not None
+        if partial:
+            for key in ("entity_count", "relation_count"):
+                if meta.get(key):
+                    cm.meta[key] = int(meta[key])
         from uo_init.store.schema import SCHEMA_COMPAT
 
         schema = str(meta.get("schema") or "")
         legacy = schema == "codemap-uo/v1" or schema not in SCHEMA_COMPAT
         if legacy:
             cm.meta["trust_model"] = "legacy_unknown"
-        for row in conn.execute(
-            "SELECT id, kind, name, status, confidence, file, line_start, line_end, data FROM entity"
-        ):
+        # Rows carry this only when they disagree with the product; putting it
+        # back here is what keeps it out of 58k copies on disk.
+        context_id = str(meta.get("cm_build_context_id") or "")
+        ent_sql = (
+            "SELECT id, kind, name, status, confidence, file, line_start, line_end, data"
+            " FROM entity"
+        )
+        ent_args: tuple[str, ...] = ()
+        if entity_kinds is not None:
+            wanted = tuple(sorted({str(k) for k in entity_kinds}))
+            if not wanted:
+                ent_sql += " WHERE 0"
+            else:
+                ent_sql += f" WHERE kind IN ({','.join('?' * len(wanted))})"
+                ent_args = wanted
+        for row in conn.execute(ent_sql, ent_args):
             data = json.loads(row["data"] or "{}")
             attrs = {
                 k: v
@@ -158,17 +198,25 @@ def read_codemap(path: str | Path) -> CodeMap:
                     id=str(row["id"]),
                     kind=kind,
                     name=str(row["name"] or ""),
-                    attrs=_legacy_trust_attrs(attrs, legacy=legacy),
+                    attrs=_legacy_trust_attrs(attrs, legacy=legacy, build_context_id=context_id),
                     file=str(row["file"] or ""),
                     line_start=int(row["line_start"] or 0),
                     line_end=int(row["line_end"] or 0),
                     status=str(row["status"] or "extracted"),
                     confidence=float(row["confidence"] or 1.0),
-                )
+                ),
+                stamp=not legacy,
             )
-        for row in conn.execute(
-            "SELECT id, kind, src, dst, status, confidence, data FROM relation"
-        ):
+        rel_sql = "SELECT id, kind, src, dst, status, confidence, data FROM relation"
+        rel_args: tuple[str, ...] = ()
+        if relation_kinds is not None:
+            wanted_rel = tuple(sorted({str(k) for k in relation_kinds}))
+            if not wanted_rel:
+                rel_sql += " WHERE 0"
+            else:
+                rel_sql += f" WHERE kind IN ({','.join('?' * len(wanted_rel))})"
+                rel_args = wanted_rel
+        for row in conn.execute(rel_sql, rel_args):
             data = json.loads(row["data"] or "{}")
             attrs = {
                 k: v
@@ -185,7 +233,7 @@ def read_codemap(path: str | Path) -> CodeMap:
                 kind=rkind,
                 src=str(row["src"]),
                 dst=str(row["dst"]),
-                attrs=_legacy_trust_attrs(attrs, legacy=legacy),
+                attrs=_legacy_trust_attrs(attrs, legacy=legacy, build_context_id=context_id),
                 status=str(row["status"] or "extracted"),
                 confidence=float(row["confidence"] or 1.0),
             )
@@ -270,6 +318,22 @@ def load_view_blob_checked(
 
     blob = load_view_blob(path, name, expand_legal_keys=expand_legal_keys)
     if blob is None:
+        # A projection is derived data, so an absent blob is a cache miss rather
+        # than missing information: rebuild it from the graph the same way a
+        # stale one is rebuilt below. Products stop shipping these documents,
+        # and no caller has to learn a second way to ask.
+        from uo_init.store.view_projection import is_projectable, project_view
+
+        if fallback_canonical and codemap is None and is_projectable(name):
+            projected = project_view(path, name)
+            if projected is not None:
+                return {
+                    "ok": True,
+                    "reason_code": "",
+                    "name": name,
+                    "view": projected,
+                    "fallback": "projected",
+                }
         return {"ok": False, "reason_code": "VIEW_MISSING", "name": name, "view": None}
     stored_digest = str(_maybe_json(read_meta(path).get("cm_canonical_graph_digest") or "") or "")
     prov = blob.get("provenance") if isinstance(blob, dict) else None

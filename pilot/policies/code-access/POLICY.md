@@ -1,25 +1,18 @@
 # Policy: code-access
 
-## Purpose
+算子语义走路由，不是 UO / Grep / 源码三个并列入口。查到 ≠ 已比对（见 `evidence`）。
 
-约束代码语义查阅方式，禁止无边界全仓扫描。与 `evidence` 配套：查到 ≠ 已比对。
+| 问题 | 第一手证据 | 允许的兜底 |
+| --- | --- | --- |
+| 符号身份、写者 / 读者、调用、控制依赖、Tiling 身份 | `uo-query` | 卡片给出的窗口精读 |
+| 本次改了什么 | 已 pin 的 diff 元数据 / packet | 按符号定位的最小行窗 |
+| 表达式原文、字面量 | 源码窗口 | — |
+| 测试 harness 仓（runner / golden / compare） | 源码 | — |
 
-## Rules
+兜底到算子源码时写原因码：`SOURCE_FALLBACK_UO_EMPTY`（`count: 0`）、`SOURCE_FALLBACK_UO_AMBIGUOUS`（同名多候选）、`SOURCE_FALLBACK_UNSUPPORTED_SEMANTIC`（图上本来就不存的原文 / 字面量）。没有原因码而 Grep / Read 算子源码求语义结论 = 越界。harness 仓没有 UO 图，直接 Read / Grep。
 
-1. 理解函数 / 类 / 调用关系时优先使用 UO 图查询（`pilot_cli` `uo-query`）。
-2. 已有明确 `file_path` 时可直接打开目标源码窗口。
-3. Grep / rg / 只读搜索只用于定位，不可单独作为复杂语义结论的唯一证据。
-4. 不允许无边界扫描整个仓库或父仓。禁止整文件倾倒进上下文。只读当前结论所需最小窗口。
-5. UO 图空结果不代表符号不存在；须回退定向源码阅读或受控 source_closure。
-6. 读取必须位于 confirmed scope。宏表 / 注册宏 / Host 谓词 / CMake / 模板参数绑定：以确定性脚本 + 范围内 Read 为主路径。
-7. 官方文档只提供接口 / 宏契约；权威序：算子源码 → 目标 CANN 版本文档 → latest。文档不得创建无源码边。
-8. 符号身份使用稳定 id，禁止短名唯一键。
-9. `uo-query` 禁止 `--mode`（含 Task 正文）以及 `explain-*` / `search` / `locate`，禁止四种形态之外的参数。合法参数形态见 kb-query capability。选哪种、何时停、怎么解释 partial / coverage 见当前查询执行步。0 命中不得回填全集覆盖。around 只扩 1 跳。
-10. 高置信源码比对要求见 `evidence`。语义表面与浅 writer 见 `semantic-grounding`。本策略不另开例外。
+卡片已给 `file_path` + `line` 时只打开那个窗口。Grep 只定位。只读当前结论所需的最小窗口：不扫父仓，不倾倒整文件。`count: 0` ≠ 符号不存在。
 
-## Hard Constraints
+`uo-query` 的合法参数形态由当前查询步的 method 给出。禁止 `--mode`、`explain-*`、`search`、`locate`，以及四种形态之外的参数（含 Task 正文）。0 命中不得回填全集覆盖。around 只扩 1 跳。
 
-- MUST：语义结论前完成「定位 → 窗口读」。
-- MUST NOT：无边界 `index_repository` 父仓、整文件 dump、把空图当作「不可解」的唯一证据。
-- MUST NOT：仅用 search 命中标 `source_verified` / `confidence: high`。
-- MUST NOT：`--mode` / `explain-*` / `search` / `locate`，或四种形态之外的 `uo-query` 参数。
+语义表面与浅 writer 见 `semantic-grounding`。

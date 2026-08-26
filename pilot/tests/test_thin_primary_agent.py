@@ -46,9 +46,8 @@ def test_spec_still_requires_architecture_for_uo_update() -> None:
 
     assert workflow_requires_architecture("uo-update") is True
 
-    inv = (REPO / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(
+    ctl = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
-    item6 = next(line for line in inv.splitlines() if line.startswith("6."))
-    assert "uo-update" in item6
-    assert "--architecture" in item6 or "architecture" in item6
+    assert "uo-update" in ctl
+    assert "architecture" in ctl

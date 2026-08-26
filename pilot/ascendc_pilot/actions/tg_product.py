@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from testcase_agent import isolation, products, test_repo
+from testcase_agent import isolation, plan_packet, products, test_repo
 from testcase_agent.init_status import InitGateError
 
 
@@ -733,8 +733,18 @@ def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     return {"ok": True, "engine": "validate_init", "errors": [], "receipt": receipt.as_posix()}
 
 
-def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Prefetch from the Primary pin only. Never git diff HEAD."""
+def _compact_plan_scope_packet(
+    project_root: Path,
+    ctx: dict[str, Any],
+    *,
+    init_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prefetch from the Primary pin plus UO. Never git diff HEAD.
+
+    The packet is what Plan Owner is allowed to consume, so the semantic half
+    (observation vocabulary, changed observables, probeable locals, controls)
+    is resolved here instead of being rediscovered from raw source.
+    """
     arch = str(ctx.get("architecture") or "").strip()
     from ascendc_pilot.change_contract import allow_legal_keys, changed_files_of, load_change_contract
 
@@ -745,8 +755,8 @@ def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[
     if not has_diff:
         note = "无已 pin 的 change_contract.changed_files；不得把 git diff HEAD 当 PR 信号"
     intents = products.collect_intent_sources(project_root, architecture=arch)
-    return {
-        "schema": "tg-plan-scope-packet/v1",
+    packet: dict[str, Any] = {
+        "schema": plan_packet.PACKET_SCHEMA,
         "has_diff": has_diff,
         "note": note,
         "changed_files": files,
@@ -757,6 +767,33 @@ def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[
         "intent_sources": intents,
         "skip_around": True,
     }
+    from ascendc_pilot.actions.engines import _resolve_tg_ctx
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    try:
+        semantic = plan_packet.build_semantic_packet(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or Path(project_root).name),
+            architecture=str(tg_ctx.get("architecture") or arch),
+            changed_files=files,
+            init_doc=init_doc,
+            repo_root=_repo_root_for_contract(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        packet["semantic_packet_error"] = str(exc)[:300]
+        return packet
+    packet["identifiers"] = semantic.pop("identifiers", [])
+    packet.update(semantic)
+    return packet
+
+
+def _repo_root_for_contract() -> Path:
+    """Pilot checkout that owns the authoritative methodology files."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "skills").is_dir() and (parent / "prompts").is_dir():
+            return parent
+    return here.parents[3]
 
 
 def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -774,9 +811,14 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     gate = pr_change_gate(project_root)
     if gate:
         return gate
+    from ascendc_pilot.contract_sync import contract_drift_gate
+
+    drift = contract_drift_gate()
+    if drift:
+        return drift
     declared = _legal_key_count(project_root, ctx)
     intents = products.collect_intent_sources(project_root, architecture=str(tg_ctx.get("architecture") or ""))
-    packet = _compact_plan_scope_packet(project_root, ctx)
+    packet = _compact_plan_scope_packet(project_root, ctx, init_doc=doc)
     packet_path = _receipt(project_root, ctx, "plan_scope_packet.yaml", packet)
     receipt = _receipt(
         project_root,
@@ -923,6 +965,20 @@ def _primary_observations(project_root: Path, fence: dict[str, Any]) -> set[str]
     return obs or None
 
 
+def _load_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """The packet plan_precheck wrote for this run, when it is still on disk."""
+    try:
+        from ascendc_pilot.runs import receipts_dir
+
+        path = receipts_dir(project_root, str(ctx.get("run_id") or "")) / "plan_scope_packet.yaml"
+        if not path.is_file():
+            return None
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
 def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     try:
@@ -943,6 +999,9 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         primary_observations=observations,
     )
     errors.extend(products.validate_plan_prose(text, fence))
+    from testcase_agent.coverage.contract import validate_against_packet
+
+    errors.extend(validate_against_packet(fence, _load_scope_packet(project_root, ctx)))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
         errors.append("tilingkey_full_coverage / T=D is not a plan mode")
     ok = not errors

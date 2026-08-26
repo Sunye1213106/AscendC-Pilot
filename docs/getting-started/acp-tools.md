@@ -4,7 +4,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 不要用 `--help` 当用法卡。argparse 会列出大量内部子命令，那不是 Session Driver 合同，也不是查询路由。工作流用 `pilot_run`；短命令用 `pilot_cli`。
 
-命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [UO Query Router](../../pilot/policies/invariants/intent-reasoning.md)。
+命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [pilot-control](../../pilot/policies/pilot-control/POLICY.md)。
 
 ---
 
@@ -90,7 +90,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_ho
 | `workflow` | 工作流 id（无前导 `/`）：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。聊天 slash 才写 `/uo-init`。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
 | `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。bash `git clone` 走 OpenCode ask，不要自己建 PR 仓 |
 | `architecture` | `uo-init` / `uo-update` 必填产物槽。有 `arch*` 时从 `scan-architectures` 选项里选；没有这些目录时用 `default`（一套实现），不要猜 arch35 |
-| `intent` | 用户原话里的产品意图；不要编造 |
+| `intent` | 本回合载荷，不是读懂用户句子。`auto`（或缺算子目录要 clone）：用户目标含 PR URL。`bind_review` 后：只填 `PASS` 或 `REWORK bind` / `REWORK harness,bind`。`tg-plan` ingest：YAML 全文。其它格省略。不要塞查询卡片或思考 |
 | `test_script_root` | `/tg-init` **仅当**用户原文已给出算子仓外测试脚本绝对路径或 git URL 时传入。不要塞进 `intent`，不要把仓内 `tests/` 填进来代答，不要再问三项 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
 

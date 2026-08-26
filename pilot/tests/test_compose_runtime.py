@@ -120,6 +120,30 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert WORKFLOWS["handoff"]["slash"] == "/handoff"
 
 
+def test_prune_keeps_every_fanout_axis_prompt() -> None:
+    """Axis prompts are resolved per-axis at dispatch, so they must survive prune.
+
+    `referenced_runtime_assets` used to read only the action-level
+    `task_prompt_id`, which pruned `tg/bind-harness` and `tg/bind-columns` out of
+    the installed bundle. Dispatch then materialized prompt-less axis Tasks.
+    """
+    from ascendc_pilot.workflows import WORKFLOWS
+    from prune_runtime_context import referenced_runtime_assets
+
+    _agents, prompts = referenced_runtime_assets(WORKFLOWS)
+    declared: set[str] = set()
+    for meta in WORKFLOWS.values():
+        if not isinstance(meta, dict) or meta.get("alias_of"):
+            continue
+        for action in meta.get("actions") or []:
+            for axis in action.get("fanout_axes") or []:
+                tpid = str((axis or {}).get("task_prompt_id") or "").strip()
+                if tpid:
+                    declared.add(tpid)
+    assert declared, "expected at least one fanout axis prompt in the specs"
+    assert declared <= prompts, sorted(declared - prompts)
+
+
 def test_compose_and_prune_runtime_context(tmp_path: Path):
     from compose_runtime import compose_host
     from prune_runtime_context import prune
@@ -166,6 +190,9 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert not (generated / "skills" / "workflow-orchestration" / "SKILL.md").exists()
         assert (tg_prompts / "bind-init.md").is_file()
         assert (tg_prompts / "plan-owner.md").is_file()
+        # bind_init fans out per axis and resolves these at dispatch time.
+        assert (tg_prompts / "bind-harness.md").is_file()
+        assert (tg_prompts / "bind-columns.md").is_file()
         assert not (tg_prompts / "plan-fuse.md").exists()
         assert not (tg_prompts / "plan-scope.md").exists()
         assert not (tg_prompts / "parse-intent.md").exists()
@@ -365,6 +392,10 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     assert "Open" in pack
     assert "PROVEN_UNREACHABLE" in pack
     assert "Host 运行时契约" not in pack
+    assert "SOURCE_FALLBACK_UO_EMPTY" in pack
+    assert "确定性脚本" not in pack
+    assert "可以 Read / Glob / Grep 算子源码" not in pack
+    assert "遵守下列策略" in pack
     ids = listed_skill_ids(REPO)
     assert "uo-query" in ids and "bind-init" in ids
     assert CONTROL_PLANE_SKILL_IDS == ()
@@ -420,13 +451,14 @@ def test_policy_ids_follow_execution_mode() -> None:
     assert mine.get("output_mode") == "return_value"
     assert "pilot-control" not in mine["policy_ids"]
     assert "language" not in mine["policy_ids"]
+    assert "human-voice" not in mine["policy_ids"]
 
     confirm = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_approve")
     assert confirm["execution_mode"] == "primary_interactive"
-    assert confirm["policy_ids"] == ["pilot-control", "language"]
+    assert confirm["policy_ids"] == ["pilot-control", "human-voice"]
     review = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_review")
     assert review["execution_mode"] == "primary_review"
-    assert review["policy_ids"] == ["pilot-control", "language"]
+    assert review["policy_ids"] == ["pilot-control", "human-voice"]
 
 
 def test_action_skill_md_does_not_cross_link_other_skill_refs() -> None:

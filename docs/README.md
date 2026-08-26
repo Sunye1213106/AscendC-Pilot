@@ -16,6 +16,7 @@
 - [安装](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)（自然语言 `pilot_run(auto)` 与 `/uo-*` `/tg-*` `/ce-*` 双路径）
 - [Host 工具使用](getting-started/acp-tools.md)（`pilot_run` / 插件 `pilot_cli`）
+- [Cursor MCP 接入](getting-started/cursor-mcp.md)（`ascendc-pilot` server 与 `uo_query` 工具）
 - [PR → 定向 cases 手工 E2E](test/golden-e2e-pr-cases.md)（真仓清单，不进默认 pytest）
 - [UO - Understand Operator](modules/uo.md)
 - [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
@@ -44,6 +45,7 @@
 - [扩展指南](development/extending.md)
 - [测试与评估](development/testing.md)
 - [文档维护](development/documentation.md)
+- [UO 提取与查询优化交接](development/uo-optimization-handover.md)（WIP：产物 -27.8%、路径口径统一；Phase 4 留有未查清的回退）
 - 抽检记录（WIP，不当产品质量入口）：[docs/test/](test/README.md)
 
 ## Reference
@@ -53,6 +55,7 @@
 - [CLI Reference](reference/cli.generated.md)（清单；用法见 [ACP 工具使用](getting-started/acp-tools.md)）
 - [产物布局 Reference](reference/artifact-layout.generated.md)
 - [仓库结构](reference/repository-layout.md)
+- [Domain contracts 溯源索引](reference/domain-contracts.md)
 - [术语表](reference/glossary.md)
 
 历史执行记录和 case study 位于 [history/](history/README.md)，只用于溯源，不是当前架构权威。

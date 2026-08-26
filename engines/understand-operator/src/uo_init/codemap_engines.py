@@ -71,59 +71,65 @@ def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     User chooses the analysis target. Clang decides the authoritative source
     closure. There is no human file-list confirmation and no decision=yes bypass.
     """
-    ctx = dict(payload or {})
-    out = _chain(
-        project_root,
-        ctx,
-        [
-            ("prepare_layout", pe.prepare_layout),
-            ("scope_scan", pe.scope_scan),
-            ("scope_validate", pe.scope_validate),
-        ],
-        engine="prepare",
-    )
-    if out.get("ok"):
-        try:
-            from uo_init.op_spec import discover
-            from uo_init.platform_ini import kernel_macros_for_arch
+    from uo_init.perf import stage
 
-            import yaml
+    with stage("prepare"):
+        ctx = dict(payload or {})
+        out = _chain(
+            project_root,
+            ctx,
+            [
+                ("prepare_layout", pe.prepare_layout),
+                ("scope_scan", pe.scope_scan),
+                ("scope_validate", pe.scope_validate),
+            ],
+            engine="prepare",
+        )
+        if out.get("ok"):
+            try:
+                from uo_init.op_spec import discover
+                from uo_init.platform_ini import kernel_macros_for_arch
 
-            root = Path(project_root).expanduser().resolve()
-            spec = discover(root, arch_dir=ctx.get("arch_dir") or ctx.get("architecture"))
-            arch = require_architecture(spec.arch_dir)
-            uo = pe._uo_root(root, arch=arch)
-            probe = uo / "cache" / "cann_9201_overlay" / "probe.yaml"
-            cann_9201 = {}
-            if probe.is_file():
-                loaded = yaml.safe_load(probe.read_text(encoding="utf-8")) or {}
-                if isinstance(loaded, dict):
-                    cann_9201 = loaded
-            payload = {
-                "schema": "build-variant/v1",
-                "architecture": arch,
-                "name": arch,
-                "source": "uo_init.codemap_engines.prepare",
-                "kernel_macros": kernel_macros_for_arch(arch),
-            }
-            if cann_9201:
-                payload["cann_9201"] = cann_9201
-            pe._dump(uo / "ir" / "build_variant.yaml", payload)
-        except Exception as exc:  # noqa: BLE001
-            out["build_variant_warning"] = str(exc)[:200]
+                import yaml
+
+                root = Path(project_root).expanduser().resolve()
+                spec = discover(root, arch_dir=ctx.get("arch_dir") or ctx.get("architecture"))
+                arch = require_architecture(spec.arch_dir)
+                uo = pe._uo_root(root, arch=arch)
+                probe = uo / "cache" / "cann_9201_overlay" / "probe.yaml"
+                cann_9201 = {}
+                if probe.is_file():
+                    loaded = yaml.safe_load(probe.read_text(encoding="utf-8")) or {}
+                    if isinstance(loaded, dict):
+                        cann_9201 = loaded
+                payload = {
+                    "schema": "build-variant/v1",
+                    "architecture": arch,
+                    "name": arch,
+                    "source": "uo_init.codemap_engines.prepare",
+                    "kernel_macros": kernel_macros_for_arch(arch),
+                }
+                if cann_9201:
+                    payload["cann_9201"] = cann_9201
+                pe._dump(uo / "ir" / "build_variant.yaml", payload)
+            except Exception as exc:  # noqa: BLE001
+                out["build_variant_warning"] = str(exc)[:200]
     return out
 
 
 def extract(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run deterministic Clang/frontend extraction."""
-    return _chain(
-        project_root,
-        payload,
-        [
-            ("extract_host", pe.extract_host),
-        ],
-        engine="extract",
-    )
+    from uo_init.perf import stage
+
+    with stage("extract"):
+        return _chain(
+            project_root,
+            payload,
+            [
+                ("extract_host", pe.extract_host),
+            ],
+            engine="extract",
+        )
 
 
 def _compiler_inputs(
@@ -176,26 +182,28 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     LLM-resolved into canonical ``.uo``.
     """
     from uo_init.build import compile_codemap, store_compile_cache
+    from uo_init.perf import stage
     from uo_init.progress import step
 
     ctx = pe._ctx(payload)
     root = Path(project_root).expanduser().resolve()
     try:
-        with step("analyze.resolve_inputs"):
-            op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
-        with step("analyze.compile_codemap"):
-            result = compile_codemap(
-                op_name=op_name,
-                architecture=arch,
-                op_root=root,
-                host_ir=host_ir,
-                kernel_ir=kernel_ir,
-                declared=declared,
-                key_fields=[],
-                commit=False,
-            )
-        with step("analyze.store_cache"):
-            store_compile_cache(root, op_name, arch, result)
+        with stage("analyze"):
+            with step("analyze.resolve_inputs"):
+                op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
+            with step("analyze.compile_codemap"):
+                result = compile_codemap(
+                    op_name=op_name,
+                    architecture=arch,
+                    op_root=root,
+                    host_ir=host_ir,
+                    kernel_ir=kernel_ir,
+                    declared=declared,
+                    key_fields=[],
+                    commit=False,
+                )
+            with step("analyze.store_cache"):
+                store_compile_cache(root, op_name, arch, result)
     except Exception as exc:  # noqa: BLE001
         try:
             from uo_init.runtime import end_session
@@ -261,11 +269,12 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     incomplete CodeMap (``semantic_completeness=partial``). Hard extraction
     failures still fail this stage.
     """
+    from uo_init.perf import stage
     from uo_init.progress import step
 
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
-    with step("commit.write_uo_product"):
+    with stage("commit"), step("commit.write_uo_product"):
         product = _commit_uo_product(root, ctx)
     if not product.get("ok"):
         try:
@@ -298,8 +307,14 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     fail it. Quality (``checks/quality.yaml``) grades whether the CodeMap can
     replace grep for structural locate questions (ready / usable / not_ready).
     """
+    import time
+
+    from uo_init.perf import record_stage
     from uo_init.progress import step
 
+    # verify emits performance.yaml itself, so its own duration is stamped just
+    # before the dump rather than by the stage() context manager.
+    verify_t0 = time.perf_counter()
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
     try:
@@ -354,6 +369,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             try:
                 from uo_init.perf import dump_yaml
 
+                record_stage("verify", time.perf_counter() - verify_t0)
                 perf_path = uo / "checks" / "performance.yaml"
                 dump_yaml(
                     perf_path,

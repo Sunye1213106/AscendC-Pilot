@@ -139,4 +139,4 @@ acp uo-query --project <op> DataCopy
 acp uo-query --project <op> <QUEUE>
 ```
 
-泛化抽检过线仍是：**抽到的每个算子 verify pass，且能 locate Key / Field / Kernel / Input / `OP_CHECK`。** 当前并集 **49** 个不重复算子，见 [uo-init-generalization.md](uo-init-generalization.md)。
+泛化抽检过线仍是：**抽到的每个算子 verify pass，且能 locate Key / Field / Kernel / Input / `OP_CHECK`。** 当前泛化抽检 **70** 个算子，见 [uo-init-70-generalization.md](uo-init-70-generalization.md)。

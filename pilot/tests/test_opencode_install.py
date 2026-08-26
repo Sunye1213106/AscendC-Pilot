@@ -84,7 +84,11 @@ def test_install_manifest_does_not_claim_user_agents(tmp_path: Path) -> None:
 
 def test_plugin_resolve_acp_uses_opencode_home() -> None:
     plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
-    driver = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    # pilot-driver.ts is a thin facade now; the import lives in the core module.
+    driver = "".join(
+        (ROOT / "opencode-plugin" / name).read_text(encoding="utf-8")
+        for name in ("pilot-driver.ts", "pilot-driver-core.ts")
+    )
     helper = (ROOT / "opencode-plugin" / "opencode-home.mjs").read_text(encoding="utf-8")
     assert "function openCodeHome()" in plugin
     assert "XDG_CONFIG_HOME" in plugin

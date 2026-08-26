@@ -37,6 +37,12 @@ def _merged_action(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any
     return out
 
 
+def _action_task_prompt_ids(action: dict[str, Any]) -> list[str]:
+    from ascendc_pilot.workflows.consistency import action_task_prompt_ids
+
+    return action_task_prompt_ids(action)
+
+
 def _action_variants(meta: dict[str, Any]) -> Iterable[dict[str, Any]]:
     base = {
         str(row.get("id") or ""): row
@@ -75,8 +81,10 @@ def referenced_runtime_assets(workflows: dict[str, dict[str, Any]]) -> tuple[set
             agent_id = str(action.get("agent_id") or "").strip()
             if agent_id:
                 agents.add(agent_id)
-            prompt_id = str(action.get("task_prompt_id") or "").strip()
-            if prompt_id:
+            # Fanout axes carry their own task_prompt_id, resolved per-axis at
+            # dispatch. Reading only the action-level id pruned tg/bind-harness
+            # and tg/bind-columns out of the installed bundle.
+            for prompt_id in _action_task_prompt_ids(action):
                 prompts.add(prompt_id)
     return agents, prompts
 

@@ -13,15 +13,20 @@ DEFAULT_POLICY_IDS: list[str] = [
     "semantic-grounding",
     "output-quality",
 ]
+# Producers are the windows that actually read code, so they need the lookup
+# routing (``code-access``) alongside the priority order (``source-authority``)
+# and the verification bar (``evidence``). Without it a producer holds a rule
+# about which evidence wins and none about how to go find it.
 DEFAULT_PRODUCER_POLICY_IDS: list[str] = [
     "source-authority",
+    "code-access",
     "evidence",
     "semantic-grounding",
     "output-quality",
 ]
 DEFAULT_PRIMARY_POLICY_IDS: list[str] = [
     "pilot-control",
-    "language",
+    "human-voice",
 ]
 
 # Optional global capabilities merged into every action (prepended, de-duped).
@@ -100,11 +105,15 @@ def _act(
     method_ref: str | None = None,
     refs: list[str] | None = None,
     knowledge_refs: list[str] | None = None,
+    delegate_actor_ids: list[str] | None = None,
     schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
 
     ``actors`` is derived from ``agent_id`` for authorize / spawn checks.
+    ``delegate_actor_ids`` names the windows a ``primary_review`` controller
+    spawns under its own lease, so the read ACL follows the work instead of
+    locking the spawned window out of its own session pack.
     Workflow Spec is the sole editable authority for identity fields.
     ``human_interaction`` is ``none`` | ``confirm`` | ``approve``.
     ``pre_gates`` run before the actor and contribute DAG consumes.
@@ -207,6 +216,10 @@ def _act(
         row["refs"] = [str(r).strip() for r in refs if str(r).strip()]
     if knowledge_refs:
         row["knowledge_refs"] = [str(r).strip() for r in knowledge_refs if str(r).strip()]
+    if delegate_actor_ids:
+        row["delegate_actor_ids"] = [
+            str(a).strip().lower() for a in delegate_actor_ids if str(a).strip()
+        ]
     return row
 
 

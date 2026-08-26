@@ -15,6 +15,8 @@ PLAN_INVALID = "PLAN_INVALID"
 GUARD_TARGET_INCONSISTENT = "GUARD_TARGET_INCONSISTENT"
 PLAN_PROSE_CONTRACT_DRIFT = "PLAN_PROSE_CONTRACT_DRIFT"
 PRIMARY_BEHAVIOR_UNCOVERED = "PRIMARY_BEHAVIOR_UNCOVERED"
+REPLAY_NAMESPACE_MISUSE = "REPLAY_NAMESPACE_MISUSE"
+TARGET_NOT_CHANGED = "TARGET_NOT_CHANGED"
 
 _UNTESTABLE_KINDS = frozenset({"opaque", "control_gap", "harness_gap"})
 _DERIVED_OR_ENV_KINDS = frozenset({"derived", "constraint", "environment", "env", "fact"})
@@ -650,9 +652,152 @@ def _observe_vocab_error(field: str, *, owner: str, observe_fields: set[str] | N
     allowed = {str(x).strip() for x in observe_fields if str(x).strip()} | set(_REPLAY_ENVELOPE)
     if symbol in allowed:
         return []
+    hint = _nearest_replay_names(symbol, allowed)
+    tail = f"; 词表里最接近的是 {hint}" if hint else ""
     return [
         f"{OBSERVATION_GAP}: {owner}: replay field {name!r} is not a known Replay/TilingData field"
+        f"{tail}"
     ]
+
+
+def _nearest_replay_names(symbol: str, allowed: set[str], *, limit: int = 3) -> str:
+    """Legal names sharing a case-insensitive fragment with the rejected one."""
+    needle = symbol.lower()
+    scored: list[tuple[int, str]] = []
+    for cand in allowed:
+        low = cand.lower()
+        if low == needle:
+            continue
+        overlap = 0
+        for size in range(min(len(needle), len(low)), 3, -1):
+            if any(needle[i : i + size] in low for i in range(len(needle) - size + 1)):
+                overlap = size
+                break
+        if overlap:
+            scored.append((-overlap, cand))
+    if not scored:
+        return ""
+    scored.sort()
+    return ", ".join(name for _, name in scored[:limit])
+
+
+def _packet_catalog(packet: dict[str, Any] | None) -> dict[str, Any]:
+    doc = packet if isinstance(packet, dict) else {}
+    cat = doc.get("observation_catalog")
+    return cat if isinstance(cat, dict) else {}
+
+
+def validate_against_packet(
+    fence: dict[str, Any],
+    packet: dict[str, Any] | None,
+) -> list[str]:
+    """Plan claims checked against what the scope packet actually declared.
+
+    Two failure modes are cheap to catch here and expensive later: naming a
+    dispatch entity under ``replay.`` (it has no TilingData leaf to decode), and
+    pointing a pr_regression Target at an assignment the pin never touched.
+    """
+    doc = packet if isinstance(packet, dict) else {}
+    if not doc:
+        return []
+    catalog = _packet_catalog(doc)
+    errors: list[str] = []
+
+    forbidden = {}
+    for row in catalog.get("replay_forbidden") or []:
+        if isinstance(row, dict) and str(row.get("name") or "").strip():
+            forbidden[str(row["name"]).strip()] = row
+    if forbidden:
+        for owner, field in _all_replay_refs(fence):
+            symbol = replay_symbol(field)
+            if symbol and symbol in forbidden:
+                row = forbidden[symbol]
+                errors.append(
+                    f"{REPLAY_NAMESPACE_MISUSE}: {owner}: {symbol!r} is a "
+                    f"{row.get('kind') or 'dispatch'} entity, not a TilingData leaf; "
+                    "use evidence kind dispatch_map or observe the writing helper's probe.*"
+                )
+
+    candidates = doc.get("behavior_candidates")
+    if isinstance(candidates, list) and candidates:
+        changed: set[str] = set()
+        for row in candidates:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("symbol") or "").strip()
+            if name:
+                changed.add(name)
+        kind = str(
+            (doc.get("change_contract") or {}).get("kind")
+            if isinstance(doc.get("change_contract"), dict)
+            else ""
+        ).strip()
+        if kind == "pr_regression":
+            for row in fence.get("targets") or []:
+                if not isinstance(row, dict):
+                    continue
+                tid = str(row.get("id") or "").strip() or "target"
+                names = {
+                    replay_symbol(f)
+                    for _owner, f in _target_replay_refs(tid, row)
+                }
+                names = {n for n in names if n}
+                if not names:
+                    continue
+                if not (names & changed):
+                    errors.append(
+                        f"{TARGET_NOT_CHANGED}: {tid}: observes {sorted(names)} but the pin's "
+                        "behavior_candidates are "
+                        f"{sorted(changed)[:8]}; a pr_regression Target must point at an "
+                        "assignment this change introduced or rewired"
+                    )
+    return errors
+
+
+def _target_replay_refs(tid: str, row: dict[str, Any]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+    field = str(evidence.get("field") or "").strip()
+    if field:
+        out.append((tid, field))
+    pred = evidence.get("predicate") if evidence.get("predicate") is not None else evidence.get("expr")
+    for item in predicate_fields(pred):
+        out.append((tid, str(item)))
+    return out
+
+
+def _all_replay_refs(fence: dict[str, Any]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for row in fence.get("targets") or []:
+        if isinstance(row, dict):
+            out.extend(_target_replay_refs(str(row.get("id") or "target"), row))
+    for row in fence.get("dimensions") or []:
+        if not isinstance(row, dict):
+            continue
+        did = str(row.get("id") or "dimension")
+        classifier = row.get("classifier") if isinstance(row.get("classifier"), dict) else {}
+        for raw in classifier.get("requires") or []:
+            out.append((f"{did}.classifier", str(raw)))
+        for part in row.get("partitions") or []:
+            if not isinstance(part, dict):
+                continue
+            pid = str(part.get("id") or "partition")
+            for item in predicate_fields(part.get("predicate")):
+                out.append((f"{did}.{pid}", str(item)))
+    for row in fence.get("guards") or []:
+        if not isinstance(row, dict):
+            continue
+        gid = str(row.get("id") or "guard")
+        for item in predicate_fields(row.get("predicate")):
+            out.append((gid, str(item)))
+    for row in fence.get("constraints") or []:
+        if not isinstance(row, dict):
+            continue
+        cid = str(row.get("id") or "constraint")
+        pred = row.get("predicate") if row.get("predicate") is not None else row.get("expr")
+        for item in predicate_fields(pred):
+            out.append((cid, str(item)))
+    return out
 
 
 def obligation_identity(row: dict[str, Any]) -> str:

@@ -21,7 +21,7 @@ def _command_body(workflow_id: str) -> str:
 
 缺的 init（`.uo`，若还要出用例则含 `tg/init.yaml`）先 `pilot_run` 补齐，再调查。
 一路且短：主控直接 `pilot_cli` `uo-query`。多路或会撑窗口：同一轮 `Task(agent=uo-query)`，综合只在主控。结论冲突再派一路只核对冲突点。
-形态见 code-access 不变量。拆路见 intent-reasoning。
+禁止 `--mode`（见 code-access）。形态见 `skills/uo-query/SKILL.md`。拆路见 pilot-control。
 """
     if workflow_id == "uo-init":
         return """对当前算子项目运行 AscendC-Pilot 工作流 `uo-init`。

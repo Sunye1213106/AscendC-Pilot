@@ -253,6 +253,7 @@ def _build(
                 output_contract_id="tg-plan-ingest-v1",
                 output_mode="return_value",
                 allowed_write_paths=[],
+                delegate_actor_ids=["tg-analyst"],
                 produces=[],
             ),
             _act(

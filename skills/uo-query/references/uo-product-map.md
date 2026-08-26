@@ -2,7 +2,7 @@
 
 短地图：认清权威 → 调用 Cursor MCP `uo_query`（或 OpenCode `pilot_cli` `uo-query`）→ 查询完成后立即作答。简单查询直接调用；复杂查询同一轮委派。禁止 `pilot_run`。怎么查、Claim 分层、空结果纪律见 `skills/uo-query/SKILL.md`。
 
-同一查询目标可沿图继续调用（跟卡片 `next`）。是否并行委派见 `pilot/policies/invariants/intent-reasoning.md`。
+同一查询目标可沿图继续调用（跟卡片 `next`）。是否并行委派见 `pilot/policies/pilot-control/POLICY.md`。
 
 ## 权威分层
 

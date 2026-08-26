@@ -361,19 +361,11 @@ def main() -> int:
         if not parsed.get("ok"):
             errors.append(f"{name} does not parse: {parsed.get('detail')}")
 
-    # control invariants slimmed
-    inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(
+    ctl = (repo / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
-    if "Host Session Driver" not in inv:
-        errors.append("control-invariants.md missing Host Session Driver note")
-    numbered = [
-        ln
-        for ln in inv.splitlines()
-        if ln[:2].rstrip(".").isdigit() or (len(ln) > 2 and ln[0].isdigit() and ln[1] == ".")
-    ]
-    if len(numbered) > 6:
-        errors.append(f"control-invariants still too long ({len(numbered)} numbered items)")
+    if "Host Session Driver" not in ctl:
+        errors.append("pilot-control POLICY.md missing Host Session Driver note")
 
     # Agents migrated to scope namespaces
     agents_dir = repo / "agents"

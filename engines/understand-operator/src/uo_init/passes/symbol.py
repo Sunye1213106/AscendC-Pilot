@@ -22,14 +22,31 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         )
     # Surface INPUT entities from context.
     for name in ctx.get("inputs") or ():
-        codemap.upsert(EntityKind.INPUT, str(name), attrs={"layer": "api"})
+        codemap.upsert(
+            EntityKind.INPUT,
+            str(name),
+            attrs={"layer": "api", "provenance": "source_op_def"},
+        )
     for name in ctx.get("outputs") or ():
-        codemap.upsert(EntityKind.OUTPUT, str(name), attrs={"layer": "api"})
+        codemap.upsert(
+            EntityKind.OUTPUT,
+            str(name),
+            attrs={"layer": "api", "provenance": "source_op_def"},
+        )
     # Platform / arch node.
     if codemap.architecture:
-        arch = codemap.upsert(EntityKind.ARCH, codemap.architecture)
+        arch = codemap.upsert(
+            EntityKind.ARCH,
+            codemap.architecture,
+            attrs={"provenance": "source_arch_file"},
+        )
         for fn in codemap.by_kind(EntityKind.FUNCTION):
             if fn.attrs.get("reachable"):
-                codemap.link(RelationKind.ACTIVE_UNDER, fn.id, arch.id)
+                codemap.link(
+                    RelationKind.ACTIVE_UNDER,
+                    fn.id,
+                    arch.id,
+                    attrs={"provenance": "source_arch_file"},
+                )
     codemap.meta["core_codemap_pass"] = "v1"
     return codemap

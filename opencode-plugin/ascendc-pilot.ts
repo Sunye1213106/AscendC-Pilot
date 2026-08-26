@@ -123,7 +123,7 @@ const PILOT_CLI_HELP_USAGE_CARD = [
   "若没有 pilot_run：请用户完全退出 OpenCode 并重跑 refresh-opencode.ps1。",
   "",
   "插件 `pilot_cli` 示例：",
-  "  uo-query --project <算子绝对路径> [--architecture <arch>]  # 形态见 code-access 不变量",
+  "  uo-query --project <算子绝对路径> [--architecture <arch>]  # 形态见 uo-query skill",
   "  uo-query --project <算子绝对路径> --status-only",
   "  scan-architectures --project <算子绝对路径>",
   "  status --project <算子绝对路径>",
@@ -1782,7 +1782,7 @@ function createPilotRunStub(err: unknown): Record<string, unknown> {
         workflow: { type: "string", description: "工作流 id（uo-init、tg-init、ce-review 等）。禁止 uo-query。" },
         project: { type: "string", description: "算子包绝对路径" },
         architecture: { type: "string", description: "第一轮 auto/clone 省略；uo-init/uo-update 必填" },
-        intent: { type: "string", description: "第一轮 auto：用户目标含 PR URL。bind_review 之后：PASS 或 REWORK。" },
+        intent: { type: "string", description: "本回合载荷，不是读懂用户句子。auto（或缺算子目录要 clone）：用户目标含 PR URL。bind_review 后：PASS 或 REWORK bind / REWORK harness,bind。tg-plan ingest：YAML 全文。其它格省略。不要塞查询卡片。" },
         force_new: { type: "boolean", description: "仅当用户明确要求删除重开时擦掉重开" },
         test_script_root: {
           type: "string",
@@ -1879,7 +1879,7 @@ function createPilotCliTool(): {
         return {
           title: `pilot_cli ${head}`,
           output:
-            `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询形态见 code-access 不变量。\n` +
+            `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询形态见 uo-query skill。\n` +
             "允许：uo-query / pin-facts / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn / retry-after-environment-fix。\n" +
             "工作流用 Host `pilot_run`。不要 `uo impact` / `search` / `locate` / `explain-*`。",
           metadata: { ok: false, error: "USE_UO_QUERY" },

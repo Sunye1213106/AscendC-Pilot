@@ -322,7 +322,52 @@ def _api_maps(codemap: CodeMap, texts: list[tuple[Path, str]]) -> dict[str, Any]
         "input_by_position": {i: ent for i, ent in enumerate(tensor_inputs)},
         "attr_by_position": {i: ent for i, ent in enumerate(attrs)},
         "constants": constants,
+        "input_spellings": _InputSpellings(codemap),
     }
+
+
+class _InputSpellings:
+    """Every spelling of every API input, mapped to the inputs that answer to it.
+
+    `_input_by_name` rebuilt this over the whole INPUT set on each of its ~7k
+    calls, which is where 2.4M of the stage's 2.45M `normalize_symbol` calls came
+    from -- the cost was quadratic in inputs x lookups to answer a question whose
+    inputs do not change while one trace runs. Buckets keep API order, so a
+    lookup still resolves to the same input the scan would have found first.
+    """
+
+    __slots__ = ("_buckets",)
+
+    def __init__(self, codemap: CodeMap) -> None:
+        buckets: dict[str, list[tuple[int, Entity]]] = {}
+        for pos, ent in enumerate(codemap.by_kind(EntityKind.INPUT)):
+            for spelling in self._spellings(ent):
+                if spelling:
+                    buckets.setdefault(spelling, []).append((pos, ent))
+        self._buckets = buckets
+
+    @staticmethod
+    def _spellings(ent: Entity) -> set[str]:
+        out = {normalize_symbol(ent.name), short_symbol(ent.name)}
+        src = str(ent.attrs.get("source_name") or "")
+        if src:
+            out.add(normalize_symbol(src))
+            out.add(short_symbol(src))
+        return out
+
+    def first(self, *spellings: str) -> Entity | None:
+        """The earliest input in API order answering to any of `spellings`."""
+        best: tuple[int, Entity] | None = None
+        for spelling in spellings:
+            bucket = self._buckets.get(spelling)
+            if bucket and (best is None or bucket[0][0] < best[0]):
+                best = bucket[0]
+        return None if best is None else best[1]
+
+    def sole(self, spelling: str) -> Entity | None:
+        """The one input answering to `spelling`, or None if it is ambiguous."""
+        bucket = self._buckets.get(spelling) or ()
+        return bucket[0][1] if len(bucket) == 1 else None
 
 
 def _compile_symbols(codemap: CodeMap, texts: list[tuple[Path, str]]) -> set[str]:
@@ -477,7 +522,7 @@ def _resolve_symbol(
                     resolved_any = True
                     continue
 
-                api = _input_by_name(codemap, ref_norm)
+                api = _input_by_name(codemap, ref_norm, api_maps["input_spellings"])
                 if api is not None:
                     codemap.link(
                         RelationKind.DERIVES,
@@ -705,34 +750,23 @@ def _api_from_index(raw: str, kind: str, api_maps: dict[str, Any]) -> Entity | N
     return table.get(int(position))
 
 
-def _input_by_name(codemap: CodeMap, name: str) -> Entity | None:
+def _input_by_name(codemap: CodeMap, name: str, spellings: "_InputSpellings") -> Entity | None:
     needle = normalize_symbol(name)
     if not needle:
         return None
     hits = codemap.by_name(name, kind=EntityKind.INPUT) or codemap.by_name(short_symbol(name), kind=EntityKind.INPUT)
     if hits:
         return hits[0]
-    inputs = list(codemap.by_kind(EntityKind.INPUT))
-    for ent in inputs:
-        spellings = {normalize_symbol(ent.name), short_symbol(ent.name)}
-        src = str(ent.attrs.get("source_name") or "")
-        if src:
-            spellings.add(normalize_symbol(src))
-            spellings.add(short_symbol(src))
-        if needle in spellings or short_symbol(needle) in spellings:
-            return ent
+    found = spellings.first(needle, short_symbol(needle))
+    if found is not None:
+        return found
     # Member paths such as ``ifaContext.query.desc`` still name the API tensor.
     for part in needle.replace("::", ".").split("."):
         if not part:
             continue
-        part_hits = [
-            ent
-            for ent in inputs
-            if part in {normalize_symbol(ent.name), short_symbol(ent.name)}
-            or part in {normalize_symbol(str(ent.attrs.get("source_name") or "")), short_symbol(str(ent.attrs.get("source_name") or ""))}
-        ]
-        if len(part_hits) == 1:
-            return part_hits[0]
+        sole = spellings.sole(part)
+        if sole is not None:
+            return sole
     return None
 
 

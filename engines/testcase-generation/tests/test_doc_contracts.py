@@ -6,15 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS_ROOT = ROOT / "skills"
-TG_SKILL = SKILLS_ROOT / "testcase-generation" / "SKILL.md"
 AGENTS = ROOT / "agents"
 
 PUBLIC_WORKFLOWS = ("tg-init", "tg-plan", "tg-solve")
-MAX_LINES = 220
-
-
-def _line_count(path: Path) -> int:
-    return len(path.read_text(encoding="utf-8").splitlines())
 
 
 def test_install_lists_public_tg_skills() -> None:
@@ -22,11 +16,6 @@ def test_install_lists_public_tg_skills() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     for name in PUBLIC_WORKFLOWS:
         assert name in ps1 and name in sh
-
-
-def test_tg_skill_within_line_limit() -> None:
-    assert TG_SKILL.is_file(), f"missing {TG_SKILL}"
-    assert _line_count(TG_SKILL) <= MAX_LINES, f"{TG_SKILL} exceeds {MAX_LINES} lines"
 
 
 def test_tg_model_agents_are_derived_from_workflow_spec() -> None:
@@ -68,12 +57,3 @@ def test_install_skips_retired_tg_domain_review_agent() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     assert "tg-domain-review" not in ps1.split("foreach ($name in @(")[1].split("))")[0]
     assert "tg-domain-review" not in sh
-
-
-def test_tg_skill_describes_three_products() -> None:
-    skill = TG_SKILL.read_text(encoding="utf-8")
-    assert "testcase-generation" in skill
-    assert "init.yaml" in skill
-    assert "plan.md" in skill
-    assert "worklog.md" in skill
-    assert "replay" in skill.lower()

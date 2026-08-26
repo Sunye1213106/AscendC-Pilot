@@ -17,6 +17,8 @@ from uo_init.ir.evidence import (
     SOURCE_DSL,
     TRUST_AUTHORITATIVE,
     TRUST_DERIVED,
+    is_classified_source,
+    is_classified_trust,
     mint_payload,
 )
 
@@ -54,10 +56,23 @@ def _add_role(ent: Entity, role: str, *, provenance: str, source: str, trust: st
     ent.attrs["symbol_roles"] = roles
     payload = mint_payload(provenance=provenance, source=source, trust=trust)
     for key in ("evidence_source", "semantic_state", "trust", "build_context_id"):
-        if key in payload and key not in ent.attrs:
+        if key not in payload:
+            continue
+        # `upsert` already left an unclassified trust/source behind, so keying
+        # on mere presence would drop every classification this pass makes.
+        current = str(ent.attrs.get(key) or "")
+        if key == "trust" and not is_classified_trust(current):
+            ent.attrs[key] = payload[key]
+        elif key == "evidence_source" and not is_classified_source(current):
+            ent.attrs[key] = payload[key]
+        elif key not in ent.attrs:
             ent.attrs[key] = payload[key]
     if provenance and not ent.attrs.get("role_provenance"):
         ent.attrs["role_provenance"] = provenance
+    # Keep provenance and trust telling the same story: a node this pass is the
+    # first to classify would otherwise carry a trust with nothing to justify it.
+    if provenance and not str(ent.attrs.get("provenance") or ""):
+        ent.attrs["provenance"] = provenance
 
 
 def _upsert_fn(codemap: CodeMap, name: str, *, file: str = "", line: int = 0, layer: str) -> Entity:
@@ -218,7 +233,9 @@ def _project_kernel(codemap: CodeMap, kernel_ir: Any) -> None:
                 root,
                 ROLE_KERNEL_SEMANTIC_ROOT,
                 provenance="symbol_role_kernel_callee",
-                source=SOURCE_CLANG_AST,
+                # Projected from a called-from relation, not read off the decl,
+                # which is what this label already says it is.
+                source=SOURCE_DSL,
                 trust=TRUST_DERIVED,
             )
 

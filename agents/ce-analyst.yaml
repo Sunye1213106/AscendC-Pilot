@@ -5,8 +5,9 @@ role: producer
 mode: subagent
 description: >
   需求 grill 并写出或修订命名计划 markdown、会话交接的 producer。
-  写 `runs/**/actions/plan_draft/**` 与 `runs/**/actions/plan_revise/**` 草稿；
-  禁止写 canonical `ce/plan/**` 与 CE yaml。
+  直接写 canonical `ce/plan/{slug}_plan.md`（本 agent 就是该产物的 producer，
+  draft 由 `human_confirm` 把关、revise 由确定性 `plan_revise_check` 校验）；
+  禁止写 CE yaml。
 max_skill_ids: &skills [ce-plan-draft, session-handoff, uo-query]
 skill_ids: *skills
 read_scopes:
@@ -22,14 +23,15 @@ read_scopes:
 write_scopes:
 - pilot:runs/**/actions/plan_draft/**
 - pilot:runs/**/actions/plan_revise/**
+- pilot:ce/plan/**
 - pilot:session_handoff.md
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
-- write_canonical_ce_plan
+- write_canonical_ce_yaml
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
-- write_canonical_ce_plan
+- write_canonical_ce_yaml

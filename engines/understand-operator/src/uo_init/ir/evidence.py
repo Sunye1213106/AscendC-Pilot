@@ -77,6 +77,24 @@ ADVISORY_PROVENANCE = frozenset(
         "lexical_regex",
         "lexical_source_calls",
         "lexical_free_catalog",
+        # value-overlap similarity between two compile vars in one file
+        "source_compile_occupancy",
+        # regex accessors, and when none match it links every tensor input
+        "source_host_tiling_input",
+        # unresolved by construction (the pass writes status="partial")
+        "source_host_unresolved_dependency",
+        # re.search(rf"\b{alias}\b", snippet)
+        "source_host_alias",
+        # GLOBAL_KERNEL_RE plus an include-basename set intersection
+        "source_tpl_header_selects",
+        # regex accessor spelling mapped onto the op-def API index
+        "source_host_api_accessor",
+        "source_host_api_index",
+        # OP_CHECK_IF regex over masked host source, bound by name match
+        "source_host_check",
+        # which kernel a kernel-IR branch sits in is not in the IR; this links
+        # every branch to every verified kernel
+        "source_kernel_branch_scope",
     }
 )
 
@@ -140,11 +158,119 @@ def build_context_id(variant: Mapping[str, Any] | None) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+# Exact pass labels that substring matching misses. A label is a pass identity,
+# not a comment: once it is on this table the fact is classified, not unknown.
+_CLANG_PROVENANCE = frozenset(
+    {
+        "clang_ast",
+        "clang_walk",
+        "clang_walk_cache",
+        "clang_host_write",
+        "clang_field_decl",
+        "clang_kernel_abi",
+        "clang_tu",
+        "clang_include",
+        "kernel_root_trace",
+        "source_kernel_definition",
+        "source_kernel_definition_v2",
+        "source_kernel_signature",
+        "source_kernel_signature_verified",
+        "source_kernel_field_if",
+        "source_kernel_call_boundary",
+        "source_kernel_macro_definition_v2",
+        "source_kernel_template_verified",
+        "source_runtime_member",
+        "source_runtime_method",
+        "source_runtime_type",
+        "source_op_def",
+        "source_reg_op",
+        "source_scope",
+        "source_macro_invocation",
+        # roles projected onto a clang FunctionDecl / CXXRecordDecl
+        "symbol_role_host_sink",
+        "symbol_role_opdef_base",
+        "symbol_role_kernel_walk",
+    }
+)
+_DSL_PROVENANCE = frozenset(
+    {
+        # entity file path sits under the arch directory: layout, not guesswork
+        "source_arch_file",
+        "build_variant",
+        # template arg name matched against the declared TilingKey dims
+        "source_kernel_template_param_verified",
+        # a clang write joined to a clang read on an equal path spelling
+        "source_host_dataflow_join",
+        # clang-extracted return text decoded onto the four ge::graphStatus
+        # spellings; the site is a clang fact, the spelling is a fixed catalog
+        "host_graph_status",
+        # a synthesised catalog node (AscendC:: root, ge::graphStatus value)
+        # that reached facts hang off; deterministic, but not a source fact
+        "catalog_root",
+        # the branch's own declared dimension list, read off the kernel IR
+        "kernel_branch_dimension",
+        # constant mask decoded and intersected with declared key bit ranges
+        "source_tiling_key_mask",
+        "source_constexpr",
+        "source_enum",
+        "source_define",
+        "source_inventory",
+        "source_tpl_macro",
+        "source_tpl_args_sel",
+        "source_tpl_args_decl",
+        "source_tiling_data_member",
+        "source_host_compile_symbol",
+        "source_host_constant_expr",
+        "source_host_qualified_constant",
+        "source_host_runtime_context",
+        "host_platform_api",
+        "host_tiling_context_api",
+        "source_tilingdata_read",
+        # roles projected from a KERNEL entity or a called-from relation rather
+        # than read off the decl itself
+        "symbol_role_host_helper",
+        "symbol_role_kernel_entity",
+        "symbol_role_kernel_entry_fn",
+        "symbol_role_kernel_callee",
+    }
+)
+
+
+def is_classified_trust(trust: str) -> bool:
+    return str(trust or "") in {TRUST_AUTHORITATIVE, TRUST_DERIVED, TRUST_ADVISORY}
+
+
+def is_classified_source(source: str) -> bool:
+    return str(source or "") in {
+        SOURCE_CLANG_AST,
+        SOURCE_DSL,
+        SOURCE_LEXICAL,
+        SOURCE_HEURISTIC,
+    }
+
+
+def merge_trust(old: str, new: str) -> str:
+    """Min of classified trusts. ``legacy_unknown`` is unset, not a rank."""
+    old_c = is_classified_trust(old)
+    new_c = is_classified_trust(new)
+    if old_c and new_c:
+        return weaker_trust(old, new)
+    if new_c:
+        return new
+    if old_c:
+        return old
+    return TRUST_LEGACY_UNKNOWN
+
+
 def infer_from_provenance(provenance: str) -> tuple[str, str]:
-    """Map a pass label to (source, trust). Lexical markers beat clang."""
+    """Map a pass label to (source, trust). Exact labels beat substring markers."""
     prov = str(provenance or "").strip()
     if not prov:
         return SOURCE_UNSPECIFIED, TRUST_LEGACY_UNKNOWN
+    if prov in _CLANG_PROVENANCE:
+        return SOURCE_CLANG_AST, TRUST_AUTHORITATIVE
+    if prov in _DSL_PROVENANCE:
+        return SOURCE_DSL, TRUST_DERIVED
     lower = prov.lower()
     if prov in ADVISORY_PROVENANCE or any(mark in lower for mark in _ADVISORY_MARKERS):
         source = SOURCE_HEURISTIC if "heuristic" in lower else SOURCE_LEXICAL
@@ -154,6 +280,45 @@ def infer_from_provenance(provenance: str) -> tuple[str, str]:
     if any(mark in lower for mark in _DSL_MARKERS):
         return SOURCE_DSL, TRUST_DERIVED
     return SOURCE_UNSPECIFIED, TRUST_LEGACY_UNKNOWN
+
+
+def shrink_evidence_attrs(
+    attrs: Mapping[str, Any], *, build_context_id: str = ""
+) -> dict[str, Any]:
+    """Drop the evidence fields that are recoverable, for storage only.
+
+    `trust` and `evidence_source` are what `infer_from_provenance` says about
+    `provenance`; `build_context_id` is one value for the whole product and is
+    already in `meta`; `semantic_state` is `resolved` unless a pass says
+    otherwise. Storing all four on 58k rows cost 6.4 MB to say what the row
+    already implied. A row whose stored trust disagrees with its provenance
+    keeps the stored one, so a deliberate override still survives the round
+    trip. `grow_evidence_attrs` is the inverse.
+    """
+    out = dict(attrs)
+    if out.get("build_context_id") == build_context_id:
+        out.pop("build_context_id", None)
+    if out.get("semantic_state") == STATE_RESOLVED:
+        out.pop("semantic_state", None)
+    source, trust = infer_from_provenance(str(out.get("provenance") or ""))
+    if out.get("evidence_source") == source and out.get("trust") == trust:
+        out.pop("evidence_source", None)
+        out.pop("trust", None)
+    return out
+
+
+def grow_evidence_attrs(
+    attrs: dict[str, Any], *, build_context_id: str = ""
+) -> dict[str, Any]:
+    """Restore what `shrink_evidence_attrs` left out. In place."""
+    if "trust" not in attrs or "evidence_source" not in attrs:
+        source, trust = infer_from_provenance(str(attrs.get("provenance") or ""))
+        attrs.setdefault("evidence_source", source)
+        attrs.setdefault("trust", trust)
+    attrs.setdefault("semantic_state", STATE_RESOLVED)
+    if build_context_id:
+        attrs.setdefault("build_context_id", build_context_id)
+    return attrs
 
 
 def stamp_attrs(
@@ -167,7 +332,11 @@ def stamp_attrs(
     evidence_ids: Iterable[str] | None = None,
     infer: bool = True,
 ) -> dict[str, Any]:
-    """Fill missing evidence fields on one attr dict. Never upgrades trust."""
+    """Fill missing evidence fields on one attr dict.
+
+    Classified trust is never upgraded (advisory stays advisory).
+    ``legacy_unknown`` is treated as unset and is filled from provenance.
+    """
     out = dict(attrs or {})
     provenance = str(out.get("provenance") or "")
     inferred_source, inferred_trust = (
@@ -175,18 +344,19 @@ def stamp_attrs(
         if infer
         else (SOURCE_UNSPECIFIED, TRUST_LEGACY_UNKNOWN)
     )
+    existing_source = str(out.get("evidence_source") or "")
     if source in SOURCES:
         out["evidence_source"] = source
-    elif str(out.get("evidence_source") or "") not in SOURCES:
+    elif not is_classified_source(existing_source):
         out["evidence_source"] = inferred_source
     if semantic_state in STATES:
         out["semantic_state"] = semantic_state
     elif str(out.get("semantic_state") or "") not in STATES:
         out["semantic_state"] = STATE_RESOLVED
+    existing_trust = str(out.get("trust") or "")
     if trust in TRUSTS:
-        existing = str(out.get("trust") or "")
-        out["trust"] = weaker_trust(existing, trust) if existing in TRUSTS else trust
-    elif str(out.get("trust") or "") not in TRUSTS:
+        out["trust"] = merge_trust(existing_trust, trust)
+    elif not is_classified_trust(existing_trust):
         out["trust"] = inferred_trust
     ctx = str(build_context_id or out.get("build_context_id") or "")
     if ctx:
@@ -206,9 +376,29 @@ def merge_attrs(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str,
     incoming = dict(incoming)
     old_trust = str(out.get("trust") or TRUST_LEGACY_UNKNOWN)
     new_trust = str(incoming.get("trust") or old_trust)
+    old_source = str(out.get("evidence_source") or SOURCE_UNSPECIFIED)
+    new_source = str(incoming.get("evidence_source") or old_source)
     incoming.pop("trust", None)
     out.update(incoming)
-    out["trust"] = weaker_trust(old_trust, new_trust)
+    out["trust"] = merge_trust(old_trust, new_trust)
+    if is_classified_source(new_source) and not is_classified_source(old_source):
+        out["evidence_source"] = new_source
+    elif is_classified_source(old_source) and not is_classified_source(
+        str(out.get("evidence_source") or "")
+    ):
+        out["evidence_source"] = old_source
+    # The union may have brought in a provenance that neither side had a trust
+    # for. ``stamp_attrs`` treats legacy_unknown as unset and fills it from
+    # provenance; merging has to apply the same rule or a node first seen
+    # without provenance stays unclassified forever.
+    if not is_classified_trust(str(out.get("trust") or "")):
+        inferred_source, inferred_trust = infer_from_provenance(
+            str(out.get("provenance") or "")
+        )
+        if is_classified_trust(inferred_trust):
+            out["trust"] = inferred_trust
+            if not is_classified_source(str(out.get("evidence_source") or "")):
+                out["evidence_source"] = inferred_source
     return out
 
 

@@ -2,7 +2,7 @@
 
 Skill 是**执行步文档**：当前 Action 装载的那一份 `SKILL.md`。不是 slash 流水线，也不是五个封闭领域。
 
-编排在 Primary（`intent-reasoning.md`）：产物缺口、init 先于调查、调查拆路与 fanout 隔离上下文。Primary **不读** Skill。
+编排在 Primary（`pilot-control`）：产物缺口、init 先于调查、调查拆路与 fanout 隔离上下文。Primary **不读** Skill。
 
 | 种类 | 路径 | 说明 |
 |------|------|------|
@@ -10,7 +10,7 @@ Skill 是**执行步文档**：当前 Action 装载的那一份 `SKILL.md`。不
 | 叠加原语 | 同目录结构 | 如 `source-proof`。由执行步指针触发，不进天花板名单。 |
 | Reference | `skills/<id>/references/` | 仅当该步点名才装。目录、长表、域专文。 |
 | Workflow spec | `pilot/ascendc_pilot/workflows/*.py` | 阶段、lease、gate。Skill 不复述。 |
-| 主控路由 | `intent-reasoning.md` | 拆路、fanout、冲突核对。不在 Skill 树。 |
+| 主控路由 | `pilot/policies/pilot-control/POLICY.md` | 拆路、fanout、冲突核对。不在 Skill 树。 |
 
 Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 session `method.md`。缺文件则失败。确定性 Action 不挂 Skill。
 

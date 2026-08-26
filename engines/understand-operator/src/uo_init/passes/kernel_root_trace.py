@@ -92,6 +92,10 @@ REASON_CALL_UNRESOLVED = "NO_ASCENDC_ROOT_REACHED"
 REASON_EXTERNAL = "EXTERNAL_DECL_UNAVAILABLE"
 REASON_UNPAIRED_FLAG_SYNC = "UNPAIRED_FLAG_SYNC"
 
+#: This pass reads clang cursor rows, so its facts are authoritative. Nodes it
+#: mints from a lexical fallback instead say so with their own label.
+_PROV = "kernel_root_trace"
+
 _ROOT_KIND_BY_CATEGORY: dict[str, str] = {
     "memory_transfer": "MEMORY_API",
     "memory_init": "MEMORY_API",
@@ -578,6 +582,9 @@ def _ensure_ascendc_root(codemap: CodeMap, spelling: str, *, root_kind: str) -> 
             "root": f"AscendC::{spelling}",
             "catalog": "ascendc",
             "spelling": spelling,
+            # A catalog root is a node this pass synthesises to hang reached
+            # types off, not something read out of the operator's source.
+            "provenance": "catalog_root",
         },
         status="extracted",
         confidence=1.0,
@@ -2062,6 +2069,7 @@ def finalize_kernel_root_trace(
                 ),
                 "root": f"AscendC::{root_spell}" if reached else "",
                 "trace": [alias, _base_type_name(target)] + ([root_spell] if reached else []),
+                "provenance": _PROV,
             },
             file=str(row["file"]),
             line=int(row["line"]),
@@ -2086,7 +2094,11 @@ def finalize_kernel_root_trace(
                     EntityKind.TYPE,
                     tbase,
                     eid=mid,
-                    attrs={"role": "source_type", "root_status": "UNRESOLVED"},
+                    attrs={
+                        "role": "source_type",
+                        "root_status": "UNRESOLVED",
+                        "provenance": _PROV,
+                    },
                     file=str(row["file"]),
                     line=int(row["line"]),
                     status="partial",
@@ -2122,6 +2134,7 @@ def finalize_kernel_root_trace(
                     "root_kind": "",
                     "root": "",
                     "trace": [owner],
+                    "provenance": _PROV,
                 },
                 file=str(row["file"]),
                 line=int(row["line"]),
@@ -2165,6 +2178,7 @@ def finalize_kernel_root_trace(
                 "qualified_name": str(row.get("qualified_name") or ""),
                 "usr": str(row.get("usr") or ""),
                 "trace": [name],
+                "provenance": _PROV,
             },
             file=str(row.get("file") or ""),
             line=int(row.get("line") or 0),
@@ -2234,6 +2248,7 @@ def finalize_kernel_root_trace(
                             "root_status": "UNRESOLVED",
                             "type_name": _persist_type_name(resolved),
                             "spelling_base": resolved_base,
+                            "provenance": _PROV,
                         },
                         file=str(row["file"]),
                         line=int(row["line"]),
@@ -2301,7 +2316,12 @@ def finalize_kernel_root_trace(
                     EntityKind.TYPE,
                     base,
                     eid=mid,
-                    attrs={"role": "source_type", "root_status": "UNRESOLVED", "usr": str(row.get("base_usr") or "")},
+                    attrs={
+                        "role": "source_type",
+                        "root_status": "UNRESOLVED",
+                        "usr": str(row.get("base_usr") or ""),
+                        "provenance": _PROV,
+                    },
                     file=str(row.get("file") or ""),
                     line=int(row.get("line") or 0),
                     status="partial",
@@ -2680,6 +2700,7 @@ def finalize_kernel_root_trace(
             + ([root_spell] if root_spell else []),
             "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
             "wraps_lock": wraps_lock,
+            "provenance": _PROV,
         }
         if branch_bases:
             attrs["conditional_flag"] = True
@@ -2860,6 +2881,7 @@ def finalize_kernel_root_trace(
                     "root_kind": "REGISTER",
                     "root": codemap.entities[root_id].name,
                     "trace": [name, _base_type_name(expanded) or type_text],
+                    "provenance": "kernel_root_trace",
                 },
                 file=nfile,
                 line=line,
@@ -2867,6 +2889,7 @@ def finalize_kernel_root_trace(
                 confidence=1.0,
             )
             _link(codemap, RelationKind.ROOTED_AT, ent.id, root_id)
+            _index_storage(ent.id, scope=function, name=name, nfile=nfile)
             reg_count += 1
             continue
 
@@ -2931,6 +2954,7 @@ def finalize_kernel_root_trace(
             + ([root_spell] if root_spell else []),
             "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
             "wraps_lock": bool(owner_ent and owner_ent.attrs.get("wraps_lock")),
+            "provenance": "kernel_root_trace",
         }
         if branch_bases:
             attrs["conditional_flag"] = True
@@ -3029,6 +3053,12 @@ def finalize_kernel_root_trace(
                 "usr": usr,
                 "qualified_name": q,
                 "spelling": short,
+                # A USR is a clang identity; without one this node is keyed by
+                # a name the lexical enclosing-function scan produced, and the
+                # two must not claim the same trust.
+                "provenance": (
+                    "kernel_root_trace" if usr else "lexical_kernel_call_method"
+                ),
             },
             file=file,
             line=line,
@@ -3957,6 +3987,7 @@ def finalize_kernel_root_trace(
     elapsed = time.perf_counter() - t0
     gap_counts = Counter(str(g.get("code") or "") for g in gaps)
     reached_bufs = 0
+    reached_regs = 0
     reached_ops = 0
     tque_ops = 0
     tpipe_ops = 0
@@ -3964,6 +3995,9 @@ def finalize_kernel_root_trace(
     for e in codemap.by_kind(EntityKind.BUFFER):
         if e.attrs.get("root_status") == "REACHED":
             reached_bufs += 1
+    for e in codemap.by_kind(EntityKind.REGISTER):
+        if e.attrs.get("root_status") == "REACHED":
+            reached_regs += 1
     for e in codemap.by_kind(EntityKind.OPERATION):
         if e.attrs.get("root_status") == "REACHED":
             reached_ops += 1
@@ -4006,6 +4040,7 @@ def finalize_kernel_root_trace(
         "unpaired_flag_sync": int(pair_stats.get("unpaired_flag_sync") or 0),
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
+        "reached_registers": reached_regs,
         "wraps": wraps,
         "rooted_at": rooted_at,
         "aliases": alias_rels,
@@ -4037,6 +4072,7 @@ def finalize_kernel_root_trace(
         "precedes": precedes_count,
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
+        "reached_registers": reached_regs,
         "unresolved_types": unresolved_types,
         "gap_count": len(gaps),
         "gap_counts": dict(gap_counts),

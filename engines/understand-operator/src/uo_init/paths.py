@@ -19,7 +19,29 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+
+
+@lru_cache(maxsize=1 << 16)
+def _resolved(text: str) -> Path:
+    try:
+        return Path(text).expanduser().resolve()
+    except OSError:
+        return Path(text)
+
+
+def resolved(path: Path | str) -> Path:
+    """``Path.resolve()`` memoized on the spelling asked for.
+
+    One analyze made ~50k of these, and each is a `_getfinalpathname` syscall
+    Windows charges about 0.04ms for -- 5s of the stage spent re-asking the
+    filesystem where the same few thousand files are. A stage does not move
+    files while it runs, so within one the answer is a constant. Failure is
+    cached too: a path that does not resolve will not resolve on the retry
+    either, and the original callers all fell back to the input on OSError.
+    """
+    return _resolved(str(path))
 
 #: Written by `scripts/cann_slim.py` once the trimmed tree has been proven to
 #: parse the host translation units. Only a tree carrying it is auto-selected;
@@ -31,6 +53,12 @@ from pathlib import Path
 #: full one, and the shortfall surfaces much later as an unexplained parse
 #: error. Comparing digests catches the stale tree at resolution time instead.
 SLIM_MARKER = ".slim-verified"
+
+#: Stored in place of the CANN install root, which is a property of the build
+#: machine and not of the operator. A product that spelled toolkit headers
+#: absolutely could only be read back on the machine that wrote it. Readers
+#: resolve this against their own `cann_root()`.
+CANN_MARKER = "<cann>/"
 
 CANN_ENV_VARS = ("UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT")
 #: Official ``source set_env.sh`` install prefix. Used only when the directory
@@ -70,6 +98,49 @@ def repo_root() -> Path:
     """The AscendC-Pilot checkout root."""
     # .../engines/understand-operator/src/uo_init/paths.py
     return Path(__file__).resolve().parents[4]
+
+
+def resolve_operator_file(op_root: Path, raw: str) -> Path | None:
+    """The file a stored or extracted location names, or None.
+
+    Locations reach this from several bases at once: operator-relative
+    (`op_kernel/x.h`), ops-root-relative (`<op>/op_kernel/x.h`), a sibling tree
+    (`../common/x.h`, `../../common/include/x.h`), the `<cann>/` marker, or an
+    absolute path from clang. Seven passes each kept their own copy of this and
+    all seven shared two defects: `lstrip('./')` is a character set, so it ate
+    the parents off `../common/x.h` and left a path that resolves under the
+    wrong tree, and only one level of parent was ever tried.
+    """
+    text = str(raw or "").replace("\\", "/").strip()
+    if not text:
+        return None
+    if text.startswith(CANN_MARKER):
+        root = cann_root()
+        if root is None:
+            return None
+        candidate = root / text[len(CANN_MARKER) :]
+        return candidate if candidate.is_file() else None
+    while text.startswith("./"):
+        text = text[2:]
+    direct = Path(text)
+    if direct.is_absolute():
+        return direct if direct.is_file() else None
+
+    # A path spelled from an ancestor already says how far up it goes, so
+    # joining is enough. A bare relative one does not, and may be spelled from
+    # any ancestor up to the checkout, so try each instead of assuming the parent.
+    candidates = [op_root / text]
+    if not text.startswith("../"):
+        base = op_root
+        for _ in range(3):
+            base = base.parent
+            candidates.append(base / text)
+        if text.startswith(op_root.name + "/"):
+            candidates.append(op_root / text[len(op_root.name) + 1 :])
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
 
 
 def _env(names: tuple[str, ...]) -> Path | None:

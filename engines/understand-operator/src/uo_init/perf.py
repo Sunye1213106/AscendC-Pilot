@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 _LOCK = threading.Lock()
 
@@ -91,6 +92,26 @@ def record_stage(name: str, seconds: float) -> None:
         _STAGES[name] = round(float(seconds), 3)
 
 
+@contextmanager
+def stage(name: str) -> Iterator[None]:
+    """Time one uo-init stage, including the path that raises.
+
+    A stage that fails still costs wall time, so the receipt records it either
+    way; otherwise a crash in extract would silently reappear as unattributed
+    time.
+    """
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        record_stage(name, time.perf_counter() - t0)
+
+
+def elapsed_since_start() -> float:
+    """Wall seconds since this process first imported the collector."""
+    return time.perf_counter() - _T0
+
+
 def record_pass(name: str, seconds: float | None = None, **extra: Any) -> None:
     with _LOCK:
         row = dict(_PASSES.get(name) or {})
@@ -135,13 +156,16 @@ def snapshot() -> dict[str, Any]:
         }
         hot = {p: row for p, row in files.items() if int(row["read_count"]) > 3}
         stages = dict(_STAGES)
+        wall = round(time.perf_counter() - _T0, 3)
         total = round(sum(float(v) for v in stages.values()), 3)
         if not total:
-            total = round(time.perf_counter() - _T0, 3)
+            total = wall
         bytes_n = int(_COUNTERS.get("read_text_bytes") or 0)
         return {
             "schema": "uo-performance/v1",
             "total_s": total,
+            "wall_s": wall,
+            "unattributed_s": round(max(0.0, wall - total), 3),
             "stages": stages,
             "passes": dict(_PASSES),
             "counters": {

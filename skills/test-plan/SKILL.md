@@ -5,7 +5,7 @@ description: 把测试要求编译为 Target、Dimension、Guard 与 L0–L3 覆
 
 # 白盒测试规划
 
-本目录是 family manifest，不是某一窗的方法。Primary 原生 `Task(agent=tg-analyst)` 派**一个 Plan Owner**：同一窗内答完「测什么」与覆盖模型，只交 `schema: tg-plan-fill/v1` YAML。Host 展开成 `tg-plan/v3`。Engine 确定性 narrate 三节散文并写入 `tg/plan.md`。
+本目录是 family manifest，不是某一窗的方法。Primary 原生 `Task(agent=tg-analyst)` 派**一个 Plan Owner**：同一窗内答完「测什么」与覆盖模型，只交 `schema: tg-plan/v3` YAML 全文。Engine 确定性 narrate 三节散文并写入 `tg/plan.md`。
 
 ## 边界
 
@@ -20,4 +20,5 @@ L0–L3 的义务条数由引擎从 IR 机械展开，plan 里不写数字。L2 
 - 形式规范（谓词语法、骨架、形式规则、常见返工）：`references/coverage-planning.md`
 - 观测种类：`references/evidence.md`
 - 「测什么」四项必答：`references/target-planning.md`
-- 散文由 Engine `render_plan_prose` 生成；`references/plan-narrate.md` 仅作历史说明
+
+散文由 Engine `render_plan_prose` 确定性生成，Plan Owner 不写散文。

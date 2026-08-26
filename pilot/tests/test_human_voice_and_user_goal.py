@@ -89,8 +89,9 @@ def test_bind_init_is_staged_analyst_with_method() -> None:
         "testcase-generation/bind-init",
     }
     method, prompt = _load_method_and_prompt(ROOT, action)
+    # bind-init/SKILL.md is a family manifest routing to per-axis references;
+    # naming the canonical product is the review playbook's job, not its.
     assert method.strip(), "SKILL.md must be non-empty"
-    assert "init.yaml" in method
     assert prompt.strip()
 
 
@@ -224,8 +225,8 @@ def test_tg_init_phase_labels_honest() -> None:
     assert "bind_review" in acts
 
 
-def test_human_voice_invariants_doc_exists() -> None:
-    path = ROOT / "pilot" / "policies" / "invariants" / "human-voice-invariants.md"
+def test_human_voice_policy_doc_exists() -> None:
+    path = ROOT / "pilot" / "policies" / "human-voice" / "POLICY.md"
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
     assert "意图" in text and "决策后果" in text

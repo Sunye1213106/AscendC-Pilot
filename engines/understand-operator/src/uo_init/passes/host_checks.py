@@ -21,6 +21,12 @@ from uo_init.passes.tiling_host_writes import (
     _selected_host_files,
 )
 
+#: Every fact this pass mints carries it. The evidence is a regex over masked
+#: host source plus a name match against known fields, so the honest trust is
+#: advisory -- which is what ``ADVISORY_PROVENANCE`` maps this label to. Left
+#: unlabelled, these 10k edges read as ``legacy_unknown``, i.e. unclassified.
+HOST_CHECK_PROVENANCE = "source_host_check"
+
 _CHECK_RE = re.compile(
     r"\b(?P<macro>OP_CHECK_IF|OP_TILING_CHECK|OPS_CHECK|OP_CHECK)\s*\(\s*(?P<guard>[^,)\n]+)"
 )
@@ -111,6 +117,7 @@ def enrich_host_checks(
                     "branch_kind": "host_check",
                     "check_macro": macro,
                     "function": "",
+                    "provenance": HOST_CHECK_PROVENANCE,
                 },
                 file=file,
                 line=line,
@@ -126,8 +133,9 @@ def enrich_host_checks(
             for name in _guard_symbols(guard):
                 for ent in fields.get(name) or ():
                     _attach_check(ent, site)
-                    codemap.link(RelationKind.GUARDED_BY, ent.id, br.id)
-                    codemap.link(RelationKind.CONTROLS, br.id, ent.id)
+                    edge = {"provenance": HOST_CHECK_PROVENANCE, "file": file, "line": line}
+                    codemap.link(RelationKind.GUARDED_BY, ent.id, br.id, attrs=dict(edge))
+                    codemap.link(RelationKind.CONTROLS, br.id, ent.id, attrs=dict(edge))
                     bound += 1
 
     closure = dict(codemap.meta.get("kernel_tiling_closure") or {})

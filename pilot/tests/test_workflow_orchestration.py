@@ -84,7 +84,7 @@ def test_policies_do_not_parallel_task_workflows() -> None:
         "CE review 属于推理出来的依赖",
     )
     paths = [
-        REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md",
+        REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md",
         REPO / "pilot" / "policies" / "invariants" / "host-runtime-contract.md",
         REPO / "docs" / "getting-started" / "quickstart.md",
         REPO / "docs" / "architecture" / "workflows.md",
@@ -97,31 +97,31 @@ def test_policies_do_not_parallel_task_workflows() -> None:
             assert needle not in text, f"{path} still has {needle!r}"
 
 
-def test_intent_reasoning_forces_inits_before_consume() -> None:
-    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+def test_pilot_control_forces_inits_before_consume() -> None:
+    text = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
     assert "init 先于调查" in text
-    assert "/ce-review" in text and "消费" in text
+    assert "ce-review" in text and "消费" in text
     assert "分析这个 PR 并生成" not in text
     assert "Todo：`auto` → `/uo-init` → `/tg-init` → `/uo-query`" not in text
 
 
-def test_intent_reasoning_uo_update_is_refresh_not_chained_after_init() -> None:
-    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+def test_pilot_control_uo_update_is_refresh_not_chained_after_init() -> None:
+    text = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
     assert "按缺口二选一" in text
-    assert "不要再跑 `/uo-update`" in text
-    assert "禁止把 `/uo-update` 紧挨着排在刚完成的 `/uo-init` 后面" in text
-    assert "不要为理解 PR diff 去跑 `/uo-update`" in text
+    assert "不要再跑 `uo-update`" in text
+    assert "禁止把 `uo-update` 紧挨着排在刚完成的 `uo-init` 后面" in text
+    assert "不要为理解 PR diff 去跑 `uo-update`" in text
     assert "* `uo-init`；" not in text
     assert "* `uo-update`；" not in text
-    assert "不要默认加入 `/ce-review`" in text
+    assert "不要默认加入 `ce-review`" in text
 
 
-def test_intent_reasoning_missing_ask_ui_requires_question_not_narration() -> None:
-    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+def test_pilot_control_missing_ask_ui_requires_question_not_narration() -> None:
+    text = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
     assert "不等于" in text

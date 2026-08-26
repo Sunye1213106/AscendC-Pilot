@@ -395,20 +395,23 @@ def finalize_tg_views(codemap: CodeMap, *, existing: dict[str, Any] | None = Non
     return stamp_all_views(views, codemap)
 
 
+#: Hoisted out of `_host_symbols_for_key`: rebuilding it per candidate cost
+#: 768k enum property reads on one operator, the largest single source of them.
+_DERIVES = RelationKind.DERIVES.value
+
+
 def _host_symbols_for_key(codemap: CodeMap, key: Any, incoming: dict[str, list[Any]]) -> list[Any]:
     out: list[Any] = []
     seen: set[str] = set()
     packing = [str(x) for x in (key.attrs.get("host_packing_expressions") or [])]
     tokens = {tok for expr in packing for tok in _extract_symbols(expr)}
     derive_from_key = {
-        rel.src
-        for rel in incoming.get(key.id, [])
-        if rel.kind_name() == RelationKind.DERIVES.value
+        rel.src for rel in incoming.get(key.id, []) if rel.kind_name() == _DERIVES
     }
     mid_src = {rel.src for mid in derive_from_key for rel in incoming.get(mid, [])}
-    for ent in codemap.entities.values():
-        if ent.kind_name() not in {EntityKind.FIELD.value, EntityKind.VARIABLE.value}:
-            continue
+    # By kind rather than over every entity: this runs once per tiling key, and
+    # the scan asked 67k entities what kind they were to keep two kinds.
+    for ent in (*codemap.by_kind(EntityKind.FIELD), *codemap.by_kind(EntityKind.VARIABLE)):
         if not (ent.attrs.get("host_key_argument") or ent.attrs.get("producer_sites") or ent.name in tokens or any(ent.name.endswith(t) or t.endswith(ent.name) for t in tokens)):
             continue
         related = bool(ent.attrs.get("host_key_argument") and (str(ent.attrs.get("tiling_key") or "") == key.name or key.name in str(ent.attrs.get("host_key_dims") or "")))

@@ -18,7 +18,9 @@ _LOCK = threading.RLock()
 
 
 def _key(path: str | Path) -> str:
-    return str(Path(path).expanduser().resolve())
+    from uo_init.paths import resolved
+
+    return str(resolved(path))
 
 
 def _remember(key: str) -> None:

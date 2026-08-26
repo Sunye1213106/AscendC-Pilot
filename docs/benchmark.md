@@ -8,7 +8,7 @@
 
 默认（未设 `UO_KERNEL_MAX_VARIANTS` 即 **1**）：一个 kernel dtype。`UO_WITH_KERNEL` 控制是否抽 Kernel。`UO_KERNEL_MAX_VARIANTS=0` 扫全部声明 dtype，冷启动会明显超过 3 分钟预算。
 
-同日家族泛化抽检见 [test/uo-init-generalization.md](test/uo-init-generalization.md)（**不当本页质量入口**）。pass7 全量：prepare 4/33、`.uo` 5 份（unknown 仍为 0）；墙钟与 verify 口径仍只以本页 FAG 冷启动为准。
+同日家族泛化抽检（**不当本页质量入口**）：pass7 全量 prepare 4/33、`.uo` 5 份（unknown 仍为 0）；墙钟与 verify 口径仍只以本页 FAG 冷启动为准。
 
 更早的 action 级 harness 见 [history/benchmarks/uo-timing-baseline.md](history/benchmarks/uo-timing-baseline.md)。打开 Clang API 的对照见 [history/benchmarks/uo-fag-arch35-clang-api.md](history/benchmarks/uo-fag-arch35-clang-api.md)：**API 段 8s、36 条 grounded premises，`.uo` 图不变**；默认仍关 API。
 

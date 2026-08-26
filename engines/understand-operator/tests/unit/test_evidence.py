@@ -22,6 +22,7 @@ from uo_init.ir.evidence import (
     assert_semantic_mint,
     derive_trust,
     infer_from_provenance,
+    merge_trust,
     stamp_attrs,
     validate_trust_records,
 )
@@ -41,7 +42,8 @@ def test_stamp_infers_lexical_advisory_and_clang_authoritative() -> None:
     assert clang["evidence_source"] == SOURCE_CLANG_AST
 
 
-def test_stamp_does_not_rewrite_existing_trust() -> None:
+def test_stamp_fills_unknown_from_provenance() -> None:
+    """legacy_unknown is unset: a classified pass label replaces it."""
     attrs = stamp_attrs(
         {
             "provenance": "source_kernel_call_bound",
@@ -49,8 +51,8 @@ def test_stamp_does_not_rewrite_existing_trust() -> None:
             "evidence_source": SOURCE_UNSPECIFIED,
         }
     )
-    assert attrs["trust"] == TRUST_LEGACY_UNKNOWN
-    assert attrs["evidence_source"] == SOURCE_UNSPECIFIED
+    assert attrs["trust"] == TRUST_ADVISORY
+    assert attrs["evidence_source"] == SOURCE_LEXICAL
 
 
 def test_stamp_never_upgrades_when_explicit_trust_is_weaker() -> None:
@@ -65,6 +67,13 @@ def test_derive_trust_takes_min_input() -> None:
     assert derive_trust([TRUST_AUTHORITATIVE, TRUST_ADVISORY]) == TRUST_ADVISORY
     assert derive_trust([TRUST_AUTHORITATIVE, TRUST_DERIVED]) == TRUST_DERIVED
     assert derive_trust([]) == TRUST_ADVISORY
+
+
+def test_merge_trust_treats_unknown_as_unset() -> None:
+    assert merge_trust(TRUST_LEGACY_UNKNOWN, TRUST_AUTHORITATIVE) == TRUST_AUTHORITATIVE
+    assert merge_trust(TRUST_AUTHORITATIVE, TRUST_LEGACY_UNKNOWN) == TRUST_AUTHORITATIVE
+    assert merge_trust(TRUST_AUTHORITATIVE, TRUST_ADVISORY) == TRUST_ADVISORY
+    assert merge_trust(TRUST_LEGACY_UNKNOWN, TRUST_LEGACY_UNKNOWN) == TRUST_LEGACY_UNKNOWN
 
 
 def test_lexical_cannot_mint_authoritative() -> None:
@@ -298,4 +307,15 @@ def test_regex_closure_provenances_are_advisory_and_dsl_stays_derived() -> None:
     source, trust = infer_from_provenance("clang_field_decl")
     assert trust == TRUST_AUTHORITATIVE
     source, trust = infer_from_provenance("clang_kernel_abi")
+    assert trust == TRUST_AUTHORITATIVE
+    source, trust = infer_from_provenance("source_kernel_definition_v2")
+    assert source == SOURCE_CLANG_AST
+    assert trust == TRUST_AUTHORITATIVE
+    source, trust = infer_from_provenance("source_runtime_method")
+    assert trust == TRUST_AUTHORITATIVE
+    source, trust = infer_from_provenance("source_constexpr")
+    assert source == SOURCE_DSL
+    assert trust == TRUST_DERIVED
+    source, trust = infer_from_provenance("kernel_root_trace")
+    assert source == SOURCE_CLANG_AST
     assert trust == TRUST_AUTHORITATIVE

@@ -50,6 +50,8 @@ def _ensure_graph_status_root(codemap: CodeMap, spelling: str) -> str:
             "role": role,
             "root": f"ge::graphStatus::{spelling}",
             "root_kind": "GRAPH_STATUS",
+            # One of four synthesised catalog nodes, not a source fact.
+            "provenance": "catalog_root",
         },
         status="extracted",
         confidence=1.0,
@@ -150,6 +152,7 @@ def _mint_bailout_branch(
             "branch_kind": "host_refuse",
             "function": function,
             "universe": "VALIDATION_ONLY",
+            "provenance": HOST_GRAPH_PROVENANCE,
         },
         file=file,
         line=line,

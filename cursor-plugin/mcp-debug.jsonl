@@ -7,3 +7,37 @@
 {"boot": "fastmcp"}
 {"boot": "fastmcp"}
 {"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"boot": "fastmcp"}

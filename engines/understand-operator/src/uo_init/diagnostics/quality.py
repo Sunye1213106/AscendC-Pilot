@@ -319,6 +319,7 @@ def codemap_quality(
             "unpaired_flag_sync": kq.get("unpaired_flag_sync") or ke.get("unpaired_flag_sync"),
             "reached_operations": kq.get("reached_operations") or ke.get("reached_operations"),
             "reached_buffers": kq.get("reached_buffers") or ke.get("reached_buffers"),
+            "reached_registers": kq.get("reached_registers") or ke.get("reached_registers"),
             "tiling_data_binding_count": len(list((codemap.meta or {}).get("tiling_data_bindings") or [])),
             "role_resolution_rate": role_rate,
         },

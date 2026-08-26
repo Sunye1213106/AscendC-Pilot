@@ -276,8 +276,8 @@ def check_stale_orchestration_surface(errors: list[str]) -> None:
     )
     files = (
         ROOT / "pilot" / "policies" / "invariants" / "host-runtime-contract.md",
-        ROOT / "pilot" / "policies" / "invariants" / "control-invariants.md",
-        ROOT / "pilot" / "policies" / "invariants" / "human-voice-invariants.md",
+        ROOT / "pilot" / "policies" / "pilot-control" / "POLICY.md",
+        ROOT / "pilot" / "policies" / "human-voice" / "POLICY.md",
         ROOT / "agents" / "ascendc-pilot.yaml",
         ROOT / "opencode-plugin" / "pilot-driver.ts",
         ROOT / "scripts" / "compose_opencode_commands.py",

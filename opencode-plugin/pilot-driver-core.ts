@@ -2114,7 +2114,7 @@ export function createPilotRunTool(
         intent: {
           type: "string",
           description:
-            "第一轮 auto/clone：用户目标原文，含 PR URL。bind 草稿之后：只填 PASS 或 REWORK bind / REWORK harness,bind。/ce-review 带上 PR URL。",
+            "本回合载荷，不是读懂用户句子。auto（或缺算子目录要 clone）：用户目标含 PR URL。bind_review 后：PASS 或 REWORK bind / REWORK harness,bind。tg-plan ingest：YAML 全文。其它格省略。不要塞查询卡片。",
         },
         force_new: {
           type: "boolean",

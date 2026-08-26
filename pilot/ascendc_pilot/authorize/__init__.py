@@ -743,7 +743,7 @@ def _deny_uncited_operator_source(
         "SOURCE_READ_USE_UO_QUERY",
         "算子源码语义走 uo-query 路由：简单问题用 `pilot_cli` `uo-query`，"
         "复杂或 CE/TG 问图用同一轮 Task(agent=uo-query)。"
-        "Grep/Glob 只作定位辅助；语义结论仍优先 uo-query。"
+        "Grep/Glob 只作定位；算子语义结论先走 uo-query，源码只核对卡片窗口。"
         "卡片 snippet 视为已读；仅截断后的窗口可读。",
         error_code="HARNESS_ACTION_NOT_AUTHORIZED",
         path=path_s,
@@ -1328,6 +1328,29 @@ def _authorize_impl(
             lease_id=lease_id_s,
         )
 
+    # Resource ACL before any bash branch: `forbid_read` that only binds the Read
+    # tool is not a fence, it is a suggestion the next shell call ignores.
+    if tool_l in _BASH_TOOLS and agent_l and agent_l not in _PRIMARY_AGENTS:
+        from ascendc_pilot.authorize.shell_read import shell_read_denial
+
+        shell_denied = shell_read_denial(
+            cmd_raw if cmd_raw else cmd,
+            lease=lease,
+            project_root=project_root,
+            agent=agent_l,
+        )
+        if shell_denied:
+            return _ok(
+                "deny",
+                shell_denied["error"],
+                "当前 Action lease 不允许读取该路径；shell 与 Read 走同一套资源授权",
+                path=shell_denied["path"],
+                rel=shell_denied["rel"],
+                allowed_read_paths=shell_denied["allowed_read_paths"],
+                forbidden_read_paths=shell_denied["forbidden_read_paths"],
+                command=(cmd_raw or cmd)[:200],
+            )
+
     # --- question / report to user: always allowed ---
     if tool_l in _QUESTION_TOOLS:
         return _ok("allow", "QUESTION_OK", "允许向用户提问或报告", status=status or None)
@@ -1879,12 +1902,15 @@ def _authorize_impl(
                         action_id=action_id,
                         path=path_s,
                     )
-                if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
+                from ascendc_pilot.authorize.lease import lease_authorizes_actor
+
+                if not lease_authorizes_actor(lease, agent_l):
                     return _ok(
                         "deny",
                         "ACTION_READ_OWNER_MISMATCH",
                         "lease.actor_id 与当前代理不一致",
                         lease_actor_id=lease.get("actor_id"),
+                        delegate_actor_ids=lease.get("delegate_actor_ids") or [],
                         agent=agent_l,
                         path=path_s,
                     )

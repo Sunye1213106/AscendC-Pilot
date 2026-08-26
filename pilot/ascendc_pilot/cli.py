@@ -201,7 +201,14 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Operator package root (op_host/op_kernel). Required; never the AscendC-Pilot checkout.",
     )
-    p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
+    p_start.add_argument(
+        "--intent",
+        default="",
+        help=(
+            "Turn payload, not NL routing. auto/clone: user goal + PR URL. "
+            "After bind_review: PASS or REWORK bind. tg-plan ingest: YAML. Omit otherwise."
+        ),
+    )
     p_start.add_argument("--force-new", action="store_true", help="Wipe an existing run and start fresh; no-op on a virgin project. Do not use on first start.")
     p_start.add_argument(
         "--decision",
@@ -264,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--intent",
         default="",
-        help="This-turn PASS/REWORK intent. Does not overwrite product intent.",
+        help="This-turn PASS/REWORK or captured YAML. Does not overwrite stored user_goal.",
     )
     p_run.add_argument(
         "--set",

@@ -129,9 +129,29 @@ def _norm_file(path: str, root: str = "") -> str:
     return rel_posix(text, root)
 
 
+# Every pattern below used to be written inline at its call site. This module
+# runs some of them once per line of every scanned file, and an inline pattern
+# pays a `re._compile` cache lookup each time -- 3M of those cost the analyze
+# stage 3.2s. Compiling at import makes the cost a single attribute load.
+_CV_QUAL_RE = re.compile(r"\b(?:const|volatile|static|mutable|typename|template)\b")
+_WS_RUN_RE = re.compile(r"\s+")
+_NON_NEWLINE_RE = re.compile(r"[^\n]")
+_COPYRIGHT_RE = re.compile(r"\bCopyright\s*\(\s*c\s*\)", re.I)
+_TRAILING_IF_RE = re.compile(r"\bif\s*$")
+_STMT_BOUNDARY_RE = re.compile(r"(^|[\s;{}])$")
+_MEMBER_ACCESS_TAIL_RE = re.compile(r"(?:\.|->|::)\s*$")
+_RETURN_ELSE_TAIL_RE = re.compile(r"\b(return|else)\s+$")
+_DECL_SPECIFIER_RE = re.compile(r"\b(__aicore__|inline|constexpr|virtual|explicit|static)\b")
+_ASSIGN_COMMA_TAIL_RE = re.compile(r"[=,]\s*$")
+_CONTROL_KEYWORD_TAIL_RE = re.compile(r"\b(if|while|for|switch|catch)\s*$")
+_TYPE_TAIL_RE = re.compile(r"(?:[\w:>]|[*&])\s+$")
+_DECLARED_NAME_END_RE = re.compile(r"\b[A-Za-z_]\w*\s*;\s*$")
+_CONSTEXPR_SPECIFIERS = {"constexpr", "consteval", "constinit"}
+
+
 def _base_type_name(type_text: str) -> str:
     text = str(type_text or "").strip()
-    text = re.sub(r"\b(?:const|volatile|static|mutable|typename|template)\b", " ", text)
+    text = _CV_QUAL_RE.sub(" ", text)
     text = text.replace("&", " ").replace("*", " ")
     no_tpl = text.split("<", 1)[0].strip()
     token = no_tpl.split("::")[-1].strip()
@@ -140,7 +160,12 @@ def _base_type_name(type_text: str) -> str:
 
 def _conditional_field(text: str) -> tuple[str, str] | None:
     """Name + type of a ``std::conditional`` / ``conditional_t`` class field."""
-    blob = re.sub(r"\s+", " ", str(text or "")).strip().rstrip(";").strip()
+    raw = str(text or "")
+    if "conditional" not in raw.lower():
+        # Collapsing whitespace over a long accumulated declaration is the
+        # expensive half; the match needs `conditional` either way.
+        return None
+    blob = _WS_RUN_RE.sub(" ", raw).strip().rstrip(";").strip()
     if "conditional" not in blob.lower():
         return None
     m = _CONDITIONAL_FIELD_RE.match(blob)
@@ -173,14 +198,22 @@ def _blank_block_comments(text: str) -> str:
     """
 
     def _repl(m: re.Match[str]) -> str:
-        return re.sub(r"[^\n]", " ", m.group(0))
+        return _NON_NEWLINE_RE.sub(" ", m.group(0))
 
     return _BLOCK_COMMENT_RE.sub(_repl, str(text or ""))
 
 
 def _strip_line_noise(line: str) -> str:
-    if re.search(r"\bCopyright\s*\(\s*c\s*\)", line, flags=re.I):
+    # A license line need not be commented to reach here, so this test comes
+    # first. The pattern cannot match without a paren, which most lines of a
+    # header do not have, so the containment check is an exact prefilter.
+    if "(" in line and _COPYRIGHT_RE.search(line):
         return ""
+    # Runs on every line of every scanned file. A line carrying no string, no
+    # char literal and no `//` is returned unchanged by the scan below, so the
+    # common case should not pay for walking it character by character.
+    if '"' not in line and "'" not in line and "//" not in line:
+        return line
     out: list[str] = []
     i = 0
     n = len(line)
@@ -224,25 +257,26 @@ def _update_enclosing_func(line: str, current: str) -> str:
 def _is_false_lexical_callee(name: str, line: str, match_start: int) -> bool:
     if name in _CXX_CALL_SKIP:
         return True
-    if name in {"constexpr", "consteval", "constinit"}:
+    if name in _CONSTEXPR_SPECIFIERS:
         prefix = line[:match_start].rstrip()
-        if re.search(r"\bif\s*$", prefix):
+        if _TRAILING_IF_RE.search(prefix):
             return True
-        if re.search(r"(^|[\s;{}])$", prefix) or not prefix:
+        if _STMT_BOUNDARY_RE.search(prefix) or not prefix:
             return True
         return False
     prefix = line[:match_start]
-    if re.search(r"(?:\.|->|::)\s*$", prefix.rstrip()):
+    rstripped = prefix.rstrip()
+    if _MEMBER_ACCESS_TAIL_RE.search(rstripped):
         return False
-    if re.search(r"\b(return|else)\s+$", prefix):
+    if _RETURN_ELSE_TAIL_RE.search(prefix):
         return False
-    if re.search(r"\b(__aicore__|inline|constexpr|virtual|explicit|static)\b", prefix):
+    if _DECL_SPECIFIER_RE.search(prefix):
         return True
-    if re.search(r"[=,]\s*$", prefix.rstrip()):
+    if _ASSIGN_COMMA_TAIL_RE.search(rstripped):
         return False
-    if re.search(r"\b(if|while|for|switch|catch)\s*$", prefix.rstrip()):
+    if _CONTROL_KEYWORD_TAIL_RE.search(rstripped):
         return False
-    if re.search(r"(?:[\w:>]|[*&])\s+$", prefix):
+    if _TYPE_TAIL_RE.search(prefix):
         return True
     return False
 
@@ -436,7 +470,7 @@ def _advance_members(
         or stripped.endswith(",")
         or (
             ("MutexBuffer" in line or "conditional" in line or "Tensor" in line)
-            and not re.search(r"\b[A-Za-z_]\w*\s*;\s*$", line)
+            and not _DECLARED_NAME_END_RE.search(line)
         )
     ):
         return stripped, i
@@ -581,6 +615,8 @@ def get_or_build(
     root: str = "",
     deadline: float | None = None,
 ) -> SourceIndex:
+    from uo_init.paths import resolved as _resolve
+
     index = SourceIndex(root=root)
     registry = _registry_names()
     missing: list[tuple[Path, str]] = []
@@ -588,10 +624,7 @@ def get_or_build(
         if deadline is not None and time.perf_counter() >= deadline:
             break
         path = Path(raw)
-        try:
-            resolved = str(path.resolve())
-        except OSError:
-            resolved = str(path)
+        resolved = str(_resolve(path))
         cached = cache_get(resolved)
         if isinstance(cached, SourceFacts):
             index.by_file[_norm_file(str(path), root)] = cached

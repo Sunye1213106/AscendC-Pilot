@@ -430,13 +430,9 @@ def _matching_brace(text: str, open_pos: int) -> int:
 
 
 def _resolve_file(root: Path, raw: str) -> Path | None:
-    rel = raw.replace("\\", "/").lstrip("./")
-    candidates = [root.parent / rel, root / rel]
-    if rel.startswith(root.name + "/"):
-        candidates.append(root / rel[len(root.name) + 1:])
-    for path in candidates:
-        if path.is_file(): return path
-    return None
+    from uo_init.paths import resolve_operator_file
+
+    return resolve_operator_file(root, raw)
 
 
 def _line(text: str, offset: int) -> int:

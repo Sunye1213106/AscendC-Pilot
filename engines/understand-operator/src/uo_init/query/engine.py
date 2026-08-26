@@ -303,6 +303,7 @@ class CodeMapQuery:
             "events": len(self.codemap.by_kind(EntityKind.EVENT)),
             "queues": len(self.codemap.by_kind(EntityKind.QUEUE)),
             "reached_buffers": meta.get("reached_buffers"),
+            "reached_registers": meta.get("reached_registers"),
             "reached_operations": meta.get("reached_operations"),
             "gap_count": meta.get("gap_count"),
             "meta": meta,

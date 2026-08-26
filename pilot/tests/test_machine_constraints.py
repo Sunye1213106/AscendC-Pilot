@@ -38,14 +38,14 @@ def test_ce_analyst_ceiling_excludes_code_review() -> None:
 
 
 def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
-    assert (
-        forbidden_blocks_write(
-            "ce-analyst",
-            "ce/plan/op_plan.md",
-            project_root=REPO,
+    # CE yaml stays fenced off for both CE producers...
+    for agent in ("ce-analyst", "ce-applier"):
+        assert (
+            forbidden_blocks_write(agent, "ce/intent/op.yaml", project_root=REPO)
+            == "FORBIDDEN_WRITE_CANONICAL_CE_YAML"
         )
-        == "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
-    )
+        # ...but the plan markdown is their own contract output, never fenced.
+        assert forbidden_blocks_write(agent, "ce/plan/op_plan.md", project_root=REPO) is None
     assert (
         forbidden_blocks_write(
             "tg-analyst",

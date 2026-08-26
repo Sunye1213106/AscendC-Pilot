@@ -27,44 +27,27 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"(?i)\bpython\s+.*\b(tg-init|tg-plan|tg-solve|build_layered_kb)\b"),
 ]
 
-# Shared policies injected into both workflow entry skills and agents (same set).
-# Compose injects short *invariant packs* only; full POLICY.md stays on disk for humans/CI.
+# Unique model-facing documents. Compose injects POLICY.md itself — there is
+# no paraphrase layer. Playbooks that are not a policy stay under invariants/.
 COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "pilot-control",
-    "language",
+    "human-voice",
     "evidence",
     "semantic-grounding",
     "code-access",
     "source-authority",
     "output-quality",
 )
+# host-runtime-contract.md stays on disk: human/CI. Not composed.
 
-# Short model-facing packs under pilot/policies/invariants/.
-# agents/CONTEXT.md is appended separately: ubiquitous language, not a policy.
-# host-runtime-contract.md is human/CI SSOT and is not composed into the model.
-COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
-    ("control", "control-invariants.md"),
-    ("intent-reasoning", "intent-reasoning.md"),
-    ("evidence", "evidence-invariants.md"),
-    ("code-access", "code-access-invariants.md"),
-    ("authority", "authority.md"),
-    ("output-quality", "output-quality.md"),
-    ("language", "language.md"),
-    ("semantic-grounding", "semantic-grounding.md"),
-)
-
-# Finding-writing children get evidence + output-quality + semantic-grounding + code-access.
-# uo-query gets code-access only (METHOD owns how; the four forms live in the invariant).
-CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
-    ("evidence", "evidence-invariants.md"),
-    ("output-quality", "output-quality.md"),
-    ("semantic-grounding", "semantic-grounding.md"),
-    ("code-access", "code-access-invariants.md"),
+CHILD_POLICY_IDS: tuple[str, ...] = (
+    "evidence",
+    "output-quality",
+    "semantic-grounding",
+    "code-access",
 )
 QUERY_CHILD_IDS: frozenset[str] = frozenset({"uo-query"})
-QUERY_CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
-    ("code-access", "code-access-invariants.md"),
-)
+QUERY_CHILD_POLICY_IDS: tuple[str, ...] = ("code-access",)
 
 def listed_skill_ids(repo: Path | None = None) -> tuple[str, ...]:
     """Every ``skills/<id>/SKILL.md``. Not a closed set of five."""
@@ -166,8 +149,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": "刷新已有算子知识库（增量更新 CodeMap）",
         "description": (
             "在已有 `.uo` 上按工作区 / diff / PR 变更做确定性增量更新：检测变更、按层 "
-            "（host / kernel / compile / commit）选择性重建，不是再跑一遍 `/uo-init`。"
-            "common / 头文件变更可能扩成全量抽取。没有 `.uo` 时先 `/uo-init`。"
+            "（host / kernel / compile / commit）选择性重建，不是再跑一遍 `uo-init`。"
+            "common / 头文件变更可能扩成全量抽取。没有 `.uo` 时先 `uo-init`。"
             "用户要求刷新知识库、增量更新已有 UO/CodeMap 时使用；禁止改用外部 MCP 重新索引。"
         ),
     },
@@ -224,7 +207,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "description": (
             "测试前置：用 `.uo` + 可选测试脚本写出一份 `tg/init.yaml`。"
             "有脚本仓则绑定脚本输入变量与算子/UO 变量；无仓则用输入 API `kind=default_input`。"
-            "算子仓内 tests/ 未确认不得当作 script_repo。无 `.uo` 时先 /uo-init。用 `pilot_run`。"
+            "算子仓内 tests/ 未确认不得当作 script_repo。无 `.uo` 时先 `uo-init`。用 `pilot_run`。"
         ),
     },
     "tg-plan": {
@@ -372,8 +355,8 @@ def _start_requirements_line(repo: Path) -> str:
     return (
         f"6. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture。"
         f"`{uo}` 以已有 `.uo` 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，禁止 Glob 找产物。"
-        f"查询 AskQuestion：`/uo-init` 或源码作答；TG/CE 先 `/uo-init`。"
-        f"需要算子目录的 workflow：`{proj}`。`uo-query` 禁止 `pilot_run`（拆路见 intent-reasoning）。"
+        f"查询 AskQuestion：先 `uo-init` 或源码作答；TG/CE 先 `uo-init`。"
+        f"需要算子目录的 workflow：`{proj}`。`uo-query` 禁止 `pilot_run`（拆路见 pilot-control）。"
     )
 
 
@@ -387,46 +370,42 @@ def _cognitive_skill_for(repo: Path, wid: str) -> str:
 def _read_invariant_pack(
     repo: Path, *, for_primary: bool = True, agent_id: str = ""
 ) -> str:
-    """Concatenate short invariant markdown for model context (not full POLICY.md)."""
-    root = repo / "pilot" / "policies" / "invariants"
+    """Concatenate the unique policy documents into model context.
+
+    POLICY.md is the document. There is no second, shorter copy to drift.
+    Workflow-id lists that change with the spec are appended by compose, not
+    written into the policy file.
+    """
     if for_primary:
-        files = COMPOSE_INVARIANT_FILES
+        pids: tuple[str, ...] = COMPOSE_POLICY_IDS
         parts: list[str] = [
-            "遵守下列短不变量。全文：`pilot/policies/*/POLICY.md`。",
+            "遵守下列策略。不要另搜其它副本。",
             "",
         ]
     elif str(agent_id) in QUERY_CHILD_IDS:
-        files = QUERY_CHILD_INVARIANT_FILES
+        pids = QUERY_CHILD_POLICY_IDS
         parts = [
             "按 stub 指针读文件。只做本 Action。不要自己 finalize。",
             "",
         ]
     else:
-        files = CHILD_INVARIANT_FILES
+        pids = CHILD_POLICY_IDS
         parts = [
             "按 stub 指针读文件。只做本 Action。不要自己 finalize。",
             "",
         ]
-    start_line = _start_requirements_line(repo)
-    for _label, fname in files:
-        path = root / fname
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8").rstrip()
-        if fname == "control-invariants.md":
-            text = re.sub(
-                r"(?m)^6\..*$",
-                start_line,
-                text,
-                count=1,
-            )
-        parts.append(text)
+    for pid in pids:
+        text = _read_policy(repo, pid).rstrip()
+        if text:
+            parts.append(text)
+            parts.append("")
+    if for_primary:
+        parts.append(_start_requirements_line(repo))
         parts.append("")
-    context = repo / "agents" / "CONTEXT.md"
-    if context.is_file() and for_primary:
-        ctx_text = context.read_text(encoding="utf-8").rstrip()
-        parts.append(ctx_text)
-        parts.append("")
+        context = repo / "agents" / "CONTEXT.md"
+        if context.is_file():
+            parts.append(context.read_text(encoding="utf-8").rstrip())
+            parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -568,7 +547,7 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     if wid == "uo-query":
         run_via = (
             "Command，不是 Host 工作流。禁止 `pilot_run`。"
-            "拆路与冲突核对见主控思考（intent-reasoning），不要读 Skill 路由手册。"
+            "拆路与冲突核对见主控策略（pilot-control），不要读 Skill 路由手册。"
         )
     else:
         run_via = (
@@ -1237,12 +1216,12 @@ execution_variant = delegated_query。
     elif is_primary:
         runtime = """## 运行时契约
 
-工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（拆路见 intent-reasoning）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
+工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（拆路见 pilot-control）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
 """
     else:
         runtime = """## 运行时契约
 
-先读 stub 指出的 `prompt` / `method` / `bundle`。以 `prompt.md` 为本任务正文。只做本 Action。不要自己 finalize。查图用 `pilot_cli` `uo-query`（形态见 code-access 不变量）。
+先读 stub 指出的 `prompt` / `method` / `bundle`。以 `prompt.md` 为本任务正文。只做本 Action。不要自己 finalize。查图用 `pilot_cli` `uo-query`（形态见当前查询步 method）。
 """
     body = f"""# Agent: {aid}
 
@@ -1507,10 +1486,17 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     return {"ok": True, "compiled": compiled, "out_root": out_root.as_posix()}
 
 
-def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
-    """Validate composed OpenCode/host artifacts against current sources."""
+def validate_generated(
+    repo: Path, *, host: str = "opencode", generated_root: Path | None = None
+) -> list[str]:
+    """Validate composed OpenCode/host artifacts against current sources.
+
+    ``generated_root`` lets a read-only auditor validate a throwaway compose
+    without touching the real ``generated/<host>`` tree.
+    """
     errors: list[str] = []
-    out_agents = repo / "generated" / host / "agents"
+    gen_root = Path(generated_root) if generated_root else repo / "generated" / host
+    out_agents = gen_root / "agents"
     if not out_agents.is_dir():
         errors.append(f"missing generated/{host}/agents")
         return errors
@@ -1549,7 +1535,7 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
             if role in {"producer", "referee", "readonly_analyst"} and not agent_id:
                 errors.append(f"{wid}/{action.get('id')}: semantic role missing agent_id")
         # Skill action table must match workflow agents
-        skill = repo / "generated" / host / "skills" / wid / "SKILL.md"
+        skill = gen_root / "skills" / wid / "SKILL.md"
         if skill.is_file():
             text = skill.read_text(encoding="utf-8")
             for action in meta.get("actions") or []:

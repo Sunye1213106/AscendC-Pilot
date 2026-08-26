@@ -12,5 +12,5 @@ requires:
   context: [source_revision, known_file_paths]
 produces: [code_evidence, relevant_symbols, unresolved_questions]
 compatible_roles: [producer, readonly_analyst, referee]
-policies: [source-authority, code-access, evidence, language]
+policies: [source-authority, code-access, evidence, human-voice]
 method_file: METHOD.md

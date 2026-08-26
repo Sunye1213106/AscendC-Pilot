@@ -280,7 +280,7 @@ def test_missing_host_ask_ui_requires_primary_question() -> None:
     assert "pending 不等于确认框已可见" in plug
     assert "Host 已询问；不要再开第二个 question" not in plug
     assert "禁止用文字告诉用户" in plug
-    reason = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+    reason = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
         encoding="utf-8"
     )
     assert "不等于" in reason and "确认框已弹出" in reason
@@ -299,6 +299,23 @@ def test_plugin_pending_lock_does_not_block_resume_start() -> None:
     assert "applyForceNew" in (REPO / "opencode-plugin" / "pilot-driver.ts").read_text(
         encoding="utf-8"
     )
+
+
+def test_pilot_run_intent_is_turn_payload_not_nl_routing() -> None:
+    core = (REPO / "opencode-plugin" / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    stub = PLUGIN.read_text(encoding="utf-8")
+    tools = (REPO / "docs" / "getting-started" / "acp-tools.md").read_text(encoding="utf-8")
+    ctl = (REPO / "pilot" / "policies" / "pilot-control" / "POLICY.md").read_text(
+        encoding="utf-8"
+    )
+    cli = (REPO / "pilot" / "ascendc_pilot" / "cli.py").read_text(encoding="utf-8")
+    for text in (core, stub, tools, ctl):
+        assert "不是读懂用户句子" in text
+        assert "YAML" in text
+        assert "PASS" in text
+        assert "用户原话里的产品意图" not in text
+    assert "e.g. diff_only" not in cli
+    assert "Turn payload, not NL routing" in cli
 
 
 def test_compact_host_step_keeps_pin_facts() -> None:

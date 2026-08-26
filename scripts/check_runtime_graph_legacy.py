@@ -19,7 +19,10 @@ FORBIDDEN_PROD_MARKERS = re.compile(
     r"(?i)\b(deprecated|RESERVED\s*—\s*deprecated|codebase-memory|codebasememory|"
     r"stage_cbm_scope|cbm_scope|cbm_db)\b"
 )
-CBM_ALLOW = ("docs/history/",)
+# This module is the deny-list implementation, so it necessarily contains the
+# banned tokens. Exempt its own source here rather than in the wrapper, so a CI
+# loop that globs scripts/check_*.py cannot make it flag itself.
+CBM_ALLOW = ("docs/history/", "scripts/check_runtime_graph_legacy.py")
 # Active-product vocabulary bans (deny-lists / history docs exempt via path rules).
 BANNED_TOKEN_RE = re.compile(
     r"(?i)\b(csv_consumer(?:_root)?|scope_confirm(?:_\w+)?|stage_cbm|"

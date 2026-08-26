@@ -10,9 +10,9 @@
 
 **digest** — session binding 中的 `canonical_graph_digest`。`fresh` 表示当前 digest 匹配，不是「最近建过库」。
 
-**`/uo-update`** — 已有 CodeMap 上刷新源码变化。不是首次 `/uo-init`。
+**uo-update** — 已有 CodeMap 上刷新源码变化。不是首次 `uo-init`。聊天 slash：`/uo-update`。
 
-**查询 / `/uo-query`** — 读已有 CodeMap 的即时问答。不是 Host workflow，也不是建库。
+**查询 / uo-query** — 读已有 CodeMap 的即时问答。不是 Host workflow，也不是建库。聊天 slash：`/uo-query`。
 
 **简单查询** — 单一起始符号或一种参数形态。
 **复杂查询** — 含多个可独立查询的目标。二者不是「问得深 vs 问得浅」。
@@ -23,7 +23,7 @@
 
 **两轴 review** — Spec 验收需求完成度；Standards 验收仓规范。不是 `plan.md`，也不是 cases。易与「写测试计划」混。
 
-**Planning Context** — `/tg-plan` 的 Plan Owner Coverage IR（YAML）。不是审查结论。Primary 派 Task，自己不写 `tg/plan.md`。
+**Planning Context** — `tg-plan` 的 Plan Owner Coverage IR（YAML）。不是审查结论。Primary 派 Task，自己不写 `tg/plan.md`。
 
 **Target** — 可确定性判定 HIT/MISS 的实现状态。不是用户原话、diff 行或 CSV 列。
 

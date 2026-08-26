@@ -16,7 +16,7 @@ KNOWN_FORBIDDEN_TAGS = frozenset(
         "modify_uo_product",
         "no_free_repo_search",
         "free_repo_search",
-        "write_canonical_ce_plan",
+        "write_canonical_ce_yaml",
         "write_uo_formal_products",
         "write_excluded_set",
         "write_uo_checks",
@@ -241,9 +241,13 @@ def forbidden_blocks_write(
     if "write_canonical_uo_ir" in tags:
         if norm.startswith("uo/ir/") and "gap_investigation" not in norm:
             return "FORBIDDEN_WRITE_CANONICAL_UO_IR"
-    if "write_canonical_ce_plan" in tags:
-        if any(norm.startswith(p) for p in ("ce/plan/", "ce/intent/", "ce/impact/", "ce/scenarios/", "ce/verify/")):
-            return "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
+    if "write_canonical_ce_yaml" in tags:
+        # `ce/plan/**` is deliberately absent: ce-analyst produces the plan and
+        # ce-applier ticks its todos (contracts ce-plan-v1 / apply-patch-v1).
+        # Plan integrity is enforced semantically by patch_guard and
+        # validate_plan_revision, not by a path fence.
+        if any(norm.startswith(p) for p in ("ce/intent/", "ce/impact/", "ce/scenarios/", "ce/verify/")):
+            return "FORBIDDEN_WRITE_CANONICAL_CE_YAML"
     if "write_excluded_set" in tags:
         if "excluded" in Path(norm).name.lower() or "/excluded" in f"/{norm}":
             return "FORBIDDEN_WRITE_EXCLUDED_SET"

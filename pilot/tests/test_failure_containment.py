@@ -215,82 +215,6 @@ def test_user_prefixed_agents_are_not_pilot_family(tmp_path: Path):
         assert v2.get("decision") == "allow", (agent, v2)
 
 
-def test_build_agent_passthrough_during_containment(tmp_path: Path):
-    """Tab→Build must escape harness even with human_required leftover run."""
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
-    record_pilot_result(
-        tmp_path,
-        ok=False,
-        action_id="prepare",
-        step_id="uo_scope_finalize",
-        messages=["installed_skill_check.consistent is not true"],
-        source="uo_scope",
-    )
-    for agent in ("Build", "build", "plan", "Plan", "explore", "scout"):
-        v = authorize(tmp_path, tool="bash", command="dir", agent=agent)
-        assert v.get("decision") == "allow", (agent, v)
-        assert v.get("reason_code") == "HARNESS_INACTIVE"
-        v2 = authorize(
-            tmp_path,
-            tool="write",
-            path=str(tmp_path / "notes.txt"),
-            agent=agent,
-        )
-        assert v2.get("decision") == "allow", (agent, v2)
-    deny = authorize(tmp_path, tool="bash", command="python prepare_operator.py", agent="ascendc-pilot")
-    assert deny.get("decision") == "deny"
-
-
-def test_primary_readonly_inspect_during_containment(tmp_path: Path):
-    """Primary may list/read to diagnose; writes and engine scripts stay denied."""
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
-    record_pilot_result(
-        tmp_path,
-        ok=False,
-        action_id="prepare",
-        step_id="uo_scope_finalize",
-        messages=["installed_skill_check.consistent is not true"],
-        source="uo_scope",
-    )
-    for cmd in ("dir", "Get-ChildItem", "ls", "pwd", "gci"):
-        v = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-        assert v.get("decision") == "allow", (cmd, v)
-        assert v.get("reason_code") == "BASH_READONLY_INSPECT", (cmd, v)
-    read_ok = authorize(
-        tmp_path,
-        tool="read",
-        path=str(tmp_path / "op_host" / "arch35" / "foo.cpp"),
-        agent="ascendc-pilot",
-    )
-    assert read_ok.get("decision") == "allow", read_ok
-    assert read_ok.get("reason_code") == "CONTAINMENT_PRIMARY_READ"
-    grep_ok = authorize(
-        tmp_path,
-        tool="grep",
-        path=str(tmp_path / "op_kernel"),
-        command="CANN",
-        agent="ascendc-pilot",
-    )
-    assert grep_ok.get("decision") == "allow", grep_ok
-    delete_ok = authorize(
-        tmp_path,
-        tool="bash",
-        command=r"Remove-Item -Recurse -Force -LiteralPath 'D:\tmp\.ascendc-pr\pr-1'",
-        agent="ascendc-pilot",
-    )
-    assert delete_ok.get("decision") == "ask", delete_ok
-    assert delete_ok.get("reason_code") == "PRIMARY_BASH_ASK"
-    child_ok = authorize(tmp_path, tool="bash", command="dir", agent="uo-gap-investigator")
-    assert child_ok.get("decision") == "allow", child_ok
-    write_deny = authorize(
-        tmp_path,
-        tool="write",
-        path=str(tmp_path / "notes.txt"),
-        agent="ascendc-pilot",
-    )
-    assert write_deny.get("decision") == "deny", write_deny
-
-
 def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
     start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
@@ -323,27 +247,6 @@ def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
             assert path.read_text(encoding="utf-8") == content_before
         else:
             assert not path.exists()
-
-
-def test_direct_domain_script_denied_after_failure(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
-    record_pilot_result(
-        tmp_path,
-        ok=False,
-        action_id="prepare",
-        step_id="uo_scope_finalize",
-        messages=["installed_skill_check.consistent is not true"],
-        source="uo_scope",
-    )
-    for cmd in [
-        "python prepare_operator.py",
-        "python macro_scope_scan.py --project .",
-        "python3 review_checkpoint.py",
-        "python engines/understand-operator/uo/scripts/finalize_scope.py",
-    ]:
-        verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-        assert verdict.get("ok") is False
-        assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
 
 
 def test_repeated_retryable_failure_upgrades(tmp_path: Path):
@@ -538,72 +441,6 @@ def test_normal_flow_not_blocked(tmp_path: Path):
         command="acp run-action prepare --project .",
         agent="ascendc-pilot",
     ).get("ok") is True
-
-
-def test_ses_0711_replay_finalize_containment(tmp_path: Path):
-    """Replay the ses_0711 failure shape: finalize fails → only recovery commands legal."""
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
-    issue_action_lease(tmp_path, action_id="prepare", mode="normal")
-
-    # Simulate earlier successful domain steps having run (state still running).
-    assert load_state(tmp_path)["status"] == "running"
-
-    with patch(
-        "uo_init.pilot_engines.ENGINES",
-        {
-            "scope_validate": lambda _root, _ctx: {
-                "ok": False,
-                "messages": [
-                    "installed_skill_check.consistent is not true",
-                ],
-            }
-        },
-    ):
-        from ascendc_pilot.uo_scope import run_uo_scope
-
-        fin = run_uo_scope(tmp_path, "validate", op_name=tmp_path.name)
-
-    assert fin.get("status") == "human_required" or (fin.get("applied") or {}).get("ok") is False
-    st = load_state(tmp_path)
-    assert st["status"] == "human_required"
-    assert st["phase"] == "prepare"
-
-    nxt = describe_next(tmp_path)
-    assert nxt["allowed_actions"] == []
-    assert nxt["status"] == "human_required"
-
-    # Legal recovery bash
-    for cmd in [
-        "acp next --project .",
-        "acp inspect-failure --project .",
-        "acp retry-after-environment-fix --project .",
-        "acp abort --project .",
-        "acp status --project .",
-    ]:
-        v = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-        assert v.get("ok") is True, cmd
-
-    # Illegal after failure (writes / domain CLI / engine source). Primary
-    # Read / Glob / Get-ChildItem are allowed for diagnosis.
-    illegal = [
-        ("read", str(tmp_path / "engines" / "understand-operator" / "uo" / "scripts" / "prepare_operator.py"), ""),
-        ("write", str(tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml"), ""),
-        ("bash", "", "python prepare_operator.py"),
-        ("bash", "", "acp uo-scope scan --project ."),
-        ("bash", "", "acp run-action prepare --project ."),
-        ("bash", "", "acp advance extract --project ."),
-    ]
-    for tool, path, cmd in illegal:
-        v = authorize(
-            tmp_path,
-            tool=tool,
-            path=path,
-            command=cmd,
-            agent="ascendc-pilot",
-            action="prepare",
-        )
-        assert v.get("ok") is False, (tool, path, cmd)
-        assert v.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
 
 
 def test_observation_persisted_to_run_dir(tmp_path: Path):

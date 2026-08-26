@@ -4,7 +4,7 @@
 
 质量口径：[`high-quality-codemap.md`](high-quality-codemap.md) + 当前 `codemap_quality()`。不引用历史 pass 名单。`grade: ready` 不能代替抽检。
 
-产物：[`artifacts/uo-init-generalization/pass70-20260816/`](../../artifacts/uo-init-generalization/pass70-20260816/)（`sample.json` / `results.json` / `ledger.md` / `inspect/`）。
+产物：`artifacts/uo-init-generalization/pass70-20260816/`（`sample.json` / `results.json` / `ledger.md` / `inspect/`），只在跑测机器上，不入仓。
 
 ## 抽样（冻结）
 
@@ -28,7 +28,7 @@
 | IFA packing / 实体 | 12/12，entity=34782（与上一 sweep 一致） |
 | FAG packing | 19/19 |
 
-70 行清单见 [`ledger.md`](../../artifacts/uo-init-generalization/pass70-20260816/ledger.md)。
+70 行清单见该产物目录下的 `ledger.md`。
 
 ## 本轮通用修复（无算子名特化）
 

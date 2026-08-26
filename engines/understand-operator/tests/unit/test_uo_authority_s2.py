@@ -225,15 +225,21 @@ def test_update_operator_fail_closed_without_uo(tmp_path: Path):
         update_operator(tmp_path, "toy", architecture="arch35")
 
 
-def test_emit_confidence_report_removed(tmp_path: Path, capsys):
-    import json
+def test_emit_confidence_report_removed(tmp_path: Path):
+    """The retired subcommand must not be reachable on `acp`.
+
+    This asserted a structured `legacy_command_removed` payload, but no
+    legacy-command shim was ever built: argparse simply does not register the
+    subcommand, so it exits 2 on an unknown choice. Assert the guarantee that
+    actually exists rather than a rejection contract nothing implements.
+    """
+    import pytest
 
     from ascendc_pilot.cli import main
 
-    rc = main(["emit-confidence-report", "--project", str(tmp_path)])
-    assert rc == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert payload.get("error") == "legacy_command_removed"
+    with pytest.raises(SystemExit) as excinfo:
+        main(["emit-confidence-report", "--project", str(tmp_path)])
+    assert excinfo.value.code == 2
 
 
 def test_migrate_refuses_legacy_agent_dir(tmp_path: Path):

@@ -99,7 +99,12 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         callee = str(getattr(site, "callee", "") or "")
         if caller not in reach or callee not in reach:
             continue
-        src = codemap.upsert(EntityKind.FUNCTION, caller, attrs={"layer": "host"})
-        dst = codemap.upsert(EntityKind.FUNCTION, callee, attrs={"layer": "host"})
-        codemap.link(RelationKind.CALLS, src.id, dst.id)
+        # The call site is a clang fact; reachability only decides whether to
+        # keep it, so the edge is as good as the walk that produced it.
+        attrs = {"layer": "host", "provenance": "clang_walk"}
+        src = codemap.upsert(EntityKind.FUNCTION, caller, attrs=dict(attrs))
+        dst = codemap.upsert(EntityKind.FUNCTION, callee, attrs=dict(attrs))
+        codemap.link(
+            RelationKind.CALLS, src.id, dst.id, attrs={"provenance": "clang_walk"}
+        )
     return codemap

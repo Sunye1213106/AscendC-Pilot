@@ -9,9 +9,31 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+
+
+@contextmanager
+def _pinned_arch(arch: str):
+    """`ledger_path` resolves arch via `discover_arch`, whose first option is env.
+
+    `ensure_agent_layout` only creates directories; it writes no
+    `state/workflow.yaml`, so directory scanning alone fail-closes with
+    ARCHITECTURE_MISSING_IN_RUN_STATE and this self-test used to crash instead
+    of checking the ledger invariants it exists to check.
+    """
+    prev = os.environ.get("UO_ARCH")
+    os.environ["UO_ARCH"] = arch
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("UO_ARCH", None)
+        else:
+            os.environ["UO_ARCH"] = prev
 
 
 def _ensure_path() -> None:
@@ -38,7 +60,7 @@ def self_test() -> list[str]:
     if can_transition("verified", "open"):
         errors.append("verified→open should require explicit revert")
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory() as td, _pinned_arch("arch0"):
         root = Path(td)
         ensure_agent_layout(root, arch="arch0")
         ledger = load_ledger(root)

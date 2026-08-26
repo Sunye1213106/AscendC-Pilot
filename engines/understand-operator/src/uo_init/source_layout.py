@@ -436,8 +436,10 @@ def resolve_quoted_includes(path: Path) -> list[Path]:
         text = _text(path)
     except OSError:
         return out
+    from uo_init.paths import resolved
+
     for inc in _QUOTED_INCLUDE_RE.findall(text):
-        cand = (parent / inc.replace("\\", "/")).resolve()
+        cand = resolved(parent / inc.replace("\\", "/"))
         if cand.is_file():
             out.append(cand)
     return out
@@ -471,17 +473,16 @@ def _resolve_confirmed_path(op: Path, rel: str) -> Path | None:
             candidates.append(Path(repo) / rel_path)
     except Exception:  # noqa: BLE001
         pass
+    from uo_init.paths import resolved as _resolve
+
     seen: set[Path] = set()
     for cand in candidates:
-        try:
-            resolved = cand.resolve()
-        except OSError:
+        hit = _resolve(cand)
+        if hit in seen:
             continue
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if resolved.is_file():
-            return resolved
+        seen.add(hit)
+        if hit.is_file():
+            return hit
     return None
 
 
@@ -524,8 +525,10 @@ def load_confirmed_source_files(root: Path, architecture: str) -> list[Path] | N
 
 
 def _posix_rel(root: Path, path: Path) -> str:
+    from uo_init.paths import resolved
+
     try:
-        return path.resolve().relative_to(Path(root).resolve()).as_posix()
+        return resolved(path).relative_to(resolved(root)).as_posix()
     except ValueError:
         return path.as_posix().replace("\\", "/")
 
@@ -723,8 +726,10 @@ def selected_tiling_headers(root: Path, architecture: str) -> list[Path]:
 
 def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
     """Quoted-include walk from current-arch kernel entries (no other-arch)."""
+    from uo_init.paths import resolved as _resolve
+
     kernel_files = list(selected_kernel_files(root, architecture))
-    by_key = {p.resolve(): p for p in kernel_files}
+    by_key = {_resolve(p): p for p in kernel_files}
     entries: list[Path] = []
     for path in kernel_files:
         if path.suffix.lower() not in {".cpp", ".cc", ".cxx"}:
@@ -742,7 +747,7 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
     pending = list(entries)
     while pending:
         path = pending.pop(0)
-        key = path.resolve()
+        key = _resolve(path)
         if key in seen:
             continue
         seen.add(key)
@@ -750,17 +755,19 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
         for inc in resolve_quoted_includes(path):
             if is_other_arch_path(inc, architecture):
                 continue
-            resolved = inc.resolve()
-            if resolved in seen:
+            hit = _resolve(inc)
+            if hit in seen:
                 continue
-            pending.append(by_key.get(resolved, inc))
+            pending.append(by_key.get(hit, inc))
     return order
 
 
 def _path_is_under(path: Path, root: Path) -> bool:
     """True when ``path`` lives in this operator tree, not a sibling op include."""
+    from uo_init.paths import resolved
+
     try:
-        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        resolved(path).relative_to(resolved(root))
         return True
     except ValueError:
         return False

@@ -395,8 +395,9 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "ce-apply": {
         "apply_gate": ["ce/plan/**"],
+        # No `uo/*.uo`: patch is source-reading only ("本步不查图" in
+        # skills/ce-apply/SKILL.md), and its capability_ids drop kb-query.
         "patch": [
-            "uo/*.uo",
             "ce/plan/**",
             "source:op_host/**",
             "source:op_kernel/**",

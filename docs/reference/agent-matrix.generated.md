@@ -5,8 +5,8 @@
 | Agent | 类型 | 角色 | 模式 | 可读范围 | 可写范围 | 来源 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ascendc-pilot` | `llm` | `controller` | `primary` | `pilot:*` |  | `agents/ascendc-pilot.yaml` |
-| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:session_handoff.md`, +7 | `pilot:runs/**/actions/plan_draft/**`, `pilot:runs/**/actions/plan_revise/**`, +1 | `agents/ce-analyst.yaml` |
-| `ce-applier` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:runs/**`, +5 | `source:op_host/**`, `source:op_kernel/**`, +4 | `agents/ce-applier.yaml` |
+| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:session_handoff.md`, +7 | `pilot:runs/**/actions/plan_draft/**`, `pilot:runs/**/actions/plan_revise/**`, +2 | `agents/ce-analyst.yaml` |
+| `ce-applier` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:runs/**`, +6 | `source:op_host/**`, `source:op_kernel/**`, +4 | `agents/ce-applier.yaml` |
 | `ce-reviewer` | `llm` | `readonly_reviewer` | `subagent` | `pilot:uo/**`, `pilot:ce/plan/**`, +9 |  | `agents/ce-reviewer.yaml` |
 | `deterministic-ce-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +7 | `pilot:ce/**`, `pilot:runs/**`, +1 | `agents/deterministic-ce-engine.yaml` |
 | `deterministic-tg-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:tg/**`, `pilot:uo/**`, +8 | `pilot:tg/**`, `pilot:runs/**`, +3 | `agents/deterministic-tg-engine.yaml` |

@@ -247,7 +247,7 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 - 短地图 [`uo-product-map.md`](../../skills/uo-query/references/uo-product-map.md)
 - 子代 METHOD：`skills/uo-query/SKILL.md`
-- 主控路由：`pilot/policies/invariants/intent-reasoning.md`
+- 主控路由：`pilot/policies/pilot-control/POLICY.md`
 - 交付：简单查询 = 当前会话 stdout；复杂查询 = 子代 Task 全文（主控综合）。子代不要 Write `answer.yaml`。
 
 `readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。

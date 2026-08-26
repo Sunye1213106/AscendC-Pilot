@@ -221,6 +221,54 @@ def test_aggregate_modes(tmp_path: Path) -> None:
     assert q.aggregate_gaps()["total"] >= 1
 
 
+def test_buffer_mode_answers_for_registers(tmp_path: Path) -> None:
+    """REGISTER declarations are reachable through the buffer surface.
+
+    The extractor records 1k+ RegTensor/VREG declarations per arch35 operator.
+    Before they were joined here nothing queried them, so register pressure --
+    the reason they are extracted -- had no way to be asked about.
+    """
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="BUF",
+            kind=EntityKind.BUFFER,
+            name="dqWorkspace",
+            attrs={"scope": "Process", "allocated": "op_kernel/arch35/k.h:40"},
+            file="op_kernel/arch35/k.h",
+            line_start=40,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="REG",
+            kind=EntityKind.REGISTER,
+            name="dqAccReg",
+            attrs={
+                "register_class": "vector",
+                "type_name": "RegTensor",
+                "scope": "Process",
+            },
+            file="op_kernel/arch35/k.h",
+            line_start=52,
+            status="extracted",
+        )
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+
+    reg = q.aggregate_buffer("dqAccReg")
+    assert [row["kind"] for row in reg["buffers"]][:1] == ["REGISTER"]
+    assert (reg["buffers"][0].get("facts") or {}).get("register_class") == "vector"
+
+    both = q.aggregate_buffer("dq")
+    kinds = {row["kind"] for row in both["buffers"]}
+    assert kinds == {"BUFFER", "REGISTER"}
+
+
 def test_type_search_is_exact_and_skips_info_manager(tmp_path: Path) -> None:
     cm = CodeMap(op_name="toy", architecture="arch35")
     cm.add_entity(

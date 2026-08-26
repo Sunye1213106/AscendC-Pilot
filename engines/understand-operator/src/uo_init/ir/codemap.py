@@ -105,6 +105,7 @@ def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, s
                 "branch_kind": "host_check",
                 "function": fn_name,
                 "universe": universe or "VALIDATION_ONLY",
+                "provenance": "clang_walk",
             },
             file=file,
             line=line,
@@ -140,6 +141,7 @@ def _ingest_host_write_events(
         field_attrs: dict[str, Any] = {
             "layer": "host",
             "rhs": rhs,
+            "provenance": "clang_walk",
         }
         if guards and (not ev_file or ev_line <= 0):
             field_attrs["guards"] = [str(g)[:120] for g in guards]
@@ -152,8 +154,13 @@ def _ingest_host_write_events(
         )
         append_write_site(target.attrs, file=ev_file, line=ev_line, rhs=rhs)
         if fn_name:
-            fn = cm.upsert(EntityKind.FUNCTION, fn_name, attrs={"layer": "host"})
-            rel = cm.link(RelationKind.WRITES, fn.id, target.id)
+            fn = cm.upsert(EntityKind.FUNCTION, fn_name, attrs={"layer": "host", "provenance": "clang_walk"})
+            rel = cm.link(
+                RelationKind.WRITES,
+                fn.id,
+                target.id,
+                attrs={"provenance": "clang_walk"},
+            )
             append_write_site(rel.attrs, file=ev_file, line=ev_line, rhs=rhs)
             sites = rel.attrs.get("write_sites")
             if isinstance(sites, list) and sites:
@@ -181,13 +188,24 @@ def _ingest_host_write_events(
                     "predicate": gtext,
                     "branch_kind": "host_guard",
                     "function": fn_name,
+                    "provenance": "clang_walk",
                 },
                 file=ev_file,
                 line=ev_line,
                 status="confirmed",
             )
-            cm.link(RelationKind.GUARDED_BY, target.id, br.id)
-            cm.link(RelationKind.CONTROLS, br.id, target.id)
+            cm.link(
+                RelationKind.GUARDED_BY,
+                target.id,
+                br.id,
+                attrs={"provenance": "clang_walk"},
+            )
+            cm.link(
+                RelationKind.CONTROLS,
+                br.id,
+                target.id,
+                attrs={"provenance": "clang_walk"},
+            )
 
 
 # Legacy KB kind → CodeMap entity kind.
@@ -436,10 +454,11 @@ class CodeMap:
         self._install_index_maps(state.get("entities") or {}, state.get("relations") or {})
 
     # -- mutation ----------------------------------------------------------
-    def add_entity(self, entity: Entity) -> Entity:
+    def add_entity(self, entity: Entity, *, stamp: bool = True) -> Entity:
         existing = self.entities.get(entity.id)
         if existing is None:
-            entity.attrs = self._stamp_attrs(entity.attrs)
+            if stamp:
+                entity.attrs = self._stamp_attrs(entity.attrs)
             self.entities[entity.id] = entity
             return entity
         old_name = existing.name
@@ -525,8 +544,13 @@ class CodeMap:
                     existing.line_end = inc_end
                 return
             if inc_span > ex_span:
-                if incoming.file:
-                    existing.file = incoming.file
+                # A range is only meaningful together with the file it was read
+                # from. Adopting the range while keeping the previous file used
+                # to graft one file's span onto another, producing spans that
+                # run past end-of-file.
+                if not incoming.file:
+                    return
+                existing.file = incoming.file
                 existing.line_start = inc_start
                 existing.line_end = inc_end
                 return
@@ -547,8 +571,15 @@ class CodeMap:
             return
         if incoming.file and existing.file == incoming.file:
             if kind not in {EntityKind.BRANCH.value, EntityKind.OPERATION.value}:
-                if int(incoming.line_end or 0) > int(existing.line_end or 0):
-                    existing.line_end = incoming.line_end
+                # Non-definition kinds are keyed by name alone, so two locals
+                # called `dim0` in different functions land on one entity. Only
+                # extend the span when the incoming range touches the existing
+                # one, i.e. it is the same declaration seen more completely.
+                # A disjoint occurrence is a separate site and is already kept
+                # in write_sites; unioning it produced spans covering most of
+                # the file, which then swallowed every text-recall hit in it.
+                if inc_end > ex_end and inc_start <= ex_end + 1:
+                    existing.line_end = inc_end
 
     @staticmethod
     def _merge_write_sites(existing: Entity, incoming: Entity) -> None:
@@ -944,20 +975,45 @@ class CodeMap:
             fn = cm.upsert(
                 EntityKind.FUNCTION,
                 str(name),
-                attrs={"layer": "host"},
+                attrs={"layer": "host", "provenance": "clang_walk"},
                 file=str(getattr(summary, "file", "") or ""),
                 line=start,
                 line_end=end if end > start else None,
             )
             for callee, _args in getattr(summary, "calls", None) or []:
-                other = cm.upsert(EntityKind.FUNCTION, str(callee), attrs={"layer": "host"})
-                cm.link(RelationKind.CALLS, fn.id, other.id)
+                other = cm.upsert(
+                    EntityKind.FUNCTION,
+                    str(callee),
+                    attrs={"layer": "host", "provenance": "clang_walk"},
+                )
+                cm.link(
+                    RelationKind.CALLS,
+                    fn.id,
+                    other.id,
+                    attrs={"provenance": "clang_walk"},
+                )
             for w in getattr(summary, "writes", None) or []:
-                field_e = cm.upsert(EntityKind.FIELD, str(w), attrs={"layer": "host"})
-                cm.link(RelationKind.WRITES, fn.id, field_e.id)
+                field_e = cm.upsert(
+                    EntityKind.FIELD, str(w), attrs={"layer": "host", "provenance": "clang_walk"}
+                )
+                cm.link(
+                    RelationKind.WRITES,
+                    fn.id,
+                    field_e.id,
+                    attrs={"provenance": "clang_walk"},
+                )
             for r in getattr(summary, "reads", None) or []:
-                var_e = cm.upsert(EntityKind.VARIABLE, str(r), attrs={"layer": "host"})
-                cm.link(RelationKind.READS, fn.id, var_e.id)
+                var_e = cm.upsert(
+                    EntityKind.VARIABLE,
+                    str(r),
+                    attrs={"layer": "host", "provenance": "clang_walk"},
+                )
+                cm.link(
+                    RelationKind.READS,
+                    fn.id,
+                    var_e.id,
+                    attrs={"provenance": "clang_walk"},
+                )
 
         host_branch_ordinals: dict[tuple[str, str, str], int] = {}
         _ingest_host_write_events(cm, getattr(host_ir, "writes", None) or [], host_branch_ordinals)
@@ -969,15 +1025,20 @@ class CodeMap:
             caller = cm.upsert(
                 EntityKind.FUNCTION,
                 str(getattr(site, "caller", "") or ""),
-                attrs={"layer": "host"},
+                attrs={"layer": "host", "provenance": "clang_walk"},
             )
             callee = cm.upsert(
                 EntityKind.FUNCTION,
                 str(getattr(site, "callee", "") or ""),
-                attrs={"layer": "host"},
+                attrs={"layer": "host", "provenance": "clang_walk"},
             )
             if caller.name and callee.name:
-                rel = cm.link(RelationKind.CALLS, caller.id, callee.id)
+                rel = cm.link(
+                    RelationKind.CALLS,
+                    caller.id,
+                    callee.id,
+                    attrs={"provenance": "clang_walk"},
+                )
                 site_file = str(getattr(site, "file", "") or "")
                 site_line = int(getattr(site, "line", 0) or 0)
                 if site_file and site_line > 0:
@@ -1054,16 +1115,33 @@ class CodeMap:
                     "dimensions": list(getattr(br, "dimensions", None) or []),
                     "variants": list(getattr(br, "variants", None) or []),
                     "function": str(getattr(br, "function", "") or ""),
+                    "provenance": "clang_kernel_branch",
                 },
                 file=br_file,
                 line=br_line,
                 status="confirmed",
             )
             for kernel in verified_kernels:
-                cm.link(RelationKind.CONTROLS, branch.id, kernel.id)
+                # Every branch is linked to every verified kernel: which kernel
+                # a branch sits in is not in the IR, so this is a scope guess.
+                cm.link(
+                    RelationKind.CONTROLS,
+                    branch.id,
+                    kernel.id,
+                    attrs={"provenance": "source_kernel_branch_scope"},
+                )
             for dim in getattr(br, "dimensions", None) or []:
-                key = cm.upsert(EntityKind.TILING_KEY, str(dim), attrs={"layer": "tiling"})
-                cm.link(RelationKind.SELECTS, key.id, branch.id)
+                key = cm.upsert(
+                    EntityKind.TILING_KEY,
+                    str(dim),
+                    attrs={"layer": "tiling", "provenance": "kernel_branch_dimension"},
+                )
+                cm.link(
+                    RelationKind.SELECTS,
+                    key.id,
+                    branch.id,
+                    attrs={"provenance": "kernel_branch_dimension"},
+                )
                 for kernel in verified_kernels:
                     cm.link(
                         RelationKind.SELECTS,
@@ -1150,84 +1228,4 @@ class CodeMap:
                 status=str(getattr(edge, "status", "extracted") or "extracted"),
                 confidence=float(getattr(edge, "confidence", 1.0) or 1.0),
             )
-        return cm
-
-    @classmethod
-    def assemble(
-        cls,
-        *,
-        op_name: str = "",
-        architecture: str = "",
-        host_ir: Any = None,
-        kernel_ir: Any = None,
-        tiling_ir: Any = None,
-        kb: Any = None,
-        inputs: Iterable[str] | None = None,
-        key_fields: Iterable[dict[str, Any]] | None = None,
-    ) -> "CodeMap":
-        """Build a CodeMap from available legacy IR pieces."""
-        cm = cls(op_name=op_name, architecture=architecture)
-        if architecture:
-            arch = cm.upsert(EntityKind.ARCH, architecture)
-            bv = cm.upsert(
-                EntityKind.BUILD_VARIANT,
-                architecture,
-                attrs={"architecture": architecture},
-            )
-            cm.link(RelationKind.ACTIVE_UNDER, arch.id, bv.id)
-
-        for inp in inputs or ():
-            name = str(inp)
-            if name:
-                cm.upsert(EntityKind.INPUT, name, attrs={"layer": "api"})
-
-        if host_ir is not None:
-            cls.from_host_ir(host_ir, op_name=op_name, architecture=architecture, codemap=cm)
-        if tiling_ir is not None:
-            cls.from_tiling_data_ir(
-                tiling_ir, op_name=op_name, architecture=architecture, codemap=cm
-            )
-        if kernel_ir is not None:
-            cls.from_kernel_ir(
-                kernel_ir, op_name=op_name, architecture=architecture, codemap=cm
-            )
-        if kb is not None:
-            cls.from_kb(kb, codemap=cm)
-
-        # Input-rooted derivation rows → DERIVES / SELECTS backbone.
-        for row in key_fields or ():
-            if not isinstance(row, dict):
-                continue
-            key_name = str(row.get("name") or row.get("field") or row.get("dim") or "")
-            if not key_name:
-                continue
-            key_e = cm.upsert(EntityKind.TILING_KEY, key_name, attrs={"layer": "tiling"})
-            for root in row.get("input_roots") or row.get("roots") or []:
-                root_name = str(root)
-                if not root_name:
-                    continue
-                known_inputs = {e.name for e in cm.by_kind(EntityKind.INPUT)}
-                kind = EntityKind.VARIABLE
-                if root_name in known_inputs:
-                    kind = EntityKind.INPUT
-                elif root_name.isupper() and "_" in root_name:
-                    kind = EntityKind.INPUT
-                elif root_name.startswith("INPUT_") or root_name.startswith("ATTR_"):
-                    kind = EntityKind.INPUT
-                root_e = cm.upsert(kind, root_name, attrs={"layer": "api"})
-                cm.link(RelationKind.DERIVES, root_e.id, key_e.id)
-                cm.link(RelationKind.FLOWS_TO, root_e.id, key_e.id)
-            for kernel in cm.by_kind(EntityKind.KERNEL):
-                cm.link(RelationKind.SELECTS, key_e.id, kernel.id)
-
-        # Ensure tiling fields written by host connect toward keys when names match.
-        for field_e in cm.by_kind(EntityKind.FIELD):
-            for key_e in cm.by_kind(EntityKind.TILING_KEY):
-                if field_e.name and (
-                    field_e.name == key_e.name
-                    or field_e.name.endswith("." + key_e.name)
-                    or key_e.name in field_e.name
-                ):
-                    cm.link(RelationKind.FLOWS_TO, field_e.id, key_e.id)
-
         return cm

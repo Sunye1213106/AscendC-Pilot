@@ -12,5 +12,5 @@ requires:
   context: [uo_root, tg_root, kb_ready]
 produces: [kb_hits, kb_refs, gaps]
 compatible_roles: [producer, readonly_analyst, referee, deterministic_engine]
-policies: [source-authority, evidence, language]
+policies: [source-authority, evidence, human-voice]
 method_file: METHOD.md

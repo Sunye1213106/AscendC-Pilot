@@ -126,3 +126,11 @@ def test_upgrade_adds_template_block_and_sel_lines(tmp_path: Path) -> None:
     name = q.agent_query(pattern="IsTnd")
     extras = (name.get("cards") or [{}])[0].get("extras") or {}
     assert extras.get("sel_sites")
+
+
+def test_branch_expression_is_not_a_name_leaf() -> None:
+    from uo_init.store.accel import _indexable_leaves
+
+    assert _indexable_leaves("BRANCH", "!(dim0 == fBaseParams.b)") == []
+    assert _indexable_leaves("BRANCH", "OP_CHECK_IF((dim0 != b))") == ["op_check_if"]
+    assert "s1inner" in _indexable_leaves("TILING_FIELD", "s1Inner")

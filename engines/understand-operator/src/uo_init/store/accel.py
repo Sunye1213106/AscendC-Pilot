@@ -19,13 +19,20 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
+from uo_init.paths import CANN_MARKER, resolve_operator_file
+
 ACCEL_VERSION = "uo-accel/v2"
 _SEL_MACRO_RE = re.compile(r"ASCENDC_TPL_ARGS_SEL\s*\(")
 
+#: What an in-place `upgrade()` may leave behind. This is the complement of
+#: `view_projection.NOT_SHIPPED`, not a shorter list: dropping anything else
+#: would delete a blob no projector can rebuild.
 KEEP_QUERY_BLOBS = (
+    "tiling/exhaustive_key_space.yaml",
     "tiling/template_blocks.yaml",
     "tiling/tpl_schema.yaml",
     "tiling/legal_key_index.jsonl",
+    "ir/operator_graph.yaml",
     "summary",
 )
 
@@ -58,7 +65,6 @@ CREATE TABLE IF NOT EXISTS entity_name_leaf(
   is_ascendc INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_name_leaf ON entity_name_leaf(leaf, is_ascendc);
-CREATE INDEX IF NOT EXISTS idx_name_leaf_entity ON entity_name_leaf(entity_id);
 """
 
 # Recall fallback scans source text with LIKE. An FTS5 index answers faster but
@@ -82,6 +88,10 @@ CREATE INDEX IF NOT EXISTS idx_source_line_path ON source_line(path, line);
 SOURCE_SUFFIXES = (".h", ".hpp", ".cpp", ".cc", ".c", ".cuh")
 
 
+_IDENT_LEAF_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*")
+_EXPR_NAME_RE = re.compile(r"[()=!<>&|+\-*/%]")
+
+
 def _leaf_variants(name: str) -> list[str]:
     """Lowercased full name plus its ``::`` / ``.`` qualified leaf."""
     low = str(name or "").strip().lower()
@@ -96,6 +106,23 @@ def _leaf_variants(name: str) -> list[str]:
     return out
 
 
+def _indexable_leaves(kind: str, name: str) -> list[str]:
+    """Name-lookup leaves. BRANCH expressions are not identifiers.
+
+    A host check named ``!(dim0 == fBaseParams.b)`` used to occupy the leaf
+    index as a whole string, crowding out real symbols. Keep a leading
+    identifier (``OP_CHECK_IF(...)``) so a name query still lands; drop the
+    rest.
+    """
+    text = str(name or "").strip()
+    if not text:
+        return []
+    if str(kind or "") == "BRANCH" and _EXPR_NAME_RE.search(text):
+        match = _IDENT_LEAF_RE.match(text)
+        return [match.group(0).lower()] if match else []
+    return _leaf_variants(text)
+
+
 def has_accel(conn: sqlite3.Connection) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_name_leaf' LIMIT 1"
@@ -108,11 +135,12 @@ def build_name_leaf(conn: sqlite3.Connection) -> int:
     conn.executescript(ACCEL_SQL)
     conn.execute("DELETE FROM entity_name_leaf")
     rows: list[tuple[str, str, int]] = []
-    for eid, name, data in conn.execute(
-        "SELECT id, name, IFNULL(data,'') FROM entity WHERE name IS NOT NULL AND name <> ''"
+    for eid, kind, name, data in conn.execute(
+        "SELECT id, kind, name, IFNULL(data,'') FROM entity "
+        "WHERE name IS NOT NULL AND name <> ''"
     ):
         is_ascendc = 1 if '"catalog": "ascendc"' in data or '"catalog":"ascendc"' in data else 0
-        for leaf in _leaf_variants(name):
+        for leaf in _indexable_leaves(str(kind or ""), str(name or "")):
             rows.append((leaf, eid, is_ascendc))
     conn.executemany(
         "INSERT INTO entity_name_leaf(leaf, entity_id, is_ascendc) VALUES (?,?,?)", rows
@@ -130,11 +158,17 @@ def has_source_line(conn: sqlite3.Connection) -> bool:
 def build_source_line(
     conn: sqlite3.Connection, op_root: Path, *, architecture: str = ""
 ) -> tuple[int, int]:
-    """Index every source line under the operator tree. Returns (files, lines).
+    """Index every source line the graph can cite. Returns (files, lines).
 
     A `.uo` is built per architecture, so lines under a foreign `archNN/` are
     skipped: they cannot be a valid citation for this product, and they roughly
     halve the index.
+
+    Shared code beside the operator (`../common/...`) is indexed too, but only
+    the files the graph actually references. Walking the sibling tree would pull
+    in every other operator in the domain; leaving it out entirely meant every
+    entity in shared code was uncitable, which reads as "no such code" rather
+    than "not indexed".
     """
     conn.executescript(SOURCE_LINE_SQL)
     conn.execute("DELETE FROM source_line")
@@ -142,32 +176,118 @@ def build_source_line(
     arch = str(architecture or "").strip().lower()
     files = 0
     rows: list[tuple[str, int, str]] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
-            continue
-        rel_parts = path.relative_to(root).parts
+
+    def skip(rel_parts: tuple[str, ...]) -> bool:
         # The operator tree itself often lives under `.ascendc-pr`, so only
         # generated artifacts *below* the root are excluded.
         if any(part.startswith(".ascendc-") for part in rel_parts):
-            continue
-        if arch and any(
+            return True
+        return bool(arch) and any(
             part.lower().startswith("arch") and part.lower() != arch
             for part in rel_parts
-        ):
-            continue
+        )
+
+    def index(path: Path, rel: str) -> bool:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            continue
-        rel = path.relative_to(root).as_posix()
-        files += 1
+            return False
         for no, line in enumerate(text.splitlines(), start=1):
             if line.strip():
                 rows.append((rel, no, line))
+        return True
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        rel = path.relative_to(root)
+        if skip(rel.parts):
+            continue
+        if index(path, rel.as_posix()):
+            files += 1
+
+    for rel in _referenced_outside_paths(conn):
+        if skip(tuple(rel.split("/"))):
+            continue
+        resolved = resolve_operator_file(root, rel)
+        if resolved is None or resolved.suffix.lower() not in SOURCE_SUFFIXES:
+            continue
+        # Indexed under the spelling the graph cites, so the recall join is an
+        # equality rather than another round of path guessing.
+        if index(resolved, rel):
+            files += 1
+
     conn.executemany(
         "INSERT INTO source_line(path, line, text) VALUES (?,?,?)", rows
     )
     return files, len(rows)
+
+
+def _referenced_outside_paths(conn: sqlite3.Connection) -> list[str]:
+    """Distinct locations the graph cites from outside the operator directory.
+
+    Reads the graph rather than the filesystem so the files that get indexed are
+    exactly the ones something points at: the sibling tree holds every other
+    operator in the domain, and the toolkit holds thousands of headers.
+    """
+    seen: dict[str, None] = {}
+    for table in ("entity", "source_span"):
+        for (value,) in conn.execute(
+            f"SELECT DISTINCT file FROM {table} "
+            "WHERE IFNULL(file,'') LIKE '../%' OR IFNULL(file,'') LIKE ?",
+            (CANN_MARKER + "%",),
+        ):
+            seen.setdefault(str(value), None)
+    return list(seen)
+
+
+def clamp_spans_to_file_length(conn: sqlite3.Connection) -> dict[str, int]:
+    """Cut entity spans back to the end of the file they claim.
+
+    Name-keyed entities merge across sites, and a bad merge can leave
+    ``line_end`` past end-of-file. Recall maps a text hit to an entity by span
+    containment, so an over-long span silently captures every hit in the file.
+    Requires ``source_line``; returns counts so the defect stays visible
+    instead of being quietly absorbed.
+    """
+    if not has_source_line(conn):
+        return {"clamped": 0, "checked": 0, "unmatched": 0}
+
+    extent: dict[str, int] = {
+        str(path): int(mx or 0)
+        for path, mx in conn.execute(
+            "SELECT path, MAX(line) FROM source_line GROUP BY path"
+        )
+    }
+    # Index by basename so an entity's absolute or partially relative path can
+    # still be matched to the indexed operator-relative path.
+    by_base: dict[str, list[tuple[str, int]]] = {}
+    for path, mx in extent.items():
+        by_base.setdefault(path.rsplit("/", 1)[-1], []).append((path, mx))
+
+    stats = {"clamped": 0, "checked": 0, "unmatched": 0}
+    updates: list[tuple[int, str]] = []
+    for eid, file, line_start, line_end in conn.execute(
+        "SELECT id, file, IFNULL(line_start,0), IFNULL(line_end,0) FROM entity "
+        "WHERE IFNULL(file,'') <> '' AND IFNULL(line_end,0) > 0"
+    ):
+        key = str(file or "").replace("\\", "/")
+        candidates = by_base.get(key.rsplit("/", 1)[-1]) or []
+        limit = 0
+        for path, mx in candidates:
+            if key.endswith(path) or path.endswith(key):
+                limit = mx
+                break
+        if not limit:
+            stats["unmatched"] += 1
+            continue
+        stats["checked"] += 1
+        if int(line_end) > limit:
+            updates.append((max(limit, int(line_start)), eid))
+    if updates:
+        conn.executemany("UPDATE entity SET line_end = ? WHERE id = ?", updates)
+        stats["clamped"] = len(updates)
+    return stats
 
 
 def has_template_block(conn: sqlite3.Connection) -> bool:
@@ -213,16 +333,16 @@ def _resolve_sel_header(conn: sqlite3.Connection, op_root: Path | None) -> Path 
     if row is None or not op_root:
         return None
     rel = str(row[0] or "").replace("\\", "/")
-    candidates = [op_root / rel, op_root / Path(rel).name]
-    if "/" in rel:
-        candidates.append(op_root / rel.split("/", 1)[1])
-    for cand in candidates:
-        if cand.is_file():
-            return cand
+    resolved = resolve_operator_file(op_root, rel)
+    if resolved is not None:
+        return resolved
+    # Basename search across the tree is a guess, and `patch_sel_lines` stamps
+    # whatever it returns onto every TEMPLATE row, so it only runs when the
+    # stored path names a file inside this operator.
     name = Path(rel).name
-    if name:
-        hits = list(op_root.rglob(name))
-        if hits:
+    if name and not rel.startswith("../") and not rel.startswith(CANN_MARKER):
+        hits = sorted(op_root.rglob(name))
+        if len(hits) == 1:
             return hits[0]
     return None
 

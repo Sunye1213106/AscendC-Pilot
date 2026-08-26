@@ -43,11 +43,18 @@ from uo_init.query.hints import (
     nl_or_multi_token_payload,
     search_needles,
 )
+from uo_init.paths import CANN_MARKER, cann_root
 from uo_init.query.legal_key_cache import _pattern_filters, normalize_cover_pattern
 from uo_init.semantics.const_expr import occupancy_overlap, worth_sharing
 from uo_init.source_locator import locations_from_attr_sites
 
 SNIPPET_LINES = 40
+
+#: `cann_root()` walks the filesystem, and a query resolves paths per card, so
+#: the answer is cached for the process. `None` is a real answer (no tree), so
+#: "not asked yet" needs its own sentinel.
+_UNSET: object = object()
+_CANN_ROOT: Any = _UNSET
 SNIPPET_BEFORE = 3
 FUNC_HEAD_LINES = 8
 STATEMENT_BEFORE = 8
@@ -162,6 +169,7 @@ CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
     "CONTAINS",
     "FLOWS_TO",
     "LAUNCHES",
+    "REFERENCES",
 )
 EDGES_PER_KIND = 8
 DERIVES_PER_TILING_KEY = 3
@@ -267,17 +275,46 @@ def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
     return default if value is None else value
 
 
+def _strip_dot_slash(text: str) -> str:
+    """Drop leading ``./`` segments. Never touches ``../``.
+
+    `lstrip('./')` is a character set, so it ate the parents off ``../common/x``
+    and turned a sibling path into one that resolves somewhere else.
+    """
+    out = str(text or "")
+    while out.startswith("./"):
+        out = out[2:]
+    return out
+
+
 def _norm_file(file: str) -> str:
+    """Display/lookup spelling of a stored location.
+
+    A path the writer already canonicalized is passed through: cards are what an
+    agent copies back into ``--file``, so shortening ``../common/op_kernel/x.h``
+    to ``op_kernel/x.h`` would name a file that is not there -- and would
+    collide with the operator's own ``op_kernel/x.h``. Only a legacy product's
+    absolute paths still get cut down.
+    """
     text = str(file or "").replace("\\", "/")
     if not text:
         return ""
+    if not _is_machine_path(text):
+        return _strip_dot_slash(text)
     for marker in ("/op_kernel/", "/op_host/", "/include/"):
         idx = text.lower().find(marker)
         if idx >= 0:
             return text[idx + 1 :]
-    if ":" in text[:3]:
-        return Path(text).name
-    return text.lstrip("./")
+    return Path(text).name
+
+
+def _is_machine_path(text: str) -> bool:
+    """Rooted at a drive or at ``/``: names a location on the build machine.
+
+    The ``<cann>/`` marker is not one of these -- it is already portable, and
+    cutting it down would strip the only thing that says which tree it is in.
+    """
+    return text.startswith("/") or (len(text) > 1 and text[1] == ":")
 
 
 def _architecture_from_name(path: Path) -> str:
@@ -860,6 +897,9 @@ def _kind_priority(hit: dict[str, Any], needle: str) -> int:
         EntityKind.METHOD.value: 1,
         EntityKind.FIELD.value: 1,
         EntityKind.FUNCTION.value: 2,
+        EntityKind.BUFFER.value: 1,
+        EntityKind.REGISTER.value: 1,
+        EntityKind.QUEUE.value: 1,
         EntityKind.COMPILE_VAR.value: 2,
         EntityKind.BRANCH.value: 3,
         EntityKind.PREDICATE.value: 3,
@@ -1158,16 +1198,105 @@ def _cap_snippet(text: str, line_start: int) -> str:
     return "\n".join(f"{start + offset}:{line}" for offset, line in enumerate(lines))
 
 
+def _cann_root_cached() -> Path | None:
+    """`cann_root()` memoized: resolving it walks the filesystem."""
+    global _CANN_ROOT
+    if _CANN_ROOT is _UNSET:
+        try:
+            _CANN_ROOT = cann_root()
+        except Exception:  # noqa: BLE001
+            _CANN_ROOT = None
+    return _CANN_ROOT
+
+
+#: `entity` rows overlapping a line range in one file. Two things kept the
+#: planner off `idx_entity_file_line` here: `file = ? OR file LIKE '%' || ?` in
+#: one statement, where the leading wildcard rules the index out for the whole
+#: disjunction, and `IFNULL(file, '') = ?`, which is a function of the column
+#: rather than the column. Splitting the probes and comparing `file` directly
+#: turns a 20k-row scan into a seek. The needle is non-empty, so dropping IFNULL
+#: changes no result: NULL never equals it either way. The suffix probe stays for
+#: a caller that pastes a path spelled from somewhere else.
+_SEED_BY_FILE_SQL = """
+    SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+           IFNULL(s.snippet, '') AS snippet
+    FROM entity e
+    LEFT JOIN source_span s ON s.entity_id = e.id
+    WHERE {predicate}
+      AND IFNULL(e.line_end, e.line_start) >= ?
+      AND IFNULL(e.line_start, 0) <= ?
+      AND IFNULL(e.line_start, 0) > 0
+    {order}
+    LIMIT ?
+"""
+
+
+def _alternate_file_spelling(needle: str) -> str:
+    """A second spelling to try when the first found nothing, or ``''``.
+
+    Callers paste paths from logs and editors, so a needle may carry a prefix the
+    product never stored. Cutting back to the operator subdirectory, or failing
+    that to the basename, is what turns such a paste into a lookup.
+    """
+    rel = needle
+    for marker in ("op_host/", "op_kernel/", "common/", "tests/"):
+        at = needle.find(marker)
+        if at >= 0:
+            rel = needle[at:]
+            break
+    alt = rel if rel != needle else needle.rsplit("/", 1)[-1]
+    return alt if alt and alt != needle else ""
+
+
+def _seed_rows_for_file(
+    conn: sqlite3.Connection,
+    needle: str,
+    start: int,
+    end: int,
+    limit: int,
+    *,
+    order: str = "",
+) -> list[Any]:
+    """Entities overlapping `start..end` in `needle`, cheapest probe first."""
+    if not needle:
+        return []
+    exact = conn.execute(
+        _SEED_BY_FILE_SQL.format(predicate="e.file = ?", order=order),
+        (needle, start, end, limit),
+    ).fetchall()
+    if exact:
+        return exact
+    return conn.execute(
+        _SEED_BY_FILE_SQL.format(
+            predicate="IFNULL(e.file, '') LIKE '%' || ?", order=order
+        ),
+        ("/" + needle.lstrip("/"), start, end, limit),
+    ).fetchall()
+
+
 def _resolve_source_path(op_root: Path | None, file: str) -> Path | None:
     if not file:
         return None
+    text = str(file).replace("\\", "/")
+    if text.startswith(CANN_MARKER):
+        # A toolkit header is outside every checkout, so it is stored by marker
+        # and only a reader's own install can say where it is.
+        root = _cann_root_cached()
+        if root is None:
+            return None
+        candidate = root / text[len(CANN_MARKER) :]
+        return candidate if candidate.is_file() else None
     candidates: list[Path] = []
-    rel = Path(str(file).replace("\\", "/"))
+    rel = Path(text)
     if rel.is_file():
         candidates.append(rel)
     if op_root is not None:
-        candidates.append(op_root / str(file).replace("\\", "/"))
-        candidates.append(op_root / rel.name)
+        candidates.append(op_root / text)
+        if not text.startswith("../"):
+            # Basename search is a last resort inside the operator; for a path
+            # that names a sibling tree it would answer with a same-named file
+            # from this one.
+            candidates.append(op_root / rel.name)
     return next((p for p in candidates if p.is_file()), None)
 
 
@@ -2611,7 +2740,7 @@ class UoSqlQuery:
         return hits
 
     def entities_in_files(self, files: Iterable[str]) -> list[dict[str, Any]]:
-        normalized = sorted({str(p).replace("\\", "/").lstrip("./") for p in files if str(p).strip()})
+        normalized = sorted({_strip_dot_slash(str(p).replace("\\", "/")) for p in files if str(p).strip()})
         if not normalized:
             return []
         with self._connect() as conn:
@@ -2637,47 +2766,14 @@ class UoSqlQuery:
 
     def impact_of(self, file: str, line_range: tuple[int, int]) -> dict[str, Any]:
         start, end = sorted((int(line_range[0]), int(line_range[1])))
-        needle = str(file or "").replace("\\", "/").lstrip("./")
+        needle = _strip_dot_slash(str(file or "").replace("\\", "/"))
         useful = set(USEFUL_EDGE_KINDS)
         with self._connect() as conn:
-            seed_rows = conn.execute(
-                """
-                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
-                       IFNULL(s.snippet, '') AS snippet
-                FROM entity e
-                LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
-                  AND IFNULL(e.line_end, e.line_start) >= ?
-                  AND IFNULL(e.line_start, 0) <= ?
-                  AND IFNULL(e.line_start, 0) > 0
-                LIMIT 80
-                """,
-                (needle, "/" + needle.lstrip("/"), start, end),
-            ).fetchall()
+            seed_rows = _seed_rows_for_file(conn, needle, start, end, 80)
             if not seed_rows:
-                leaf = needle.rsplit("/", 1)[-1]
-                rel = needle
-                for marker in ("op_host/", "op_kernel/", "common/", "tests/"):
-                    idx = needle.find(marker)
-                    if idx >= 0:
-                        rel = needle[idx:]
-                        break
-                alt = rel if rel != needle else leaf
-                if alt and alt != needle:
-                    seed_rows = conn.execute(
-                        """
-                        SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
-                               IFNULL(s.snippet, '') AS snippet
-                        FROM entity e
-                        LEFT JOIN source_span s ON s.entity_id = e.id
-                        WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
-                          AND IFNULL(e.line_end, e.line_start) >= ?
-                          AND IFNULL(e.line_start, 0) <= ?
-                          AND IFNULL(e.line_start, 0) > 0
-                        LIMIT 80
-                        """,
-                        (alt, "/" + alt.lstrip("/"), start, end),
-                    ).fetchall()
+                alt = _alternate_file_spelling(needle)
+                if alt:
+                    seed_rows = _seed_rows_for_file(conn, alt, start, end, 80)
             seeds = [row for row in seed_rows if self._file_matches(str(row["file"] or ""), needle)]
             seen: dict[str, int] = {str(row["id"]): 0 for row in seeds}
             queue: deque[tuple[str, int]] = deque((str(row["id"]), 0) for row in seeds)
@@ -2726,8 +2822,8 @@ class UoSqlQuery:
 
     @staticmethod
     def _file_matches(current: str, needle: str) -> bool:
-        cur = str(current or "").replace("\\", "/").lstrip("./")
-        want = str(needle or "").replace("\\", "/").lstrip("./")
+        cur = _strip_dot_slash(str(current or "").replace("\\", "/"))
+        want = _strip_dot_slash(str(needle or "").replace("\\", "/"))
         if not cur or not want:
             return False
         return cur == want or cur.endswith("/" + want) or want.endswith("/" + cur)
@@ -4046,7 +4142,10 @@ class UoSqlQuery:
                        IFNULL(s.snippet, '') AS snippet
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE e.kind = 'BUFFER'
+                -- REGISTER joins BUFFER here: both are storage the kernel holds
+                -- a value in, and on regbase architectures register pressure is
+                -- the question being asked.
+                WHERE e.kind IN ('BUFFER', 'REGISTER')
                   AND (
                     ? = ''
                     OR e.name COLLATE NOCASE LIKE ?
@@ -4096,7 +4195,10 @@ class UoSqlQuery:
         def _buf_key(hit: dict[str, Any]) -> tuple[Any, ...]:
             name = str(hit.get("name") or "").lower()
             facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
-            allocated = 0 if facts.get("allocated") else 1
+            # A REGISTER declaration is its own allocation, so it ranks with the
+            # buffers that carry an explicit allocation site rather than below them.
+            is_register = str(hit.get("kind") or "") == "REGISTER"
+            allocated = 0 if (facts.get("allocated") or is_register) else 1
             strong = 0 if low and low in name else 1
             return (allocated, strong, *_agent_sort_key(hit, low, architecture=self._architecture))
 
@@ -4788,19 +4890,26 @@ class UoSqlQuery:
         if not ident:
             return False
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1 FROM entity e
-                WHERE IFNULL(json_extract(e.data, '$.catalog'), '') = 'ascendc'
-                  AND (
-                    e.name COLLATE NOCASE = ?
-                    OR lower(IFNULL(json_extract(e.data, '$.spelling'), '')) = ?
-                    OR e.name COLLATE NOCASE LIKE ('%::' || ?)
-                  )
-                LIMIT 1
-                """,
-                (ident, ident, ident),
-            ).fetchone()
+            if self._accel_ready(conn):
+                row = conn.execute(
+                    "SELECT 1 FROM entity_name_leaf "
+                    "WHERE leaf = ? AND is_ascendc = 1 LIMIT 1",
+                    (ident,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT 1 FROM entity e
+                    WHERE IFNULL(json_extract(e.data, '$.catalog'), '') = 'ascendc'
+                      AND (
+                        e.name COLLATE NOCASE = ?
+                        OR lower(IFNULL(json_extract(e.data, '$.spelling'), '')) = ?
+                        OR e.name COLLATE NOCASE LIKE ('%::' || ?)
+                      )
+                    LIMIT 1
+                    """,
+                    (ident, ident, ident),
+                ).fetchone()
         return row is not None
 
     def _exact_name_hits(self, needle: str, *, limit: int) -> list[dict[str, Any]]:
@@ -5397,49 +5506,22 @@ class UoSqlQuery:
     def _around_seed_hits(
         self, file: str, start: int, end: int, *, limit: int
     ) -> list[dict[str, Any]]:
-        needle = str(file or "").replace("\\", "/").lstrip("./")
+        needle = _strip_dot_slash(str(file or "").replace("\\", "/"))
         cap = max(1, int(limit or AROUND_SEED_LIMIT))
+        order = (
+            "ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC,"
+            " e.kind, e.name"
+        )
         with self._connect() as conn:
-            seed_rows = conn.execute(
-                """
-                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
-                       IFNULL(s.snippet, '') AS snippet
-                FROM entity e
-                LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
-                  AND IFNULL(e.line_end, e.line_start) >= ?
-                  AND IFNULL(e.line_start, 0) <= ?
-                  AND IFNULL(e.line_start, 0) > 0
-                ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
-                LIMIT ?
-                """,
-                (needle, "/" + needle.lstrip("/"), start, end, cap * 4),
-            ).fetchall()
+            seed_rows = _seed_rows_for_file(
+                conn, needle, start, end, cap * 4, order=order
+            )
             if not seed_rows:
-                leaf = needle.rsplit("/", 1)[-1]
-                rel = needle
-                for marker in ("op_host/", "op_kernel/", "common/", "tests/"):
-                    idx = needle.find(marker)
-                    if idx >= 0:
-                        rel = needle[idx:]
-                        break
-                alt = rel if rel != needle else leaf
-                if alt and alt != needle:
-                    seed_rows = conn.execute(
-                        """
-                        SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
-                               IFNULL(s.snippet, '') AS snippet
-                        FROM entity e
-                        LEFT JOIN source_span s ON s.entity_id = e.id
-                        WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
-                          AND IFNULL(e.line_end, e.line_start) >= ?
-                          AND IFNULL(e.line_start, 0) <= ?
-                          AND IFNULL(e.line_start, 0) > 0
-                        ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
-                        LIMIT ?
-                        """,
-                        (alt, "/" + alt.lstrip("/"), start, end, cap * 4),
-                    ).fetchall()
+                alt = _alternate_file_spelling(needle)
+                if alt:
+                    seed_rows = _seed_rows_for_file(
+                        conn, alt, start, end, cap * 4, order=order
+                    )
             hits = self._hits_from_rows(conn, seed_rows, why="around", with_snippet=True)
         return self._rank_around_seeds(hits, line=start, limit=cap)
 

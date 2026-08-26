@@ -92,11 +92,16 @@ def run_query(
     line_end: int = 0,
 ) -> dict[str, Any]:
     project = str(project or os.environ.get("UO_QUERY_PROJECT") or "").strip()
-    architecture = str(
-        architecture or os.environ.get("UO_QUERY_ARCHITECTURE") or "arch35"
-    ).strip()
+    architecture = str(architecture or os.environ.get("UO_QUERY_ARCHITECTURE") or "").strip()
     if not project:
         raise ValueError("project is required (or set UO_QUERY_PROJECT)")
+    # Defaulting to arch35 answered from whichever CodeMap happened to exist,
+    # which reads as confident but belongs to another architecture.
+    if not architecture:
+        raise ValueError(
+            "ARCHITECTURE_MISSING_IN_RUN_STATE: architecture is required "
+            "(or set UO_QUERY_ARCHITECTURE)"
+        )
     product = _product(project, architecture)
     from uo_init.query_client import try_agent_query
 
@@ -186,7 +191,7 @@ def _tool_schema() -> dict[str, Any]:
                 },
                 "architecture": {
                     "type": "string",
-                    "description": "e.g. arch35. Defaults to UO_QUERY_ARCHITECTURE.",
+                    "description": "e.g. arch35. Required; or set UO_QUERY_ARCHITECTURE.",
                 },
             },
         },

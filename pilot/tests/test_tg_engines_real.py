@@ -340,10 +340,18 @@ def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
     ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     packet = _compact_plan_scope_packet(root, {"architecture": _ARCH, "run_id": "R1"})
-    assert packet.get("schema") == "tg-plan-scope-packet/v1"
+    assert packet.get("schema") == "tg-plan-scope-packet/v2"
     assert packet.get("skip_around") is True
     assert "ident_cards" in packet
     assert "intent_sources" in packet
+    # Semantic half: the vocabulary Plan Owner may name, not a file list.
+    contract = packet.get("method_contract") or {}
+    assert contract.get("guard_semantics") == "activation/v1"
+    assert contract.get("target_policy") == "changed_assignment/v1"
+    assert contract.get("contract_digest")
+    assert "observation_catalog" in packet
+    assert "branch_locals" in packet
+    assert "controls" in packet
 
 
 def test_construct_promote_does_not_write_cases(tmp_path: Path) -> None:

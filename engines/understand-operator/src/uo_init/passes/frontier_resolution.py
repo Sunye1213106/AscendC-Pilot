@@ -139,14 +139,9 @@ def resolve_class_frontiers(
 
 
 def _resolve_source(root: Path, raw: str) -> Path | None:
-    rel = raw.replace("\\", "/").lstrip("./")
-    candidates = [root.parent / rel, root / rel]
-    if rel.startswith(root.name + "/"):
-        candidates.append(root / rel[len(root.name) + 1 :])
-    for path in candidates:
-        if path.is_file():
-            return path
-    return None
+    from uo_init.paths import resolve_operator_file
+
+    return resolve_operator_file(root, raw)
 
 
 def _method_bodies(text: str, symbol: str):

@@ -315,7 +315,6 @@ def test_docs_do_not_claim_query_has_no_method_bundle() -> None:
         "docs/architecture/workflows.md",
         "docs/modules/uo.md",
         "pilot/policies/pilot-control/POLICY.md",
-        "pilot/policies/invariants/control-invariants.md",
         "pilot/policies/invariants/host-runtime-contract.md",
     )
     hits: list[str] = []

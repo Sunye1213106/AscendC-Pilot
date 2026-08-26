@@ -235,22 +235,15 @@ def _check_architecture_start_requirements(
         if workflow_requires_architecture(wid):
             errors.append(f"{wid} must not require_architecture (inherit from .uo)")
 
-    inv = root / "pilot" / "policies" / "invariants" / "control-invariants.md"
-    if inv.is_file():
-        text_inv = inv.read_text(encoding="utf-8")
-        item6 = ""
-        for line in text_inv.splitlines():
-            if line.startswith("6."):
-                item6 = line
-                break
-        if "uo-update" not in item6:
-            errors.append("control-invariants.md item 6 must mention uo-update")
-        if ".uo" not in item6:
-            errors.append(
-                "control-invariants.md item 6 must mention .uo / UO-first for TG/CE consumers"
-            )
+    control = root / "pilot" / "policies" / "pilot-control" / "POLICY.md"
+    if control.is_file():
+        text_ctl = control.read_text(encoding="utf-8")
+        if "uo-update" not in text_ctl:
+            errors.append("pilot-control POLICY.md must mention uo-update")
+        if ".uo" not in text_ctl:
+            errors.append("pilot-control POLICY.md must mention .uo for TG/CE consumers")
     else:
-        errors.append("missing pilot/policies/invariants/control-invariants.md")
+        errors.append("missing pilot/policies/pilot-control/POLICY.md")
 
     agent = root / "agents" / "ascendc-pilot.yaml"
     if agent.is_file():

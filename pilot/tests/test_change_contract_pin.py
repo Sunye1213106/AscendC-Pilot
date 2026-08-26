@@ -233,6 +233,9 @@ def test_session_shape_pr_receipt_without_pin_fails_precheck(tmp_path: Path, mon
         "ascendc_pilot.actions.tg_product._legal_key_count",
         lambda *_a, **_k: 0,
     )
+    # This test is about the change pin, not the methodology handshake; the
+    # installed-bundle state of the developer machine must not decide it.
+    monkeypatch.setattr("ascendc_pilot.contract_sync.installed_roots", lambda: [])
     out = run_plan_precheck(
         op,
         {
@@ -358,6 +361,7 @@ def test_pr_change_gate_allows_local_source_without_contract(tmp_path: Path, mon
         "ascendc_pilot.actions.tg_product._legal_key_count",
         lambda *_a, **_k: 0,
     )
+    monkeypatch.setattr("ascendc_pilot.contract_sync.installed_roots", lambda: [])
     out = run_plan_precheck(
         op,
         {

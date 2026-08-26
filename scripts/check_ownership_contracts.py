@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -246,15 +247,22 @@ def audit(repo: Path) -> list[str]:
                 if role_id not in {"controller", "primary_interactive"}:
                     errors.append(f"{wid}/{aid}: primary_interactive should use controller role")
 
-    # generated/ is gitignored: recompose opencode and validate the fresh tree
-    # instead of comparing against a committed golden copy.
+    # Recompose opencode and validate the fresh tree instead of comparing
+    # against a committed golden copy. This must land in a temp dir: composing
+    # into the real generated/ left it un-pruned, so running this auditor made
+    # check_generated_runtime_closure fail on the tree it just clobbered.
     try:
-        result = compose.compose_host(repo, "opencode")
-        if result.get("errors"):
-            for e in result["errors"][:20]:
-                errors.append(f"COMPOSE: {e}")
-        for e in compose.validate_generated(repo, host="opencode")[:20]:
-            errors.append(e if str(e).startswith("generated/") else f"GENERATED: {e}")
+        with tempfile.TemporaryDirectory(prefix="acp-ownership-audit-") as tmp:
+            candidate = Path(tmp) / "opencode"
+            result = compose.compose_host(repo, "opencode", out_root=candidate)
+            if result.get("errors"):
+                for e in result["errors"][:20]:
+                    errors.append(f"COMPOSE: {e}")
+            fresh = compose.validate_generated(
+                repo, host="opencode", generated_root=candidate
+            )
+            for e in fresh[:20]:
+                errors.append(e if str(e).startswith("generated/") else f"GENERATED: {e}")
     except Exception as exc:  # noqa: BLE001
         errors.append(f"COMPOSE: auditor failed: {exc}")
 

@@ -747,15 +747,18 @@ def _review_axis_fanout_tasks(
                 break
             artifacts.append(artifact)
             prevs.append(f"{artifact}.prev")
-            mp = _axis_method_path(repo, axis_row)
-            if mp.is_file():
-                axis_prompt_text = ""
-                axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
-                if axis_tpid:
-                    src_prompt = _task_prompt_path(repo, axis_tpid)
-                    if src_prompt.is_file():
-                        axis_prompt_text = src_prompt.read_text(encoding="utf-8")
-                        (sdir / f"prompt_{axis}.md").write_text(axis_prompt_text, encoding="utf-8")
+            axis_prompt_text = ""
+            axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
+            if axis_tpid:
+                src_prompt = _task_prompt_path(repo, axis_tpid)
+                # Same fail-closed rule as the normal fanout below: never hand an
+                # axis Task a prompt-less context because the bundle is missing it.
+                if not src_prompt.is_file():
+                    artifacts = []
+                    break
+                axis_prompt_text = src_prompt.read_text(encoding="utf-8")
+                (sdir / f"prompt_{axis}.md").write_text(axis_prompt_text, encoding="utf-8")
+            if _axis_method_path(repo, axis_row).is_file():
                 _materialize_fanout_axis(
                     repo=repo,
                     sdir=sdir,
@@ -763,14 +766,6 @@ def _review_axis_fanout_tasks(
                     axis=axis,
                     prompt_text=axis_prompt_text,
                 )
-            else:
-                axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
-                if axis_tpid:
-                    src_prompt = _task_prompt_path(repo, axis_tpid)
-                    if src_prompt.is_file():
-                        (sdir / f"prompt_{axis}.md").write_text(
-                            src_prompt.read_text(encoding="utf-8"), encoding="utf-8"
-                        )
         if len(artifacts) >= 2:
             first_method = sdir / f"method_{str(first_row.get('id') or 'harness')}.md"
             axis_dt = dict(dt)
@@ -859,12 +854,15 @@ def _review_axis_fanout_tasks(
         axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
         if axis_tpid:
             src_prompt = _task_prompt_path(repo, axis_tpid)
-            if src_prompt.is_file():
-                axis_prompt_text = src_prompt.read_text(encoding="utf-8")
-                prompt_key = str(axis_row.get("prompt_alias") or axis).strip() or axis
-                axis_prompt = sdir / f"prompt_{prompt_key}.md"
-                axis_prompt.write_text(axis_prompt_text, encoding="utf-8")
-                axis_prompt_path = axis_prompt.as_posix()
+            # A declared axis prompt that is not installed must not degrade into
+            # an axis Task with no instructions; fail closed like the method.
+            if not src_prompt.is_file():
+                return []
+            axis_prompt_text = src_prompt.read_text(encoding="utf-8")
+            prompt_key = str(axis_row.get("prompt_alias") or axis).strip() or axis
+            axis_prompt = sdir / f"prompt_{prompt_key}.md"
+            axis_prompt.write_text(axis_prompt_text, encoding="utf-8")
+            axis_prompt_path = axis_prompt.as_posix()
         _materialize_fanout_axis(
             repo=repo,
             sdir=sdir,
@@ -1149,6 +1147,50 @@ def _complete_bind_review_prepare(
     return result
 
 
+def _delegate_actors(
+    action: dict[str, Any], execution_mode: str, *, workflow_id: str = ""
+) -> list[str]:
+    """Producers a controller action legitimately spawns under its own lease.
+
+    Only ``primary_review`` delegates: Primary keeps the lease but the window
+    doing the work is a different agent, so the lease must authorize it or the
+    window is locked out of the very session pack it was told to read.
+    """
+    from ascendc_pilot.ownership import EXECUTION_PRIMARY_REVIEW
+
+    if str(execution_mode or "") != EXECUTION_PRIMARY_REVIEW:
+        return []
+    out: list[str] = []
+    for raw in action.get("delegate_actor_ids") or action.get("producer_actor_ids") or []:
+        text = str(raw).strip().lower()
+        if text and text not in out:
+            out.append(text)
+    if out:
+        return out
+    wid = str(workflow_id or action.get("workflow_id") or "").strip()
+    if not wid:
+        return out
+    from ascendc_pilot.ownership import EXECUTION_DETERMINISTIC
+    from ascendc_pilot.workflows import get_workflow
+
+    try:
+        meta = get_workflow(wid)
+    except Exception:  # noqa: BLE001
+        return out
+    for row in meta.get("actions") or []:
+        if not isinstance(row, dict):
+            continue
+        mode = str(row.get("execution_mode") or "")
+        if mode in {EXECUTION_DETERMINISTIC, EXECUTION_PRIMARY_REVIEW} or mode.startswith(
+            "primary_"
+        ):
+            continue
+        aid = str(row.get("agent_id") or "").strip().lower()
+        if aid and aid not in out and aid != "ascendc-pilot":
+            out.append(aid)
+    return out
+
+
 def _complete_plan_ingest_prepare(
     project_root: Path,
     *,
@@ -1230,13 +1272,27 @@ def _complete_plan_ingest_prepare(
     except Exception:  # noqa: BLE001
         packet = ""
     packet_line = f"改动包：`{packet}`。" if packet else "改动包在 `runs/<run>/receipts/plan_scope_packet.yaml`。"
+    contract = ""
+    for rel in (
+        "refs/test-plan/coverage-planning.md",
+        "method.md",
+    ):
+        cand = sdir / rel
+        if cand.is_file():
+            contract = cand.as_posix()
+            break
+    contract_line = (
+        f"权威合同：`{contract}`（唯一 SSOT）。" if contract else ""
+    )
     result["ok"] = True
     result["message_zh"] = (
-        "plan_precheck 已完成。" + packet_line
-        + " 按 intent-reasoning 梳理独立行为簇，立刻原生 `Task(agent=tg-analyst)`："
-        "简单一个 Plan Owner（正文即全部：FOCUS + packet 路径 + 只交 YAML）；"
+        "plan_precheck 已完成。" + packet_line + contract_line
+        + " 按 `pilot-control` 梳理独立行为簇，立刻原生 `Task(agent=tg-analyst)`："
+        "简单一个 Plan Owner（正文即全部：FOCUS + packet 路径 + 权威合同路径 + 只交 YAML）；"
         "复杂同一轮最多 5 路 FOCUS fragment，再一个 Owner。"
-        "禁止 `dispatch_subagent` / 去读 session `prompt.md`。"
+        "Task 正文必须写明：合同以上面这个路径为准，"
+        "禁止自行搜索 ~/.config、~/.cursor、cognitive-skills 等其它方法论副本。"
+        "禁止 `dispatch_subagent`。"
         "Owner/fragment 禁止再派 Task。"
         "下一发 `pilot_run(tg-plan)` intent=YAML 全文。禁止 Primary 自己 Write `tg/plan.md`。"
     )
@@ -2372,6 +2428,7 @@ def prepare_action(
         allowed_target_ids=allowed_targets,
         allowed_source_roots=src_scope.get("allowed_source_roots") or [],
         allowed_source_files=src_scope.get("allowed_source_files") or [],
+        delegate_actor_ids=_delegate_actors(action, execution_mode, workflow_id=wid),
     )
     lease_id = str(lease.get("lease_id") or "")
     prepared_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2477,10 +2534,27 @@ def prepare_action(
                 "host_owned_confirm": True,
             }
         elif execution_mode == EXECUTION_PRIMARY_REVIEW:
+            # Primary spawns the window itself, so nothing forces it through the
+            # session pack. Copy the contract in anyway: a window that cannot
+            # find the schema locally will search the machine and read whatever
+            # installed methodology copy it hits first.
+            review_skill = str(
+                action.get("skill_id") or action.get("action_method_id") or ""
+            ).rsplit("/", 1)[-1]
+            review_mat = materialize_method_bundle(
+                sdir,
+                skill_ids=[review_skill] if review_skill else [],
+                existing_method=method_r,
+                project_root=project_root,
+                current_skill_id=review_skill,
+                explicit_refs=[
+                    str(r).strip() for r in (action.get("refs") or []) if str(r).strip()
+                ],
+            )
             bundle["method_materialized"] = {
-                "copied": [],
-                "missing": [],
-                "ok": True,
+                "copied": review_mat.get("copied") or [],
+                "missing": review_mat.get("missing") or [],
+                "ok": bool(review_mat.get("ok")),
                 "primary_review": True,
             }
         elif execution_mode == EXECUTION_SUBAGENT:

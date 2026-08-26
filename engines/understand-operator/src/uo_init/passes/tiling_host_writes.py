@@ -467,11 +467,9 @@ def _mask_non_code(text: str) -> str:
 
 
 def _resolve_file(root: Path, raw: str) -> Path | None:
-    rel=raw.replace("\\","/").lstrip("./"); candidates=[root.parent/rel,root/rel]
-    if rel.startswith(root.name+"/"):candidates.append(root/rel[len(root.name)+1:])
-    for p in candidates:
-        if p.is_file():return p
-    return None
+    from uo_init.paths import resolve_operator_file
+
+    return resolve_operator_file(root, raw)
 
 
 def _rel(root: Path,path: Path)->str:

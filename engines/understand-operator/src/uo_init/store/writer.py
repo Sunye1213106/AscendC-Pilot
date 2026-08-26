@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-from uo_init.paths import require_architecture
+from uo_init.paths import CANN_MARKER, cann_root, require_architecture
 import json
 import os
+import posixpath
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -14,7 +15,11 @@ from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
-from uo_init.ir.evidence import summarize_trust, validate_trust_records
+from uo_init.ir.evidence import (
+    shrink_evidence_attrs,
+    summarize_trust,
+    validate_trust_records,
+)
 from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
@@ -22,8 +27,159 @@ from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 LEGAL_KEY_FLUSH = 3000
 
 
-def _posix_file(path: str) -> str:
-    return str(path or "").replace("\\", "/")
+class _PathBase:
+    """Rewrites every spelling of a location into one operator-relative form.
+
+    Extraction produced four bases at once for the same tree: operator-relative
+    (`op_kernel/x.h`), ops-root-relative (`<op>/op_kernel/x.h`), the shared
+    sibling directory (`common/x.h`), and absolute. Recall joins a span to
+    `source_line` by path, so two spellings of one file are two files and only
+    one of them can ever be cited; the basename fallback in
+    `clamp_spans_to_file_length` was hiding that.
+
+    The operator directory is the origin because the product describes one
+    operator. Shared code lives beside it, so it keeps a leading `../` rather
+    than being pushed under a base it is not under.
+    """
+
+    #: How far above the operator directory a location can still be named
+    #: relatively. Shared code sits one or two levels up (`../common`,
+    #: `../../common/include`); past that a path is a different checkout.
+    ANCESTOR_LEVELS = 3
+
+    __slots__ = ("rules", "op_seg", "active")
+
+    def __init__(self, dest: Path) -> None:
+        self.rules: list[tuple[str, str]] = []
+        self.op_seg = ""
+        self.active = False
+        try:
+            if dest.parents[2].name != ".ascendc-pilot":
+                return
+            op_dir = dest.parents[3]
+        except IndexError:
+            return
+
+        def key(path: Path) -> str:
+            return str(path).replace("\\", "/").rstrip("/").lower() + "/"
+
+        self.op_seg = op_dir.name.lower() + "/"
+        self.rules.append((key(op_dir), ""))
+        for level in range(1, self.ANCESTOR_LEVELS + 1):
+            try:
+                self.rules.append((key(dest.parents[3 + level]), "../" * level))
+            except IndexError:
+                break
+        cann = _cann_prefix()
+        if cann:
+            # Toolkit headers are outside every checkout, so they cannot be made
+            # relative. Naming the tree instead of the build machine's drive is
+            # what lets the product be read somewhere else.
+            self.rules.append((cann, CANN_MARKER))
+        # Most specific prefix wins, whatever kind it is. A vendored toolkit can
+        # sit under the checkout, and `<cann>/` says more about such a header
+        # than a count of `../` does.
+        self.rules.sort(key=lambda rule: len(rule[0]), reverse=True)
+        self.active = True
+
+    def file(self, path: str) -> str:
+        """Canonical form of a whole-string path."""
+        text = str(path or "").replace("\\", "/")
+        if not text:
+            return ""
+        if self.active:
+            low = text.lower()
+            for prefix, repl in self.rules:
+                if low.startswith(prefix):
+                    text = repl + text[len(prefix) :]
+                    break
+            else:
+                if (
+                    not _is_absolute(text)
+                    and not text.startswith("../")
+                    and not _under_operator(text)
+                ):
+                    # A bare relative path that names no operator subdirectory
+                    # is spelled from an ancestor; the shared tree arrives so.
+                    if low.startswith(self.op_seg):
+                        text = text[len(self.op_seg) :]
+                    else:
+                        text = "../" + text
+        if ".." in text:
+            collapsed = posixpath.normpath(text)
+            # normpath turns "" into "." and drops a trailing slash.
+            text = "" if collapsed == "." else collapsed
+        return text
+
+    def inside(self, text: str) -> str:
+        """Canonical form of paths embedded in an arbitrary attr string.
+
+        Attr values are not all pure paths -- some are expressions quoting one --
+        so this only rewrites the roots it recognizes and never runs `normpath`
+        over the whole string.
+        """
+        if not self.active or not text:
+            return text
+        if "/" not in text and "\\" not in text:
+            return text
+        for prefix, repl in self.rules:
+            text = _replace_ci(text, prefix, repl)
+        return text
+
+
+#: Top-level directories that belong to an operator rather than to the tree
+#: around it. A relative path starting with one of these is already
+#: operator-relative.
+_OPERATOR_DIRS = frozenset(
+    {
+        "op_host",
+        "op_kernel",
+        "op_api",
+        "op_graph",
+        "examples",
+        "tests",
+        "docs",
+        "op_def",
+    }
+)
+
+
+def _cann_prefix() -> str:
+    """`<cann_root>/` lowercased, or ``''`` when the tree cannot be located."""
+    try:
+        root = cann_root()
+    except Exception:
+        return ""
+    if root is None:
+        return ""
+    return str(root).replace("\\", "/").rstrip("/").lower() + "/"
+
+
+def _under_operator(text: str) -> bool:
+    return text.split("/", 1)[0].lower() in _OPERATOR_DIRS
+
+
+def _is_absolute(text: str) -> bool:
+    return text.startswith("/") or (len(text) > 1 and text[1] == ":")
+
+
+def _replace_ci(text: str, needle: str, repl: str) -> str:
+    """Replace every case-insensitive occurrence of `needle`, slashes unified."""
+    lowered = text.replace("\\", "/").lower()
+    if needle not in lowered:
+        return text
+    out: list[str] = []
+    index = 0
+    width = len(needle)
+    while True:
+        at = lowered.find(needle, index)
+        if at < 0:
+            out.append(text[index:])
+            break
+        out.append(text[index:at])
+        out.append(repl)
+        index = at + width
+    return "".join(out)
 
 
 def _write_legal_key_tables(conn: sqlite3.Connection, blob: dict[str, Any]) -> None:
@@ -231,22 +387,65 @@ def _views_match_current_identity(views: dict[str, Any] | None, codemap: CodeMap
 _JSON_DUMP = {"ensure_ascii": False, "separators": (",", ":")}
 
 
-def _attrs_json(attrs: dict[str, Any]) -> str:
+def _attrs_json(
+    attrs: dict[str, Any],
+    base: "_PathBase | None" = None,
+    build_context_id: str = "",
+) -> str:
     cleaned: dict[str, Any] = {}
-    for key, value in dict(attrs or {}).items():
+    source = shrink_evidence_attrs(attrs or {}, build_context_id=build_context_id)
+    for key, value in source.items():
         if key == "type_text":
             continue
-        cleaned[key] = _trim_attr(value)
+        cleaned[key] = _trim_attr(value, key=key, base=base)
     return json.dumps(cleaned, default=str, **_JSON_DUMP)
 
 
-_KEEP_ATTR_KEYS = frozenset({"rhs", "condition", "expression"})
+#: Attrs whose value is a predicate someone downstream parses. Clipping these
+#: does not shorten a label, it produces an expression that is still
+#: syntactically inviting but no longer means what the source said --
+#: `OP_CHECK_IF(..., return ge::GRAPH` reads as a condition and is not one.
+_KEEP_ATTR_KEYS = frozenset(
+    {
+        "rhs",
+        "condition",
+        "expression",
+        "predicate",
+        "finite_predicate",
+        "guards",
+    }
+)
 
 
-def _trim_attr(value: Any, *, depth: int = 0, key: str = "") -> Any:
+#: Attr keys whose value is a whole path, so it gets the same canonical form as
+#: the `file` column rather than only having its root rewritten.
+_PATH_ATTR_KEYS = frozenset(
+    {
+        "file",
+        "path",
+        "decl_file",
+        "callee_decl_file",
+        "header",
+        "source_file",
+        "defined_in",
+        "include",
+    }
+)
+
+
+def _trim_attr(
+    value: Any, *, depth: int = 0, key: str = "", base: "_PathBase | None" = None
+) -> Any:
     if depth > 4:
         return value
     if isinstance(value, str):
+        # Attrs carry as many locations as the columns do (`callee_decl_file`,
+        # `write_sites[].file`, `sites[].file`), and a reader cannot join two
+        # spellings of one file. Keys known to be whole paths get the full
+        # canonical form; anything else only has recognized roots rewritten, so
+        # an expression that quotes a path is not mangled.
+        if base is not None and base.active:
+            value = base.file(value) if key in _PATH_ATTR_KEYS else base.inside(value)
         if key in _KEEP_ATTR_KEYS:
             return value
         if len(value) > 400:
@@ -254,9 +453,15 @@ def _trim_attr(value: Any, *, depth: int = 0, key: str = "") -> Any:
         return value
     if isinstance(value, list):
         child_key = "rhs" if key == "packing_value_sites" else key
-        return [_trim_attr(item, depth=depth + 1, key=child_key) for item in value]
+        return [
+            _trim_attr(item, depth=depth + 1, key=child_key, base=base)
+            for item in value
+        ]
     if isinstance(value, dict):
-        return {str(k): _trim_attr(v, depth=depth + 1, key=str(k)) for k, v in value.items()}
+        return {
+            str(k): _trim_attr(v, depth=depth + 1, key=str(k), base=base)
+            for k, v in value.items()
+        }
     return value
 
 
@@ -415,8 +620,17 @@ def write_codemap(
             conn,
             product_meta,
         )
+        path_base = _PathBase(dest)
+        # One value for the whole product, and `meta` already carries it. Rows
+        # store it only when they disagree with the product they are in.
+        context_id = str(product_meta.get("cm_build_context_id") or "")
         variants = [
-            (ent.id, ent.name, codemap.architecture, _attrs_json(ent.attrs))
+            (
+                ent.id,
+                ent.name,
+                codemap.architecture,
+                _attrs_json(ent.attrs, path_base, context_id),
+            )
             for ent in codemap.by_kind("BUILD_VARIANT")
         ]
         if variants:
@@ -428,7 +642,7 @@ def write_codemap(
         file_rows = []
         span_rows = []
         for ent in codemap.entities.values():
-            file_path = _posix_file(ent.file)
+            file_path = path_base.file(ent.file)
             entity_rows.append(
                 (
                     ent.id,
@@ -439,7 +653,7 @@ def write_codemap(
                     file_path,
                     int(ent.line_start),
                     int(ent.line_end),
-                    _attrs_json(ent.attrs),
+                    _attrs_json(ent.attrs, path_base, context_id),
                 )
             )
             if file_path:
@@ -485,7 +699,7 @@ def write_codemap(
                 rel.dst,
                 rel.status,
                 float(rel.confidence),
-                _attrs_json(rel.attrs),
+                _attrs_json(rel.attrs, path_base, context_id),
             )
             for rel in codemap.relations.values()
             if rel.src in codemap.entities and rel.dst in codemap.entities
@@ -499,8 +713,16 @@ def write_codemap(
             )
         from uo_init.query.legal_key_cache import compact_legal_key_blob
 
+        from uo_init.store.view_projection import NOT_SHIPPED
+
         view_rows = []
         for name, payload in finalized.items():
+            # Validated above with the rest, then dropped rather than embedded:
+            # the reader projects these from the graph on demand. Skipping the
+            # insert instead of deleting it afterwards keeps 4.4 MB of pages
+            # from being written and then freed.
+            if name in NOT_SHIPPED:
+                continue
             stored = payload
             if name == "tiling/legal_key_index.jsonl" and isinstance(payload, dict):
                 stored = compact_legal_key_blob(payload)
@@ -525,26 +747,52 @@ def write_codemap(
         legal_blob = finalized.get("tiling/legal_key_index.jsonl")
         if isinstance(legal_blob, dict):
             _write_legal_key_tables(conn, compact_legal_key_blob(legal_blob))
-        try:
-            from uo_init.store.accel import (
-                build_name_leaf,
-                build_template_blocks,
-                patch_sel_lines,
-            )
+        # Acceleration tables are part of the product contract, not a bonus: the
+        # query path branches on their presence, so a silent build failure
+        # degrades every later answer instead of failing here where it is cheap
+        # to see. Errors propagate on purpose.
+        from uo_init.store.accel import (
+            ACCEL_VERSION,
+            build_name_leaf,
+            build_source_line,
+            build_template_blocks,
+            clamp_spans_to_file_length,
+            patch_sel_lines,
+        )
 
-            build_name_leaf(conn)
-            op_root = None
-            try:
-                if dest.parents[2].name == ".ascendc-pilot":
-                    op_root = dest.parents[3]
-            except IndexError:
-                op_root = None
-            patch_sel_lines(conn, op_root)
-            build_template_blocks(conn)
-        except Exception:
-            pass
+        # Same derivation `_PathBase` used above; if there is no operator tree
+        # to be relative to there is none to index either.
+        op_root = dest.parents[3] if path_base.active else None
+
+        accel_stats: dict[str, Any] = {}
+        # source_line first: it is the only record of how long each file is, and
+        # the span clamp has to run before anything copies a span out of
+        # `entity` (patch_sel_lines writes spans, build_template_blocks reads
+        # them).
+        if op_root is None:
+            # Without the operator root there is no tree to index. Record it so
+            # the gap is visible instead of looking like an empty operator.
+            accel_stats["source_line_skipped"] = "op_root_unresolved"
+        else:
+            files, lines = build_source_line(
+                conn, op_root, architecture=codemap.architecture
+            )
+            accel_stats["source_files"] = files
+            accel_stats["source_lines"] = lines
+            for key, value in clamp_spans_to_file_length(conn).items():
+                accel_stats[f"span_{key}"] = value
+        accel_stats["name_leaf_rows"] = build_name_leaf(conn)
+        accel_stats["sel_lines_patched"] = patch_sel_lines(conn, op_root)
+        accel_stats["template_blocks"] = build_template_blocks(conn)
+        accel_stats["accel_version"] = ACCEL_VERSION
+        conn.executemany(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)",
+            [(f"accel_{k}", str(v)) for k, v in accel_stats.items()],
+        )
         conn.commit()
-        vacuum = str(os.environ.get("UO_VACUUM_UO") or "").strip().lower() in {
+        # Building the side tables churns pages; without VACUUM the freelist
+        # stays in the shipped file. Opt out only for throwaway products.
+        vacuum = str(os.environ.get("UO_VACUUM_UO") or "1").strip().lower() in {
             "1",
             "true",
             "yes",
@@ -559,6 +807,13 @@ def write_codemap(
     finally:
         conn.close()
 
+    # `shared_uo` keeps a process-wide read-only connection alive on purpose
+    # (re-mmapping a large .uo per query was the Windows freeze). That handle
+    # blocks unlink on Windows, so whoever replaces the product must release it
+    # rather than relying on callers to remember.
+    from uo_init.store.reader import close_uo_connections
+
+    close_uo_connections(dest)
     if dest.exists():
         dest.unlink()
     tmp.replace(dest)

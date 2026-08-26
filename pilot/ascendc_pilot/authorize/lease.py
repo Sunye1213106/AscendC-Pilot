@@ -304,8 +304,15 @@ def issue_action_lease(
     allowed_target_ids: list[str] | None = None,
     allowed_source_roots: list[str] | None = None,
     allowed_source_files: list[str] | None = None,
+    delegate_actor_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Issue (replace) the active action lease for the given mode."""
+    """Issue (replace) the active action lease for the given mode.
+
+    ``delegate_actor_ids`` are agents the action legitimately hands work to --
+    a ``primary_review`` controller spawns the workflow's producer window, so
+    that producer must satisfy the same path ACL under the controller's lease
+    instead of being locked out and looking for another way to read.
+    """
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.state import load_state
 
@@ -347,6 +354,9 @@ def issue_action_lease(
         "workflow_id": st.get("workflow_id") or "",
         "action_id": action_id,
         "actor_id": actor_id or "",
+        "delegate_actor_ids": [
+            str(a).strip().lower() for a in (delegate_actor_ids or []) if str(a).strip()
+        ],
         "phase": st.get("phase") or "",
         "state_version": _state_version(st),
         "mode": mode_l,
@@ -386,6 +396,19 @@ def issue_action_lease(
     except Exception:  # noqa: BLE001
         pass
     return lease
+
+
+def lease_authorizes_actor(lease: dict[str, Any], agent_id: str) -> bool:
+    """Whether ``agent_id`` reads under this lease (owner or declared delegate)."""
+    want = str(agent_id or "").strip().lower()
+    if not want:
+        return True
+    owner = str(lease.get("actor_id") or "").strip().lower()
+    if not owner or owner == want:
+        return True
+    return want in {
+        str(a).strip().lower() for a in (lease.get("delegate_actor_ids") or [])
+    }
 
 
 def lease_allows_write_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:

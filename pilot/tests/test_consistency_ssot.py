@@ -22,6 +22,40 @@ def test_check_all_passes_on_real_repo(repo_root: Path) -> None:
     assert errors == [], errors
 
 
+def test_producer_fence_does_not_forbid_its_own_contract_output(repo_root: Path) -> None:
+    """A direct producer must not be fenced off from the canonical product it owns.
+
+    `check_all` only intersects agent write_scopes with contract paths, so a
+    `machine_constraints` / `forbidden` tag pointing at the producer's own output
+    stays invisible there and only surfaces as a deny at write time. `ce-analyst`
+    carried `write_canonical_ce_plan` (a fence meant for non-producers like
+    `ce-applier`) against its own `ce/plan/*_plan.md` for exactly that reason.
+    """
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.agents_registry import forbidden_blocks_write
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    offenders = []
+    for wid, wf in WORKFLOWS.items():
+        for action in wf.get("actions") or []:
+            if action.get("role_id") != "producer":
+                continue
+            if action.get("output_mode") == "staged":
+                continue  # canonical path belongs to the merge action, not this one
+            agent_id = str(action.get("agent_id") or "")
+            contract_id = str(action.get("output_contract_id") or "")
+            if not agent_id or not contract_id:
+                continue
+            for rel in OUTPUT_CONTRACT_PATHS.get(contract_id) or []:
+                if str(rel).startswith("runs/"):
+                    continue
+                probe = str(rel).replace("*_plan.md", "demo_plan.md").replace("*", "demo")
+                reason = forbidden_blocks_write(agent_id, probe, project_root=repo_root)
+                if reason:
+                    offenders.append(f"{wid}/{action['id']}: {agent_id} fenced from {rel} ({reason})")
+    assert offenders == [], offenders
+
+
 def test_unknown_output_contract_fail_closed() -> None:
     from ascendc_pilot.actions.runtime import _check_output_contract
 

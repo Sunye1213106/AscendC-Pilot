@@ -93,7 +93,9 @@ def test_confirm_fails_closed_without_any_uo_authority(tmp_path: Path) -> None:
     _seed_init(out, project)
     with pytest.raises(InitGateError) as exc:
         mark_init_confirmed(out, require_merge=False, project_root=project)
-    assert exc.value.ask == "kb_fingerprint_unavailable"
+    # Which gate fires first depends on whether an architecture can be resolved
+    # at all; either way confirm must not succeed without UO authority.
+    assert exc.value.ask in {"architecture_required", "kb_fingerprint_unavailable"}
 
 
 def test_missing_kernel_view_fails_i0_kernel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

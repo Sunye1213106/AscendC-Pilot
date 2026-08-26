@@ -6,22 +6,28 @@ from pathlib import Path
 
 from ascendc_pilot.actions import tg_product
 from ascendc_pilot.paths import ensure_agent_layout
+from ascendc_pilot.state import start_workflow
 
 
 def test_replay_round_wsl_unavailable_is_not_ok(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root, arch="arch35")
+    # _receipt resolves the architecture out of run state.
+    state = start_workflow(
+        root, "tg-solve", phase="replay", force_phase=True, architecture="arch35"
+    )
 
     monkeypatch.setattr(tg_product, "_live_replay", lambda ctx: True)
-    monkeypatch.setattr(tg_product.products, "load_init", lambda tg: {"table_kind": "csv"})
-    monkeypatch.setattr(tg_product.products, "cases_path", lambda tg, kind: root / "cases.csv")
-    monkeypatch.setattr(
-        tg_product,
-        "_read_cases",
-        lambda path: (["Testcase_Name"], [{"Testcase_Name": "c0"}]),
-    )
     monkeypatch.setattr(tg_product, "_tg", lambda project_root, ctx: root)
+
+    # Rows come from tg/replay/pending.yaml; without them run_replay_round
+    # short-circuits and the oracle never boots, so the guard below is vacuous.
+    replay_dir = root / "replay"
+    replay_dir.mkdir(parents=True, exist_ok=True)
+    (replay_dir / "pending.yaml").write_text(
+        "rows:\n- Testcase_Name: c0\n", encoding="utf-8"
+    )
 
     class Boom:
         def __init__(self) -> None:
@@ -40,7 +46,12 @@ def test_replay_round_wsl_unavailable_is_not_ok(tmp_path: Path, monkeypatch) -> 
 
     result = tg_product.run_replay_round(
         root,
-        {"run_id": "r1", "workflow_id": "tg-solve", "action_id": "replay_round"},
+        {
+            "run_id": state.get("run_id") or "r1",
+            "workflow_id": "tg-solve",
+            "action_id": "replay_round",
+            "architecture": "arch35",
+        },
     )
     assert result["ok"] is False
     assert result["error"] == "WSL_UNAVAILABLE"

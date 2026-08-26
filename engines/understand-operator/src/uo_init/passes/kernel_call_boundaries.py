@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.evidence import stamp_attrs
 from uo_init.ir.relation import RelationKind
+
+_PROV = "source_kernel_call_boundary"
 
 
 def classify_kernel_call_boundaries(codemap: CodeMap) -> CodeMap:
@@ -48,19 +51,27 @@ def classify_kernel_call_boundaries(codemap: CodeMap) -> CodeMap:
         candidates = list(target.attrs.get("candidate_definitions") or [])
         target.status = "confirmed"
         target.confidence = 1.0
-        target.attrs.update({
-            "role": "kernel_call_boundary",
-            "boundary_kind": "static_target_not_proven",
-            "candidate_definitions": candidates,
-            "provenance": "source_kernel_call_boundary",
-        })
+        # Restamp rather than dict-update: this pass replaces the provenance the
+        # node was minted with, and trust has to follow the new one.
+        target.attrs = stamp_attrs(
+            {
+                **target.attrs,
+                "role": "kernel_call_boundary",
+                "boundary_kind": "static_target_not_proven",
+                "candidate_definitions": candidates,
+                "provenance": _PROV,
+            }
+        )
         rel.status = "confirmed"
         rel.confidence = 1.0
-        rel.attrs.update({
-            "provenance": "source_kernel_call_boundary",
-            "boundary_kind": "static_target_not_proven",
-            "candidate_definitions": candidates,
-        })
+        rel.attrs = stamp_attrs(
+            {
+                **rel.attrs,
+                "provenance": _PROV,
+                "boundary_kind": "static_target_not_proven",
+                "candidate_definitions": candidates,
+            }
+        )
         sites += 1
         if rel.src in reachable:
             reachable_sites += 1
