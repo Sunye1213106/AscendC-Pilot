@@ -7,7 +7,6 @@ Legal packed-key space D goes into ``context['tg_views']`` view blobs.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -19,16 +18,15 @@ from uo_init.materialize_tiling import (
     expand_legal_with_groups,
 )
 from uo_init.canonical_tpl_projection import TPL_VIEW_NAMES
-from uo_init.tpl_dsl import TplSchema, parse_file, parse_tpl_corpus
-
-_TPL_MACRO_RE = re.compile(r"\b((?:ASCENDC_TPL_|GET_TPL_)\w+)\b")
+from uo_init.tpl_dsl import TplSchema, parse_file, parse_tpl_corpus, schema_construct_macros
 
 
 def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     ctx = context if context is not None else {}
     try:
         schema, header = _resolve_schema(codemap, ctx)
-        _upsert_tpl_macros(codemap, ctx, header)
+        if schema is not None and schema.dims:
+            _upsert_tpl_macros(codemap, ctx, header, schema)
         if schema is None or not schema.dims:
             codemap.meta["tpl_schema_pass"] = "v1-missing"
             return codemap
@@ -181,7 +179,41 @@ def _resolve_schema(
     return None, None
 
 
-def _tpl_scan_paths(codemap: CodeMap, ctx: dict[str, Any], header: Path | None) -> list[Path]:
+def _upsert_tpl_macros(
+    codemap: CodeMap,
+    ctx: dict[str, Any],
+    header: Path | None,
+    schema: TplSchema,
+) -> int:
+    """Mint the TPL construct names the parsed schema actually uses."""
+    names = schema_construct_macros(schema)
+    locate_paths = _construct_locate_paths(ctx, header)
+    fallback_ref = _portable_header_ref(header, ctx) if header is not None else ""
+    minted = 0
+    for name in sorted(names):
+        site, line = _first_token_site(name, locate_paths)
+        file_ref = _portable_header_ref(site, ctx) if site is not None else fallback_ref
+        codemap.upsert(
+            EntityKind.MACRO,
+            name,
+            eid=f"SRCTPLMACRO::{file_ref or fallback_ref}::{name}",
+            attrs={
+                "layer": "tpl",
+                "provenance": "source_tpl_macro",
+                "coverage_hint": "template_match",
+            },
+            file=file_ref or fallback_ref,
+            line=line,
+            status="confirmed",
+        )
+        minted += 1
+    if minted:
+        codemap.meta["tpl_macro_count"] = minted
+    return minted
+
+
+def _construct_locate_paths(ctx: dict[str, Any], header: Path | None) -> list[Path]:
+    """Header + already-selected TPL/host files. Names come from the schema."""
     paths: list[Path] = []
     seen: set[Path] = set()
 
@@ -196,7 +228,7 @@ def _tpl_scan_paths(codemap: CodeMap, ctx: dict[str, Any], header: Path | None) 
 
     _add(header)
     op_root = str(ctx.get("op_root") or "").strip()
-    arch = str(ctx.get("architecture") or codemap.architecture or "")
+    arch = str(ctx.get("architecture") or "")
     if op_root:
         root = Path(op_root).expanduser().resolve()
         try:
@@ -208,52 +240,22 @@ def _tpl_scan_paths(codemap: CodeMap, ctx: dict[str, Any], header: Path | None) 
                 _add(host)
         except Exception:
             pass
-        for hit in root.glob("op_kernel/**/*template_tiling_key.h"):
-            _add(hit)
     return paths
 
 
-def _upsert_tpl_macros(
-    codemap: CodeMap, ctx: dict[str, Any], header: Path | None
-) -> int:
-    """Make ASCENDC_TPL_* / GET_TPL_* locatable MACRO entities.
-
-    Coverage proof still goes through ``template_match``; locate only needs the
-    macro name to land on the schema header.
-    """
-    minted = 0
-    seen: set[str] = set()
-    header_ref = _portable_header_ref(header, ctx) if header is not None else ""
-    for path in _tpl_scan_paths(codemap, ctx, header):
+def _first_token_site(name: str, paths: list[Path]) -> tuple[Path | None, int]:
+    token = str(name or "")
+    if not token:
+        return None, 0
+    for path in paths:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        ref = header_ref or _portable_header_ref(path, ctx)
-        for match in _TPL_MACRO_RE.finditer(text):
-            name = match.group(1)
-            key = name.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            line = text.count("\n", 0, match.start()) + 1
-            codemap.upsert(
-                EntityKind.MACRO,
-                name,
-                eid=f"SRCTPLMACRO::{ref}::{name}",
-                attrs={
-                    "layer": "tpl",
-                    "provenance": "source_tpl_macro",
-                    "coverage_hint": "template_match",
-                },
-                file=ref,
-                line=line,
-                status="confirmed",
-            )
-            minted += 1
-    if minted:
-        codemap.meta["tpl_macro_count"] = minted
-    return minted
+        pos = text.find(token)
+        if pos >= 0:
+            return path, text.count("\n", 0, pos) + 1
+    return None, 0
 
 
 def _portable_header_ref(header: Path | None, ctx: dict[str, Any]) -> str:
@@ -363,7 +365,7 @@ def _upsert_dims(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:
         if not dim.bit_hi and not dim.bit_lo:
             bit_lo = shift
             bit_hi = shift + max(int(dim.bw), 1) - 1
-        codemap.upsert(
+        key = codemap.upsert(
             EntityKind.TILING_KEY,
             dim.name,
             attrs={
@@ -381,11 +383,76 @@ def _upsert_dims(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:
                 "allowed_values": domain,
                 "value_domain": domain,
                 "provenance": "source_tpl_args_decl",
+                "bw_token": str(dim.bw_token or ""),
             },
             file=header_ref,
             status="confirmed",
         )
+        _bind_dim_constructs(codemap, schema, key, dim)
         shift += max(int(dim.bw), 1)
+
+
+def _bind_macro(
+    codemap: CodeMap,
+    src_id: str,
+    name: str,
+    *,
+    provenance: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    token = str(name or "").strip()
+    if not token:
+        return
+    for macro in codemap.by_name(token, kind=EntityKind.MACRO):
+        attrs = {"provenance": provenance}
+        if extra:
+            attrs.update(extra)
+        codemap.link(
+            RelationKind.BINDS,
+            src_id,
+            macro.id,
+            attrs=attrs,
+            status="confirmed",
+        )
+
+
+def _bind_dim_constructs(codemap: CodeMap, schema: TplSchema, key, dim) -> None:
+    has_sel = bool(schema.selections and any(schema.selections))
+    _bind_macro(codemap, key.id, "ASCENDC_TPL_ARGS_DECL", provenance="source_tpl_schema_construct")
+    _bind_macro(codemap, key.id, "GET_TPL_TILING_KEY", provenance="source_tpl_schema_construct")
+    if has_sel:
+        _bind_macro(codemap, key.id, "ASCENDC_TPL_ARGS_SEL", provenance="source_tpl_schema_construct")
+        _bind_macro(codemap, key.id, "ASCENDC_TPL_SEL", provenance="source_tpl_schema_construct")
+    kind = str(dim.kind or "").upper()
+    if kind:
+        _bind_macro(
+            codemap,
+            key.id,
+            f"ASCENDC_TPL_{kind}_DECL",
+            provenance="source_tpl_schema_construct",
+        )
+        if has_sel and kind != "KERNEL_TYPE":
+            _bind_macro(
+                codemap,
+                key.id,
+                f"ASCENDC_TPL_{kind}_SEL",
+                provenance="source_tpl_schema_construct",
+            )
+    token = str(dim.bw_token or "").strip()
+    if token:
+        _bind_macro(
+            codemap,
+            key.id,
+            token,
+            provenance="source_tpl_bw_macro",
+            extra={"bw_token": token},
+        )
+    if kind == "UINT" and dim.vals:
+        marker = str(dim.vals[0])
+        if "UI_LIST" in marker:
+            _bind_macro(codemap, key.id, "ASCENDC_TPL_UI_LIST", provenance="source_tpl_schema_construct")
+        if "UI_RANGE" in marker:
+            _bind_macro(codemap, key.id, "ASCENDC_TPL_UI_RANGE", provenance="source_tpl_schema_construct")
 
 
 def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:

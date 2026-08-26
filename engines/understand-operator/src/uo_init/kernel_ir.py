@@ -66,6 +66,8 @@ class KernelIR:
     functions: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: (owner, member) → {type_text, file, line} from kernel Clang walks.
     field_decls: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    #: Clang MACRO_INSTANTIATION sites merged from kernel walks.
+    macro_uses: list[dict[str, Any]] = field(default_factory=list)
 
     def mint_ids(self, op_root: str = "") -> None:
         """Assign `KBR_*` ids using the same material as the folded branches.
@@ -389,6 +391,7 @@ def build_kernel_ir(
         with ThreadPoolExecutor(max_workers=workers) as pool:
             walked = list(pool.map(_walk_one, jobs))
 
+    seen_uses: set[tuple[str, str, int, str]] = set()
     for label, res in walked:
         for node in res.controls:
             if node.kind != "if_constexpr":
@@ -446,6 +449,30 @@ def build_kernel_ir(
                     "canonical_type": str(getattr(decl, "canonical_type", "") or ""),
                 },
             )
+        for use in getattr(res, "macro_uses", None) or []:
+            if isinstance(use, dict):
+                rec = {
+                    "name": str(use.get("name") or ""),
+                    "file": str(use.get("file") or ""),
+                    "line": int(use.get("line") or 0),
+                    "parent_name": str(use.get("parent_name") or ""),
+                    "parent_kind": str(use.get("parent_kind") or ""),
+                }
+            else:
+                rec = {
+                    "name": str(getattr(use, "name", "") or ""),
+                    "file": str(getattr(use, "file", "") or ""),
+                    "line": int(getattr(use, "line", 0) or 0),
+                    "parent_name": str(getattr(use, "parent_name", "") or ""),
+                    "parent_kind": str(getattr(use, "parent_kind", "") or ""),
+                }
+            if not rec["name"]:
+                continue
+            key_use = (rec["name"], rec["file"], rec["line"], rec["parent_name"])
+            if key_use in seen_uses:
+                continue
+            seen_uses.add(key_use)
+            ir.macro_uses.append(rec)
 
     ir.branches = sorted(found.values(), key=lambda b: (b.file, b.line))
     named = sum(1 for b in ir.branches if b.dimensions or b.derived)

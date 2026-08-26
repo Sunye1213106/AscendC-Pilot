@@ -3,4 +3,4 @@
 
 from __future__ import annotations
 
-__all__ = ["constraint_ir"]
+__all__ = ["constraint_ir", "paths"]

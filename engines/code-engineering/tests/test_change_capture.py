@@ -66,6 +66,27 @@ def test_parse_and_capture_smoke(tmp_path: Path) -> None:
     assert payload["diff_spans"]["kernel.cpp"]
 
 
+def test_parse_unified_hunks_keeps_deleted_lines() -> None:
+    from code_engineering.change.capture import parse_unified_hunks
+
+    diff = """diff --git a/op_host/a.cpp b/op_host/a.cpp
+--- a/op_host/a.cpp
++++ b/op_host/a.cpp
+@@ -10,3 +10,0 @@
+-  if (s1 > limit) {
+-    return;
+-  }
+@@ -20,1 +17,1 @@
+-  foo = old_value;
++  foo = new_value;
+"""
+    hunks = parse_unified_hunks(diff)
+    assert len(hunks) == 2
+    assert hunks[0]["deleted_lines"] == ["  if (s1 > limit) {", "    return;", "  }"]
+    assert hunks[0]["added_lines"] == []
+    assert "foo = new_value;" in hunks[1]["added_lines"][0]
+
+
 def test_capture_nested_operator_and_untracked(tmp_path: Path) -> None:
     repo = tmp_path / "ops-transformer"
     op = repo / "attention" / "flash_attention_score_grad"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from uo_init import tu_cache
@@ -86,8 +87,6 @@ def test_sources_unchanged_after_store(tmp_path):
 
 
 def test_fingerprint_fails_without_clang_confirmed_list(tmp_path):
-    import pytest
-
     host = tmp_path / "op_host"
     host.mkdir()
     (host / "a.cpp").write_text("void f() {}\n", encoding="utf-8")
@@ -184,3 +183,39 @@ def test_parse_cache_key_honors_explicit_parse_flags(tmp_path):
     )
     assert via_ctx == via_flags
     assert via_ctx != other
+
+
+def test_content_fingerprint_reuses_sha_when_mtime_size_match(tmp_path, monkeypatch):
+    """Unchanged mtime+size must not re-read file bytes for the extract fingerprint."""
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "a.cpp").write_text("int a;\n", encoding="utf-8")
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    _seed_scope(uo, ["op_host/a.cpp"])
+    first = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    store_extract_fingerprint(uo, first)
+
+    def _boom(path):  # pragma: no cover
+        raise AssertionError(f"sha256_file must not run on unchanged stamp: {path}")
+
+    monkeypatch.setattr("uo_init.extract_cache.sha256_file", _boom)
+    second = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    assert second["extract_fingerprint"] == first["extract_fingerprint"]
+    assert second.get("reused_stamp_files") == ["op_host/a.cpp"]
+
+
+def test_skip_reextract_reports_only_changed_file(tmp_path):
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "a.cpp").write_text("void f() {}\n", encoding="utf-8")
+    (host / "b.cpp").write_text("void g() {}\n", encoding="utf-8")
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    _seed_scope(uo, ["op_host/a.cpp", "op_host/b.cpp"])
+    meta = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    store_extract_fingerprint(uo, meta)
+    (host / "b.cpp").write_text("void g() { return; }\n", encoding="utf-8")
+
+    plan = skip_reextract_for_unchanged_tus(tmp_path, uo_root=uo, arch="arch35")
+    assert plan["skip_reextract"] is False
+    assert plan["changed_or_cold"] == ["op_host/b.cpp"]
+    assert plan["unchanged_tus"] == ["op_host/a.cpp"]

@@ -2,9 +2,17 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
+
+_UO_ROOT = Path(__file__).resolve().parents[1]
+_COMMON = _UO_ROOT.parent / "common"
+_SRC = _UO_ROOT / "src"
+for path in (_SRC, _COMMON):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from uo_init import paths
 

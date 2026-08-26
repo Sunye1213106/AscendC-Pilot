@@ -9,6 +9,72 @@ from typing import Any
 from code_engineering.change.capture import capture
 from code_engineering.plan_md import declared_source_files, resolve_active_plan, unfinished_todos
 
+CE_PLAN_CONFIRMED_SCHEMA = "ce-plan-confirmed-v1"
+APPLY_PLAN_UNCONFIRMED = "APPLY_PLAN_UNCONFIRMED"
+
+
+def plan_confirmed_path(project_root: Path | str, architecture: str) -> Path:
+    arch = str(architecture or "").strip()
+    return (
+        Path(project_root).expanduser().resolve()
+        / ".ascendc-pilot"
+        / arch
+        / "context"
+        / "ce_plan_confirmed.yaml"
+    )
+
+
+def load_plan_confirmed(
+    project_root: Path | str,
+    *,
+    architecture: str,
+) -> dict[str, Any] | None:
+    """Return the ce-plan-confirmed-v1 receipt, or None if absent/invalid."""
+    path = plan_confirmed_path(project_root, architecture)
+    if not path.is_file():
+        return None
+    try:
+        import yaml
+
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(doc, dict):
+        return None
+    if str(doc.get("schema") or "").strip() != CE_PLAN_CONFIRMED_SCHEMA:
+        return None
+    return doc
+
+
+def write_plan_confirmed(
+    project_root: Path | str,
+    *,
+    architecture: str,
+    decision: str = "confirm",
+    plan: Path | str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> Path:
+    """Host writes this receipt. A markdown plan on disk is not confirmation."""
+    import yaml
+
+    path = plan_confirmed_path(project_root, architecture)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc: dict[str, Any] = {
+        "schema": CE_PLAN_CONFIRMED_SCHEMA,
+        "decision": str(decision or "").strip(),
+        "plan": Path(plan).as_posix() if plan else "",
+    }
+    for key, value in (extra or {}).items():
+        if value not in (None, ""):
+            doc[str(key)] = value
+    path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def is_plan_confirmed(project_root: Path | str, *, architecture: str) -> bool:
+    doc = load_plan_confirmed(project_root, architecture=architecture)
+    return bool(doc) and str(doc.get("decision") or "").strip() == "confirm"
+
 
 def apply_gate(
     project_root: Path | str,
@@ -16,7 +82,7 @@ def apply_gate(
     architecture: str,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fail closed unless the active named plan exists and has unfinished todos."""
+    """Fail closed unless the named plan exists, is confirmed, and has open todos."""
     arch = str(architecture or "").strip()
     if not arch:
         return {"ok": False, "engine": "apply_gate", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
@@ -36,6 +102,14 @@ def apply_gate(
             "reason_code": "APPLY_TODOS_DONE",
             "plan": plan.as_posix(),
             "message_zh": "当前计划没有未完成 todo。请 /ce-plan 改计划，或去 /tg-plan / /ce-review。",
+        }
+    if not is_plan_confirmed(project_root, architecture=arch):
+        return {
+            "ok": False,
+            "engine": "apply_gate",
+            "reason_code": APPLY_PLAN_UNCONFIRMED,
+            "plan": plan.as_posix(),
+            "message_zh": "计划已写出但尚未 human_confirm。ce-apply 不认磁盘上有 md，须有 ce-plan-confirmed-v1 收据。",
         }
     return {
         "ok": True,

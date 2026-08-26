@@ -1,6 +1,6 @@
 # Policy: source-authority
 
-查法见 `code-access`。同一事实多份证据打架时，以更具体的为准：
+查询顺序仍遵守 `code-access`。同一事实多份证据打架时，以更具体的为准：
 
 1. 路由拿到的源码窗口（卡片 `path:line` 精读）
 2. 本 run 已签发的 Pilot 收据 / 引擎输出

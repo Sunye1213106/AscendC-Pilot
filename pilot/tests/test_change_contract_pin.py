@@ -2,15 +2,63 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import yaml
+
+
+def _git(root: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return str(proc.stdout or "").strip()
 
 
 def _op(root: Path) -> Path:
     op = root / "flash_op"
     (op / "op_host" / "arch35").mkdir(parents=True)
     return op
+
+
+def _prepare_pr_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """Git repo with two commits; returns operator, base_sha, head_sha."""
+    repo = tmp_path
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init")
+    op = _op(repo)
+    src = op / "op_host" / "arch35" / "tiling.cpp"
+    src.write_text("int foo = 0;\n", encoding="utf-8")
+    _git(repo, "add", "flash_op/op_host/arch35/tiling.cpp")
+    _git(
+        repo,
+        "-c",
+        "user.email=pin@example.invalid",
+        "-c",
+        "user.name=Pin Test",
+        "commit",
+        "-m",
+        "base",
+    )
+    base = _git(repo, "rev-parse", "HEAD")
+    src.write_text("int foo = 1;\n", encoding="utf-8")
+    _git(repo, "add", "flash_op/op_host/arch35/tiling.cpp")
+    _git(
+        repo,
+        "-c",
+        "user.email=pin@example.invalid",
+        "-c",
+        "user.name=Pin Test",
+        "commit",
+        "-m",
+        "head",
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    return op, base, head
 
 
 def _write_clone_receipt_yaml(
@@ -20,6 +68,7 @@ def _write_clone_receipt_yaml(
     url: str = "https://example.test/org/repo/pull/1",
     head_sha: str = "bbb",
     base_sha: str = "aaa",
+    worktree: str = "",
 ) -> Path:
     from ascendc_pilot.user_goal_core import control_root
 
@@ -33,7 +82,7 @@ def _write_clone_receipt_yaml(
                 "changed_files": files,
                 "base_sha": base_sha,
                 "head_sha": head_sha,
-                "worktree_head": str(op),
+                "worktree_head": worktree or str(op),
             },
             allow_unicode=True,
             sort_keys=False,
@@ -131,17 +180,25 @@ def test_pin_facts_promotes_clone_receipt(tmp_path: Path) -> None:
     from ascendc_pilot.change_contract import load_change_contract, pin_facts
     from ascendc_pilot.user_goal_core import control_root
 
-    op = _op(tmp_path)
-    _write_clone_receipt_yaml(op, files=["op_host/arch35/tiling.cpp"])
+    op, base, head = _prepare_pr_repo(tmp_path)
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(tmp_path),
+    )
     out = pin_facts(op)
     assert out.get("ok") is True, out
     doc = yaml.safe_load((control_root(op) / "change_contract.yaml").read_text(encoding="utf-8"))
+    assert doc["schema"] == "tg-change-contract/v2"
     assert doc["kind"] == "pr_regression"
-    assert doc["changed_files"] == ["op_host/arch35/tiling.cpp"]
-    assert doc["base_sha"] == "aaa"
-    assert doc["head_sha"] == "bbb"
+    assert doc["changed_files"]
+    assert doc["changed_hunks"]
+    assert doc["base_sha"] == base
+    assert doc["head_sha"] == head
     loaded = load_change_contract(op)
-    assert loaded["changed_files"] == ["op_host/arch35/tiling.cpp"]
+    assert loaded["changed_hunks"]
 
 
 def test_pin_facts_without_receipt_does_not_write(tmp_path: Path) -> None:
@@ -201,12 +258,27 @@ def test_plan_scope_packet_reads_only_pinned_contract(tmp_path: Path, monkeypatc
     )
     empty = _compact_plan_scope_packet(op, {"architecture": "arch35", "run_id": "R1"})
     assert empty.get("has_diff") is False
-    _write_clone_receipt_yaml(op, files=["op_host/arch35/tiling.cpp"])
-    pin_facts(op)
-    packet = _compact_plan_scope_packet(op, {"architecture": "arch35", "run_id": "R1"})
+    op2, base, head = _prepare_pr_repo(tmp_path / "pinned")
+    # reuse layout helpers on a dedicated repo; this test's `op` has no git.
+    from ascendc_pilot.paths import ensure_agent_layout as _layout
+
+    _layout(op2, arch="arch35")
+    (op2 / ".ascendc-pilot" / "arch35" / "uo").mkdir(parents=True, exist_ok=True)
+    (op2 / ".ascendc-pilot" / "arch35" / "uo" / "manifest.yaml").write_text(
+        "op_name: flash_op\n", encoding="utf-8"
+    )
+    _write_clone_receipt_yaml(
+        op2,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(tmp_path / "pinned"),
+    )
+    pin_facts(op2)
+    packet = _compact_plan_scope_packet(op2, {"architecture": "arch35", "run_id": "R1"})
     assert packet.get("has_diff") is True
     assert packet.get("allow_legal_keys") is False
-    assert "tiling.cpp" in str(packet.get("changed_files") or packet.get("change_contract") or "")
+    assert packet.get("changed_hunks")
 
 
 def test_session_shape_pr_receipt_without_pin_fails_precheck(tmp_path: Path, monkeypatch) -> None:
@@ -249,14 +321,25 @@ def test_session_shape_pr_receipt_without_pin_fails_precheck(tmp_path: Path, mon
     assert out.get("retryable") is True
     assert not list(op.rglob("plan_scope_packet.yaml"))
 
-    promoted = pin_facts(op)
+    live = tmp_path / "live"
+    op2, base, head = _prepare_pr_repo(live)
+    ensure_agent_layout(op2, arch="arch35")
+    state2 = start_workflow(op2, "tg-plan", architecture="arch35", op_name="flash_op")
+    _write_clone_receipt_yaml(
+        op2,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(live),
+    )
+    promoted = pin_facts(op2)
     assert promoted.get("ok") is True, promoted
     ok = run_plan_precheck(
-        op,
+        op2,
         {
             "architecture": "arch35",
             "op_name": "flash_op",
-            "run_id": str(state.get("run_id") or "R1"),
+            "run_id": str(state2.get("run_id") or "R1"),
         },
     )
     assert ok.get("ok") is True, ok
@@ -379,14 +462,22 @@ def test_pin_facts_cli_promotes_project_only(tmp_path: Path, capsys) -> None:
     from ascendc_pilot.cli import main
     from ascendc_pilot.change_contract import load_change_contract
 
-    op = _op(tmp_path)
-    _write_clone_receipt_yaml(op, files=["op_host/arch35/tiling.cpp"])
+    op, base, head = _prepare_pr_repo(tmp_path)
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(tmp_path),
+    )
     rc = main(["pin-facts", "--project", str(op)])
     captured = capsys.readouterr()
     assert rc == 0, captured.out
     payload = json.loads(captured.out)
     assert payload.get("ok") is True
-    assert (load_change_contract(op) or {}).get("kind") == "pr_regression"
+    loaded = load_change_contract(op) or {}
+    assert loaded.get("kind") == "pr_regression"
+    assert loaded.get("changed_hunks")
 
 
 def test_pin_facts_cli_rejects_changed_files_flag(tmp_path: Path) -> None:
@@ -399,3 +490,67 @@ def test_pin_facts_cli_rejects_changed_files_flag(tmp_path: Path) -> None:
         assert int(exc.code or 0) != 0
         return
     raise AssertionError("pin-facts must not accept --changed-files")
+
+
+def test_v1_pr_contract_without_hunks_is_not_loaded(tmp_path: Path) -> None:
+    from ascendc_pilot.change_contract import load_change_contract
+    from ascendc_pilot.user_goal_core import control_root
+
+    op = _op(tmp_path)
+    path = control_root(op) / "change_contract.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "tg-change-contract/v1",
+                "kind": "pr_regression",
+                "changed_files": ["op_host/a.cpp"],
+                "base_sha": "aaa",
+                "head_sha": "bbb",
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    assert load_change_contract(op) is None
+
+
+def test_pin_uses_two_dot_sha_diff(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot import change_contract as cc
+
+    seen: list[tuple[str, str]] = []
+    orig = cc._git_diff_unified
+
+    def _wrap(cwd, base_sha, head_sha):
+        seen.append((str(base_sha), str(head_sha)))
+        return orig(cwd, base_sha, head_sha)
+
+    monkeypatch.setattr(cc, "_git_diff_unified", _wrap)
+    op, base, head = _prepare_pr_repo(tmp_path)
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(tmp_path),
+    )
+    out = cc.pin_facts(op)
+    assert out.get("ok") is True, out
+    assert seen == [(base, head)]
+    assert all("..." not in a and "..." not in b for a, b in seen)
+
+
+def test_pin_rejects_head_mismatch(tmp_path: Path) -> None:
+    from ascendc_pilot.change_contract import pin_facts
+
+    op, base, head = _prepare_pr_repo(tmp_path)
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha="deadbeef" + head[8:],
+        worktree=str(tmp_path),
+    )
+    out = pin_facts(op)
+    assert out.get("ok") is False
+    assert out.get("error") == "PIN_HEAD_MISMATCH"

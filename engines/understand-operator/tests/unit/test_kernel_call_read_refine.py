@@ -101,3 +101,55 @@ def test_refine_skips_foreign_arch_method_bodies(tmp_path: Path) -> None:
     names = {e.name for e in cm.entities.values()}
     assert "Helper" in names
     assert "OldOnly" not in names
+
+
+def test_refine_does_not_mint_empty_include_guard_macro(tmp_path: Path) -> None:
+    root = tmp_path / "toy"
+    src = root / "op_kernel" / "arch35" / "k.cpp"
+    src.parent.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    src.write_text(
+        "#ifndef FOO_H\n"
+        "#define FOO_H\n"
+        "inline void Helper() {}\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["kernel_tiling_closure"] = {
+        "selected_kernel_files": ["op_kernel/arch35/k.cpp"],
+    }
+    refine_kernel_calls_and_tiling_reads(cm, root, architecture="arch35")
+    assert not cm.by_name("FOO_H", kind=EntityKind.MACRO)
+    assert cm.by_name("Helper", kind=EntityKind.FUNCTION)
+
+
+def test_refine_reuses_same_file_source_define_macro(tmp_path: Path) -> None:
+    root = tmp_path / "toy"
+    src = root / "op_kernel" / "arch35" / "k.cpp"
+    src.parent.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    src.write_text(
+        "#define NUM_2 2\n"
+        "inline int Helper() { return NUM_2; }\n",
+        encoding="utf-8",
+    )
+    file = src.relative_to(root.parent).as_posix()
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["kernel_tiling_closure"] = {
+        "selected_kernel_files": ["op_kernel/arch35/k.cpp"],
+    }
+    existing = cm.upsert(
+        EntityKind.MACRO,
+        "NUM_2",
+        eid=f"SRCMACRO::{file}::NUM_2",
+        attrs={"value": "2", "provenance": "source_define", "architecture": "arch35"},
+        file=file,
+        line=1,
+        status="confirmed",
+    )
+    refine_kernel_calls_and_tiling_reads(cm, root, architecture="arch35")
+    macros = cm.by_name("NUM_2", kind=EntityKind.MACRO)
+    assert len(macros) == 1
+    assert macros[0].id == existing.id
+    assert macros[0].attrs.get("provenance") == "source_define"

@@ -553,6 +553,44 @@ def _ingest_reg_op_text(
                 required=op == "REQUIRED_ATTR",
                 provenance="source_reg_op",
             )
+    _link_api_file(codemap, file, tensor_inputs, attrs, outputs)
+
+
+def _link_api_file(
+    codemap: CodeMap,
+    file: str,
+    tensor_inputs: list,
+    attrs: list,
+    outputs: list,
+) -> None:
+    """REG_OP is one declaration. The proto FILE contains every port it names.
+
+    Tensor INPUTs pick up host-defuse edges and become the walk from an
+    anchor; attribute INPUTs (scale_value, pse_type, ...) were minted from
+    the same macro and then left with degree 0. CONTAINS from the proto
+    file is the compiler's grouping, and because INPUT is an anchor the
+    file and the attributes become reachable together.
+    """
+    if not file:
+        return
+    file_ent = codemap.upsert(
+        EntityKind.FILE,
+        file,
+        attrs={"role": "api", "provenance": "source_reg_op"},
+        file=file,
+        line=1,
+        status="confirmed",
+    )
+    for ent in list(tensor_inputs) + list(attrs) + list(outputs):
+        if str(ent.file or "").replace("\\", "/") != file.replace("\\", "/"):
+            continue
+        codemap.link(
+            RelationKind.CONTAINS,
+            file_ent.id,
+            ent.id,
+            attrs={"provenance": "source_reg_op", "via": "reg_op_decl"},
+            status="confirmed",
+        )
 
 
 def _def_cpp_files(root: Path) -> list[Path]:

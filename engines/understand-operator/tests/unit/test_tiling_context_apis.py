@@ -116,10 +116,21 @@ def test_tiling_context_apis_mints_platform_getcorenumaiv(tmp_path: Path) -> Non
         ]
     )
     cm = CodeMap(op_name="ToyOp", architecture="arch35")
+    fn = cm.upsert(
+        EntityKind.FUNCTION,
+        "DoTiling",
+        attrs={"layer": "host", "provenance": "clang_walk"},
+        file=rel,
+        line=1,
+    )
     enrich_tiling_context_apis(cm, tmp_path, architecture="arch35", host_ir=ir)
     aiv = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "GetCoreNumAiv")
     assert aiv.attrs.get("catalog") == "cann_platform"
     assert aiv.line_start == 2
+    from uo_init.ir.relation import RelationKind
+
+    callees = {dst.id for _rel, dst in cm.neighbors(fn.id, kind=RelationKind.CALLS, direction="out")}
+    assert aiv.id in callees
     product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     product.parent.mkdir(parents=True, exist_ok=True)
     write_codemap(cm, product)

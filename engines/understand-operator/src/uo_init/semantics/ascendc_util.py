@@ -8,6 +8,7 @@ declared in interface headers, not the small YAML catalog. Same pattern as
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,19 +51,30 @@ def _scan_file(path: Path) -> set[str]:
     return names
 
 
+_SCAN_PATTERNS = (
+    "kernel_operator_*_intf.h",
+    "*arithprogression*.h",
+    "*proposal*.h",
+    "*math*.h",
+    "*utils*.h",
+)
+
+
 def _scan_dir(folder: Path) -> set[str]:
+    """Names declared in the interesting headers under one CANN include root.
+
+    Walk once and match in memory. Globbing per pattern re-walked the whole
+    CANN include tree five times over to read the same handful of headers, and
+    these trees are thousands of files deep. ``fnmatch`` is used rather than
+    ``fnmatchcase`` so matching stays case-insensitive on Windows and sensitive
+    elsewhere, which is what ``rglob`` did.
+    """
     names: set[str] = set()
-    patterns = (
-        "kernel_operator_*_intf.h",
-        "*arithprogression*.h",
-        "*proposal*.h",
-        "*math*.h",
-        "*utils*.h",
-    )
-    for pattern in patterns:
-        for path in folder.rglob(pattern):
-            if path.is_file():
-                names.update(_scan_file(path))
+    for path in folder.rglob("*"):
+        if not any(fnmatch(path.name, pattern) for pattern in _SCAN_PATTERNS):
+            continue
+        if path.is_file():
+            names.update(_scan_file(path))
     return names
 
 

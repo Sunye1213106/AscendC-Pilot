@@ -36,6 +36,12 @@ _*.log
 _*.err
 _*.out
 
+# Timing samples and cProfile dumps from tools/uo_perf_bench.py and
+# tools/uo_profile_analyze.py. Machine-specific by nature: the numbers describe
+# one host, so committing them would invite comparing runs across machines.
+# The answers golden is committed instead -- that one is about the product.
+engines/understand-operator/.perf/
+
 # Local run products / obligation dumps / UO exports (never commit)
 *.bundle
 artifacts/

@@ -186,6 +186,7 @@ _CLANG_PROVENANCE = frozenset(
         "source_reg_op",
         "source_scope",
         "source_macro_invocation",
+        "source_clang_macro_instantiation",
         # roles projected onto a clang FunctionDecl / CXXRecordDecl
         "symbol_role_host_sink",
         "symbol_role_opdef_base",
@@ -216,6 +217,8 @@ _DSL_PROVENANCE = frozenset(
         "source_define",
         "source_inventory",
         "source_tpl_macro",
+        "source_tpl_schema_construct",
+        "source_tpl_bw_macro",
         "source_tpl_args_sel",
         "source_tpl_args_decl",
         "source_tiling_data_member",

@@ -219,3 +219,72 @@ def test_does_not_raise_when_head_unknown(tmp_path: Path, monkeypatch: pytest.Mo
     payload = detect_kb_changes(tmp_path, "Toy", architecture="arch35", write=True)
     assert (uo / "diff" / "change_set.yaml").is_file()
     assert payload["head_sha"] == "unknown"
+
+
+def test_content_fallback_lists_only_changed_confirmed_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "a.cpp").write_text("void f() {}\n", encoding="utf-8")
+    (host / "b.cpp").write_text("void g() {}\n", encoding="utf-8")
+    uo = _seed_uo(tmp_path, ["op_host/a.cpp", "op_host/b.cpp"], source="string")
+    meta = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    store_extract_fingerprint(uo, meta)
+    (host / "b.cpp").write_text("void g() { return; }\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "uo_init.update.changes.inspect_git_changes",
+        lambda *_args, **_kwargs: {
+            "git_ok": False,
+            "rows": [],
+            "worktree_rows": [],
+            "worktree_dirty": False,
+            "worktree_fingerprint": "none",
+            "head_sha": "",
+            "base_sha": "",
+        },
+    )
+    monkeypatch.setattr("uo_init.update.changes.git_head", lambda *_args, **_kwargs: "")
+
+    payload = detect_kb_changes(tmp_path, "Toy", architecture="arch35", write=False)
+
+    assert payload["detection"] == "content_fingerprint"
+    assert payload["scoped_change_count"] == 1
+    assert payload["files"][0]["path"] == "op_host/b.cpp"
+    plan = plan_kb_update(tmp_path, "Toy", change_set=payload, write=False, architecture="arch35")
+    assert plan["mode"] != "noop"
+    assert plan["scoped_changed_files"] == ["op_host/b.cpp"]
+
+
+def test_git_rows_are_noop_when_extract_fingerprint_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """uo-update must follow extract stamps, not a stale git range."""
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "tiling.cpp").write_text("v1\n", encoding="utf-8")
+    uo = _seed_uo(tmp_path, ["op_host/tiling.cpp"], source="string")
+    meta = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    store_extract_fingerprint(uo, meta)
+
+    monkeypatch.setattr(
+        "uo_init.update.changes.inspect_git_changes",
+        lambda *_args, **_kwargs: {
+            "git_ok": True,
+            "rows": [("M", "op_host/tiling.cpp")],
+            "worktree_rows": [("M", "op_host/tiling.cpp")],
+            "worktree_dirty": True,
+            "worktree_fingerprint": "stale-git",
+            "head_sha": "abc",
+            "base_sha": "abc",
+        },
+    )
+    monkeypatch.setattr("uo_init.update.changes.git_head", lambda *_args, **_kwargs: "abc")
+
+    payload = detect_kb_changes(tmp_path, "Toy", architecture="arch35", write=False)
+
+    assert payload["scoped_change_count"] == 0
+    assert payload["files"] == []
+    plan = plan_kb_update(tmp_path, "Toy", change_set=payload, write=False, architecture="arch35")
+    assert plan["mode"] == "noop"

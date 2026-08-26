@@ -316,7 +316,12 @@ def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
     out: list[Path] = []
     seen: set[Path] = set()
     root = Path(source_root)
-    for text in raw:
+    # A file is cited once per call site, decl, control and field that mentions
+    # it, so this arrives as tens of thousands of entries naming a few dozen
+    # files. Deduplicating the spelling first matters because everything below
+    # is per entry: a filesystem probe and two architecture classifications.
+    # The existing `seen` set only dedups *after* all of that has been paid.
+    for text in dict.fromkeys(raw):
         path = _resolve_cited_file(text, root)
         if path is None:
             continue

@@ -110,8 +110,8 @@ def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monke
     assert "revision:" in manifest
     assert (uo / "runs" / "r_new" / "scope" / "layout_receipt.yaml").is_file()
     assert (uo / "summary").is_dir()
-    assert (uo / "tiling").is_dir()
-    assert (uo / "kernel").is_dir()
+    assert not (uo / "tiling").exists()
+    assert not (uo / "kernel").exists()
     assert product.is_file()
     assert product.read_bytes() == b"uo-keep"
 
@@ -342,4 +342,6 @@ def test_extract_host_skips_clang_when_fingerprint_and_pkl_match(tmp_path, monke
     assert out["ok"] is True
     assert out["restored_from"] == "host_ir.pkl"
     assert out["sources_unchanged_at_start"] is True
+    assert (uo / "ir" / "host_extract_receipt.yaml").is_file()
+    assert not (uo / "ir" / "_host_bundle_meta.yaml").exists()
     pe._STORE.clear()

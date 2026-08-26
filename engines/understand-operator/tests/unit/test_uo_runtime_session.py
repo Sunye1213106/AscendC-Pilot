@@ -209,6 +209,108 @@ def test_analyze_exception_ends_session(tmp_path: Path, monkeypatch) -> None:
     assert key not in _COMPILE_MEM
 
 
+def test_analyze_reuses_compile_cache_when_extract_fingerprint_matches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from uo_init import pilot_engines as pe
+    from uo_init.codemap_engines import analyze
+    from uo_init.host_ir import HostIR
+
+    pe._STORE.clear()
+    _COMPILE_MEM.clear()
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    (uo / "ir").mkdir(parents=True)
+    store_compile_cache(
+        tmp_path,
+        "Toy",
+        "arch35",
+        {
+            "codemap": object(),
+            "summary": {"entities": 3},
+            "gaps": [],
+            "audit": {},
+            "_merged_views": {},
+            "tg_views": {},
+        },
+        extract_fingerprint="fp-same",
+    )
+    monkeypatch.setattr(
+        "uo_init.codemap_engines._compiler_inputs",
+        lambda *_a, **_k: ("Toy", "arch35", HostIR(), None, {}, uo),
+    )
+    monkeypatch.setattr(
+        "uo_init.pilot_engines._current_extract_fingerprint",
+        lambda *_a, **_k: "fp-same",
+    )
+
+    def boom(*_a, **_k):
+        raise AssertionError("compile_codemap must not run when compile cache is fresh")
+
+    monkeypatch.setattr("uo_init.build.compile_codemap", boom)
+    out = analyze(tmp_path, {"architecture": "arch35", "op_name": "Toy"})
+    assert out.get("ok") is True
+    assert out.get("reused_compile_cache") is True
+    assert out.get("summary", {}).get("entities") == 3
+    pe._STORE.clear()
+    _COMPILE_MEM.clear()
+
+
+def test_analyze_recompiles_when_extract_fingerprint_drifts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from uo_init import pilot_engines as pe
+    from uo_init.codemap_engines import analyze
+    from uo_init.host_ir import HostIR
+
+    pe._STORE.clear()
+    _COMPILE_MEM.clear()
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    (uo / "ir").mkdir(parents=True)
+    store_compile_cache(
+        tmp_path,
+        "Toy",
+        "arch35",
+        {
+            "codemap": object(),
+            "summary": {"entities": 1},
+            "gaps": [],
+            "audit": {},
+            "_merged_views": {},
+            "tg_views": {},
+        },
+        extract_fingerprint="fp-old",
+    )
+    monkeypatch.setattr(
+        "uo_init.codemap_engines._compiler_inputs",
+        lambda *_a, **_k: ("Toy", "arch35", HostIR(), None, {}, uo),
+    )
+    monkeypatch.setattr(
+        "uo_init.pilot_engines._current_extract_fingerprint",
+        lambda *_a, **_k: "fp-new",
+    )
+    compiled = {"n": 0}
+
+    def fake_compile(**_k):
+        compiled["n"] += 1
+        return {
+            "codemap": object(),
+            "summary": {"entities": 9},
+            "gaps": [],
+            "audit": {},
+            "_merged_views": {},
+            "tg_views": {},
+        }
+
+    monkeypatch.setattr("uo_init.build.compile_codemap", fake_compile)
+    out = analyze(tmp_path, {"architecture": "arch35", "op_name": "Toy"})
+    assert compiled["n"] == 1
+    assert out.get("ok") is True
+    assert out.get("reused_compile_cache") is not True
+    assert out.get("summary", {}).get("entities") == 9
+    pe._STORE.clear()
+    _COMPILE_MEM.clear()
+
+
 def test_commit_failure_keeps_compile_mem(tmp_path: Path, monkeypatch) -> None:
     from uo_init import pilot_engines as pe
     from uo_init.codemap_engines import commit

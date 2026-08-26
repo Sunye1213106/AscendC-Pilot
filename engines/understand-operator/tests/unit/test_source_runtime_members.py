@@ -65,3 +65,33 @@ def test_runtime_member_line_when_brace_at_eol(tmp_path: Path) -> None:
     }
     assert "Init" in declared
     assert "tensor_" in declared
+
+
+def test_enum_member_contains_declared_type(tmp_path: Path) -> None:
+    from uo_init.passes.source_resolution import link_enum_membership
+
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enum_t = cm.upsert(
+        EntityKind.TYPE,
+        "SparseModeEnum",
+        attrs={"cpp_kind": "enum", "provenance": "source_runtime_type"},
+    )
+    member = cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "SparseModeEnum::PREFIX",
+        attrs={"enum": "SparseModeEnum", "value": 1, "provenance": "source_enum"},
+    )
+    orphan = cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "ARRAY_LENGTH",
+        attrs={"value": 4, "provenance": "source_host_compile_symbol"},
+    )
+    linked = link_enum_membership(cm)
+    assert linked == 1
+    contained = {
+        cm.entities[r.dst].id
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.CONTAINS.value and r.src == enum_t.id
+    }
+    assert member.id in contained
+    assert orphan.id not in contained

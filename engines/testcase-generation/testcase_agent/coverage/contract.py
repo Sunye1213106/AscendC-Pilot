@@ -718,6 +718,8 @@ def validate_against_packet(
                     "use evidence kind dispatch_map or observe the writing helper's probe.*"
                 )
 
+    from testcase_agent.pr_ownership import is_pr_owned
+
     candidates = doc.get("behavior_candidates")
     if isinstance(candidates, list) and candidates:
         changed: set[str] = set()
@@ -725,7 +727,7 @@ def validate_against_packet(
             if not isinstance(row, dict):
                 continue
             name = str(row.get("symbol") or "").strip()
-            if name:
+            if name and is_pr_owned(row):
                 changed.add(name)
         kind = str(
             (doc.get("change_contract") or {}).get("kind")
@@ -747,9 +749,9 @@ def validate_against_packet(
                 if not (names & changed):
                     errors.append(
                         f"{TARGET_NOT_CHANGED}: {tid}: observes {sorted(names)} but the pin's "
-                        "behavior_candidates are "
-                        f"{sorted(changed)[:8]}; a pr_regression Target must point at an "
-                        "assignment this change introduced or rewired"
+                        "PR-owned observables are "
+                        f"{sorted(changed)[:8]}; a pr_regression Target must point at a "
+                        "writer/assignment this change rewired, with ownership evidence"
                     )
     return errors
 

@@ -542,6 +542,32 @@ def _materialize_plan_approve(
     return {"ok": True, "path": path, "backups": backups, "identity": identity}
 
 
+def _materialize_ce_plan_confirm(
+    project_root: Path,
+    state: dict[str, Any],
+    identity: dict[str, str],
+    now: str,
+) -> dict[str, Any]:
+    """Write ce-plan-confirmed-v1. Canonical markdown existing is not approval."""
+    from code_engineering.apply import write_plan_confirmed
+    from code_engineering.plan_md import resolve_active_plan
+
+    arch = _arch(state) or ""
+    if not arch:
+        return {"ok": False, "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
+    plan = resolve_active_plan(project_root, architecture=arch, state=state)
+    decision = str(identity.get("human_decision_value") or "confirm").strip() or "confirm"
+    path = write_plan_confirmed(
+        project_root,
+        architecture=arch,
+        decision=decision,
+        plan=plan,
+        extra={"confirmed_at": now, **identity},
+    )
+    backups = {path: None}
+    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+
+
 def _materialize_ce_decision(
     project_root: Path,
     state: dict[str, Any],
@@ -610,7 +636,7 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "kind": "primary_confirm",
         "expected_values": ["confirm"],
         "ask": _ask_ce_plan,
-        "materialize": _materialize_ce_decision,
+        "materialize": _materialize_ce_plan_confirm,
         "hints": _hints_ce_plan,
         "compact": None,
     },

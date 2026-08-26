@@ -135,8 +135,8 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/build_variant.yaml",
             "uo/**",
         ],
-        "extract": ["uo/ir/**", "uo/tiling/**", "uo/kernel/**", "uo/runs/{run_id}/**"],
-        "analyze": ["uo/ir/**", "uo/tiling/**", "uo/kernel/**", "uo/checks/**"],
+        "extract": ["uo/ir/**", "uo/runs/{run_id}/**"],
+        "analyze": ["uo/ir/**", "uo/checks/**"],
         "commit": ["uo/*.uo", "uo/checks/**"],
         "verify": ["uo/checks/**"],
         "propose_include_heal": [
@@ -391,10 +391,10 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "ce-plan": {
         "kb_check": ["uo/*.uo"],
         "plan_draft": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
-        "human_confirm": ["ce/plan/**"],
+        "human_confirm": ["ce/plan/**", "context/**"],
     },
     "ce-apply": {
-        "apply_gate": ["ce/plan/**"],
+        "apply_gate": ["ce/plan/**", "context/**"],
         # No `uo/*.uo`: patch is source-reading only ("本步不查图" in
         # skills/ce-apply/SKILL.md), and its capability_ids drop kb-query.
         "patch": [

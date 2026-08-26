@@ -1,0 +1,1707 @@
+{
+  "schema": "uo-answer-gate/v1",
+  "arch": "arch35",
+  "source": {
+    "available": true,
+    "file_count": 48,
+    "digest": "ddca6b3d709e6ecb"
+  },
+  "answers": {
+    "Q1_index": {
+      "shape": "index",
+      "ok": true,
+      "card_count": 3,
+      "primary": {
+        "kind": "1",
+        "name": "pipeIn",
+        "span": "arch35/flash_attention_score_grad_entry_regbase.h:213"
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": true,
+      "phases": [
+        {
+          "name": "pipeIn",
+          "span": "arch35/flash_attention_score_grad_entry_regbase.h:213"
+        },
+        {
+          "name": "pipeBase",
+          "span": "arch35/flash_attention_score_grad_entry_regbase.h:63"
+        },
+        {
+          "name": "pipePost",
+          "span": "arch35/flash_attention_score_grad_entry_regbase.h:94"
+        }
+      ],
+      "dim_names": [
+        "DTemplateNum",
+        "DeterType",
+        "InputDType",
+        "IsAttenMask",
+        "IsBn2MultiBlk",
+        "IsDNoEqual",
+        "IsDrop",
+        "IsEmptyTensor",
+        "IsNEqual",
+        "IsNzOut",
+        "IsPse",
+        "IsRegbase",
+        "IsRope",
+        "IsTnd",
+        "IsTndSwizzle",
+        "OutDType",
+        "S1TemplateNum",
+        "S2TemplateNum",
+        "SplitAxis"
+      ]
+    },
+    "Q2_dim_istnd": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsTnd": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q3_istnd_1": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 38,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ],
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "InputDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "IsAttenMask": [
+          "0",
+          "1"
+        ],
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ],
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ],
+        "IsDrop": [
+          "0",
+          "1"
+        ],
+        "IsEmptyTensor": [
+          "0"
+        ],
+        "IsNEqual": [
+          "0",
+          "1"
+        ],
+        "IsNzOut": [
+          "0",
+          "1"
+        ],
+        "IsPse": [
+          "0",
+          "1"
+        ],
+        "IsRegbase": [
+          "1"
+        ],
+        "IsRope": [
+          "0",
+          "1"
+        ],
+        "IsTnd": [
+          "1"
+        ],
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ],
+        "OutDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "S1TemplateNum": [
+          "128",
+          "64"
+        ],
+        "S2TemplateNum": [
+          "128"
+        ],
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q4_istnd_s2": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {},
+      "nearby": [
+        {
+          "dropped": "S2TemplateNum",
+          "matching_block_count": 38,
+          "values": [
+            "128"
+          ]
+        }
+      ],
+      "has_hint": true
+    },
+    "Q5_istnd_9_empty": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {},
+      "nearby": [
+        {
+          "dropped": "IsTnd",
+          "matching_block_count": 65,
+          "values": [
+            "0",
+            "1"
+          ]
+        }
+      ],
+      "has_hint": true
+    },
+    "Q6_istnd_true_alias": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 38,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ],
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "InputDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "IsAttenMask": [
+          "0",
+          "1"
+        ],
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ],
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ],
+        "IsDrop": [
+          "0",
+          "1"
+        ],
+        "IsEmptyTensor": [
+          "0"
+        ],
+        "IsNEqual": [
+          "0",
+          "1"
+        ],
+        "IsNzOut": [
+          "0",
+          "1"
+        ],
+        "IsPse": [
+          "0",
+          "1"
+        ],
+        "IsRegbase": [
+          "1"
+        ],
+        "IsRope": [
+          "0",
+          "1"
+        ],
+        "IsTnd": [
+          "1"
+        ],
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ],
+        "OutDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "S1TemplateNum": [
+          "128",
+          "64"
+        ],
+        "S2TemplateNum": [
+          "128"
+        ],
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q7_inputdtype": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "InputDType",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1659"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint8_t>(fBaseParams.inputDtype)"
+      ],
+      "readers": [],
+      "canonical": "InputDType",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q8_s1templatenum": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "S1TemplateNum",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:82"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint16_t>(fBaseParams.s1TemplateType)"
+      ],
+      "readers": [],
+      "canonical": "S1TemplateNum",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q9_s1inner": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 3,
+      "primary": {
+        "kind": "TILING_FIELD",
+        "name": "s1Inner",
+        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:197"
+      },
+      "has_snippet": true,
+      "writers": [
+        "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::s1Inner <- fBaseParams.s1Inner"
+      ],
+      "readers": [],
+      "canonical": "s1Inner",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q10_tilingdata": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 3,
+      "primary": {
+        "kind": "FIELD",
+        "name": "tilingData",
+        "span": "arch35/flash_attention_score_grad_block_cube.h:158"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "tilingData",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q11_keep_prob": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "COMPILE_VAR",
+        "name": "AttrIndex::KEEP_PROB",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "AttrIndex::KEEP_PROB",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q12_init": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 3,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "Init",
+        "span": "arch35/flash_attention_score_grad_presfmg_regbase.h:130"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "Init",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q13_process": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "METHOD",
+        "name": "Process",
+        "span": "arch35/flash_attention_score_grad_empty_tensor_regbase.h:57"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "Process",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q14_pipebase": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "PIPE",
+        "name": "pipeBase",
+        "span": "arch35/flash_attention_score_grad_entry_regbase.h:63"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "pipeBase",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q15_pipepost": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "PIPE",
+        "name": "pipePost",
+        "span": "arch35/flash_attention_score_grad_entry_regbase.h:94"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "pipePost",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q16_localtensor_catalog": {
+      "shape": "name",
+      "ok": false,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": true
+    },
+    "Q17_tque_catalog": {
+      "shape": "name",
+      "ok": false,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": true
+    },
+    "Q18_tpl_args_decl": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "MACRO",
+        "name": "ASCENDC_TPL_ARGS_DECL",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:49"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ASCENDC_TPL_ARGS_DECL",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q19_get_tpl_key": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "MACRO",
+        "name": "GET_TPL_TILING_KEY",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1460"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "GET_TPL_TILING_KEY",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q20_graph_failed": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TYPE",
+        "name": "GRAPH_FAILED",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1200"
+      },
+      "has_snippet": false,
+      "writers": [
+        "!(!(fBaseParams.layoutType == INPUT_FORMAT_TND ? CheckVarLenSparseModeValue(fBaseParams): CheckSparseModeValue(fBasePara"
+      ],
+      "readers": [],
+      "canonical": "GRAPH_FAILED",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q21_checkshapevalid": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "CheckShapeValid",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:194"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "CheckShapeValid",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q22_refuse_nl": {
+      "shape": "",
+      "ok": false,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": true
+    },
+    "E1_dtpl128_combo": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 7,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ],
+        "DeterType": [
+          "0"
+        ],
+        "InputDType": [
+          "3"
+        ],
+        "IsAttenMask": [
+          "0",
+          "1"
+        ],
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ],
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ],
+        "IsDrop": [
+          "0",
+          "1"
+        ],
+        "IsEmptyTensor": [
+          "0"
+        ],
+        "IsNEqual": [
+          "0"
+        ],
+        "IsNzOut": [
+          "0",
+          "1"
+        ],
+        "IsPse": [
+          "0",
+          "1"
+        ],
+        "IsRegbase": [
+          "1"
+        ],
+        "IsRope": [
+          "0",
+          "1"
+        ],
+        "IsTnd": [
+          "0",
+          "1"
+        ],
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ],
+        "OutDType": [
+          "3"
+        ],
+        "S1TemplateNum": [
+          "128"
+        ],
+        "S2TemplateNum": [
+          "128"
+        ],
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "E2_dtpl320_empty": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {},
+      "nearby": [
+        {
+          "dropped": "DTemplateNum",
+          "matching_block_count": 65,
+          "values": [
+            "0",
+            "128",
+            "192",
+            "256",
+            "64",
+            "768"
+          ]
+        }
+      ],
+      "has_hint": true
+    },
+    "E3_dtpl1_empty": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {},
+      "nearby": [
+        {
+          "dropped": "DTemplateNum",
+          "matching_block_count": 65,
+          "values": [
+            "0",
+            "128",
+            "192",
+            "256",
+            "64",
+            "768"
+          ]
+        }
+      ],
+      "has_hint": true
+    },
+    "E4_fusedouter_alias": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "VARIABLE",
+        "name": "fusedOuter",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:523"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "fusedOuter",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E5_splitaxis_istnd": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 2,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ],
+        "DeterType": [
+          "0"
+        ],
+        "InputDType": [
+          "2",
+          "3"
+        ],
+        "IsAttenMask": [
+          "0",
+          "1"
+        ],
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ],
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ],
+        "IsDrop": [
+          "0",
+          "1"
+        ],
+        "IsEmptyTensor": [
+          "0"
+        ],
+        "IsNEqual": [
+          "0"
+        ],
+        "IsNzOut": [
+          "0"
+        ],
+        "IsPse": [
+          "0",
+          "1"
+        ],
+        "IsRegbase": [
+          "1"
+        ],
+        "IsRope": [
+          "0",
+          "1"
+        ],
+        "IsTnd": [
+          "1"
+        ],
+        "IsTndSwizzle": [
+          "0"
+        ],
+        "OutDType": [
+          "2",
+          "3"
+        ],
+        "S1TemplateNum": [
+          "128"
+        ],
+        "S2TemplateNum": [
+          "128"
+        ],
+        "SplitAxis": [
+          "1"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "E6_ispse": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "IsPse",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1439"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint8_t>(pseValue)"
+      ],
+      "readers": [],
+      "canonical": "IsPse",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E7_ispse_1": {
+      "shape": "cover",
+      "ok": true,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 64,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ],
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "InputDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "IsAttenMask": [
+          "0",
+          "1"
+        ],
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ],
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ],
+        "IsDrop": [
+          "0",
+          "1"
+        ],
+        "IsEmptyTensor": [
+          "0"
+        ],
+        "IsNEqual": [
+          "0",
+          "1"
+        ],
+        "IsNzOut": [
+          "0",
+          "1"
+        ],
+        "IsPse": [
+          "0",
+          "1"
+        ],
+        "IsRegbase": [
+          "1"
+        ],
+        "IsRope": [
+          "0",
+          "1"
+        ],
+        "IsTnd": [
+          "0",
+          "1"
+        ],
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ],
+        "OutDType": [
+          "1",
+          "2",
+          "3"
+        ],
+        "S1TemplateNum": [
+          "128",
+          "64"
+        ],
+        "S2TemplateNum": [
+          "128"
+        ],
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "nearby": [],
+      "has_hint": false
+    },
+    "E8_calcle_tnd_deter": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "CalcleTNDDeterParam",
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:42"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "CalcleTNDDeterParam",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E9_reg_tiling_default": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "PREDICATE",
+        "name": "REGISTER_TILING_DEFAULT",
+        "span": "op_kernel/flash_attention_score_grad_apt.cpp:54"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "REGISTER_TILING_DEFAULT",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E10_reg_tiling_template": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "PREDICATE",
+        "name": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1415"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E11_setschedulemode": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "OPERATION",
+        "name": "SetScheduleMode",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1504"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "SetScheduleMode",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E12_syncallcores": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "METHOD",
+        "name": "SyncALLCores",
+        "span": "arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:280"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "SyncALLCores",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E13_mutexbuffer": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "TYPE",
+        "name": "MutexBuffer",
+        "span": "cube_api/mutex_buffer.h:52"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "MutexBuffer",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E14_processdqkv": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "METHOD",
+        "name": "ProcessDqkv",
+        "span": "arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:207"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ProcessDqkv",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E15_processmulscast": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "METHOD",
+        "name": "ProcessMulsAndCast",
+        "span": "arch35/flash_attention_score_grad_block_vec.h:654"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ProcessMulsAndCast",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E16_cast": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "OPERATION",
+        "name": "Cast",
+        "span": "arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:265"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "Cast",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E17_tpl_sel": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "MACRO",
+        "name": "ASCENDC_TPL_SEL",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:127"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ASCENDC_TPL_SEL",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E18_orig_dtype_query": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "MACRO",
+        "name": "ORIG_DTYPE_QUERY",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:23"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ORIG_DTYPE_QUERY",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E19_isdnoequal": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "IsDNoEqual",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1438"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint8_t>(dNoEqual)"
+      ],
+      "readers": [],
+      "canonical": "IsDNoEqual",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E20_isnzout": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "IsNzOut",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:444"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint8_t>(fBaseParams.isNzOut)"
+      ],
+      "readers": [],
+      "canonical": "IsNzOut",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E21_splitaxis": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TILING_KEY",
+        "name": "SplitAxis",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:56"
+      },
+      "has_snippet": true,
+      "writers": [
+        "0",
+        "static_cast<uint8_t>(splitAxis)"
+      ],
+      "readers": [],
+      "canonical": "SplitAxis",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E22_scalevalue": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "TILING_FIELD",
+        "name": "scaleValue",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1011"
+      },
+      "has_snippet": true,
+      "writers": [
+        "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase::scaleValue <- fBaseParams.scaleValue"
+      ],
+      "readers": [
+        "Init",
+        "ProcessDqkv",
+        "SetConstInfo"
+      ],
+      "canonical": "scaleValue",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E23_enablepresfmg": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 4,
+      "primary": {
+        "kind": "TILING_FIELD",
+        "name": "enablePreSfmg",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1141"
+      },
+      "has_snippet": true,
+      "writers": [
+        "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase::enablePreSfmg <- fBaseParams.enablePreSfmg"
+      ],
+      "readers": [
+        "InitGlobalBuffer",
+        "InitUbBuffer",
+        "SetConstInfo"
+      ],
+      "canonical": "enablePreSfmg",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E24_small_d_preload": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "COMPILE_VAR",
+        "name": "IS_SMALL_D_PRELOAD",
+        "span": "arch35/flash_attention_score_grad_block_cube.h:142"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "IS_SMALL_D_PRELOAD",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E25_opcheckif": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "BRANCH",
+        "name": "OP_CHECK_IF((aShape == nullptr)||(bShape == nullptr), OP_LOGW(\"flash_attention_score_grad_tiling_normal_regbase\", \"aShap",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:28"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "OP_CHECK_IF((aShape == nullptr)||(bShape == nullptr), OP_LOGW(\"flash_attention_score_grad_tiling_normal_regbase\", \"aShap",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E26_checkvarlensparse": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "CheckVarLenSparseModeValue",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:574"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "CheckVarLenSparseModeValue",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E27_graphstatus": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "CheckSoftmaxMaxShape",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:23"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "CheckSoftmaxMaxShape",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E28_inittilingdata": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "InitTilingData",
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1752"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "InitTilingData",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E29_fag_tilingdata": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "TILING_DATA",
+        "name": "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase",
+        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:610"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E30_regtensor": {
+      "shape": "name",
+      "ok": false,
+      "card_count": 0,
+      "primary": {
+        "kind": "",
+        "name": "",
+        "span": ""
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": true
+    },
+    "E31_vregsrc": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "REGISTER",
+        "name": "vregSrc",
+        "span": "vector_api/vf_softmax_grad_front_cast_aligned256_f32.h:35"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "vregSrc",
+      "matching_block_count": 0,
+      "completeness": "page_clipped",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E32_tpl_3_bw": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "MACRO",
+        "name": "ASCENDC_TPL_3_BW",
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:25"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "ASCENDC_TPL_3_BW",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E33_reg_tpl_varlen": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "PREDICATE",
+        "name": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1415"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E34_scale_value_attr": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 2,
+      "primary": {
+        "kind": "COMPILE_VAR",
+        "name": "AttrIndex::SCALE_VALUE",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "AttrIndex::SCALE_VALUE",
+      "matching_block_count": 0,
+      "completeness": "siblings_checked",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "E35_pse_type": {
+      "shape": "name",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "INPUT",
+        "name": "pse_type",
+        "span": "op_graph/flash_attention_score_grad_proto.h:129"
+      },
+      "has_snippet": true,
+      "writers": [],
+      "readers": [],
+      "canonical": "pse_type",
+      "matching_block_count": 0,
+      "completeness": "first_hit",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q23_around_launch": {
+      "shape": "around",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "FUNCTION",
+        "name": "RegbaseFAG",
+        "span": "arch35/flash_attention_score_grad_entry_regbase.h:201"
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    },
+    "Q24_around_keep_prob": {
+      "shape": "around",
+      "ok": true,
+      "card_count": 1,
+      "primary": {
+        "kind": "TYPE",
+        "name": "AttrIndex",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+      },
+      "has_snippet": false,
+      "writers": [],
+      "readers": [],
+      "canonical": "",
+      "matching_block_count": 0,
+      "completeness": "",
+      "dim_coverage": {},
+      "nearby": [],
+      "has_hint": false
+    }
+  },
+  "latency_ms": {
+    "n": 59,
+    "p50": 8.2,
+    "p95": 42.7,
+    "max": 67.4,
+    "mean": 14.7,
+    "per_case": {
+      "Q1_index": 41.1,
+      "Q2_dim_istnd": 4.2,
+      "Q3_istnd_1": 12.8,
+      "Q4_istnd_s2": 25.4,
+      "Q5_istnd_9_empty": 6.3,
+      "Q6_istnd_true_alias": 9.4,
+      "Q7_inputdtype": 27.6,
+      "Q8_s1templatenum": 32.5,
+      "Q9_s1inner": 19.5,
+      "Q10_tilingdata": 23.7,
+      "Q11_keep_prob": 10.9,
+      "Q12_init": 36.5,
+      "Q13_process": 10.1,
+      "Q14_pipebase": 50.4,
+      "Q15_pipepost": 67.4,
+      "Q16_localtensor_catalog": 1.5,
+      "Q17_tque_catalog": 1.0,
+      "Q18_tpl_args_decl": 3.2,
+      "Q19_get_tpl_key": 3.2,
+      "Q20_graph_failed": 9.8,
+      "Q21_checkshapevalid": 3.7,
+      "Q22_refuse_nl": 0.0,
+      "E1_dtpl128_combo": 10.3,
+      "E2_dtpl320_empty": 8.2,
+      "E3_dtpl1_empty": 9.8,
+      "E4_fusedouter_alias": 3.7,
+      "E5_splitaxis_istnd": 13.1,
+      "E6_ispse": 37.5,
+      "E7_ispse_1": 14.3,
+      "E8_calcle_tnd_deter": 6.1,
+      "E9_reg_tiling_default": 2.5,
+      "E10_reg_tiling_template": 4.6,
+      "E11_setschedulemode": 3.6,
+      "E12_syncallcores": 5.1,
+      "E13_mutexbuffer": 6.1,
+      "E14_processdqkv": 3.7,
+      "E15_processmulscast": 3.6,
+      "E16_cast": 42.7,
+      "E17_tpl_sel": 3.0,
+      "E18_orig_dtype_query": 19.0,
+      "E19_isdnoequal": 32.6,
+      "E20_isnzout": 30.3,
+      "E21_splitaxis": 30.3,
+      "E22_scalevalue": 14.3,
+      "E23_enablepresfmg": 20.0,
+      "E24_small_d_preload": 4.1,
+      "E25_opcheckif": 29.9,
+      "E26_checkvarlensparse": 3.7,
+      "E27_graphstatus": 58.9,
+      "E28_inittilingdata": 4.9,
+      "E29_fag_tilingdata": 5.1,
+      "E30_regtensor": 1.5,
+      "E31_vregsrc": 18.1,
+      "E32_tpl_3_bw": 6.0,
+      "E33_reg_tpl_varlen": 1.5,
+      "E34_scale_value_attr": 2.3,
+      "E35_pse_type": 1.3,
+      "Q23_around_launch": 1.3,
+      "Q24_around_keep_prob": 2.5
+    }
+  }
+}

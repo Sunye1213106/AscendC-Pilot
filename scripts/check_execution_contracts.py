@@ -118,6 +118,53 @@ def check_prompt_capability_drift(repo: Path) -> list[str]:
                 )
     return errors
 
+
+def check_known_runtime_regressions(repo: Path) -> list[str]:
+    """Structural contracts plus the three historical keyword regressions."""
+    errors: list[str] = []
+    scripts = str(repo / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from compose_opencode_commands import _command_body
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    tg_plan_cmd = _command_body("tg-plan")
+    if "task_prompt_stub" in tg_plan_cmd:
+        errors.append("tg-plan command must not mention task_prompt_stub")
+    if "pilot_run" not in tg_plan_cmd:
+        errors.append("tg-plan command must start the workflow with pilot_run")
+
+    plan_draft = next(
+        (
+            action
+            for action in (WORKFLOWS.get("ce-plan") or {}).get("actions") or []
+            if isinstance(action, dict) and str(action.get("id") or "") == "plan_draft"
+        ),
+        None,
+    )
+    if plan_draft is None:
+        errors.append("ce-plan/plan_draft action missing")
+    else:
+        if str(plan_draft.get("output_contract_id") or "") != "ce-plan-v1":
+            errors.append("ce-plan/plan_draft must produce ce-plan-v1")
+        if str(plan_draft.get("output_mode") or "direct") == "staged":
+            errors.append("ce-plan/plan_draft must write canonical ce/plan/, not staged")
+
+    skill = repo / "skills" / "ce-plan-draft" / "SKILL.md"
+    skill_text = skill.read_text(encoding="utf-8") if skill.is_file() else ""
+    if "ce/plan/" not in skill_text:
+        errors.append("ce-plan-draft skill must name canonical write target ce/plan/")
+    if "staging" in skill_text.lower() and "runs/**/actions/plan_draft" in skill_text:
+        errors.append("ce-plan-draft skill must not send the model to staging")
+
+    wrapper = (repo / "scripts" / "compose_runtime_legacy.py").read_text(encoding="utf-8")
+    if "UO 查询 / ScopeSet" in wrapper or "先用 UO 查询 / ScopeSet" in wrapper:
+        errors.append("generated wrapper source must not tell the model to use ScopeSet")
+    if 'join(f"- `{x}`"' in wrapper:
+        errors.append("wrapper must not list permission namespaces as Read paths")
+    return errors
+
+
 def audit(repo: Path = REPO) -> list[str]:
     repo = Path(repo).resolve()
     pilot = repo / "pilot"
@@ -286,6 +333,7 @@ def audit(repo: Path = REPO) -> list[str]:
         errors.append("CE_EXECUTION_BINDING: ce-review/code_review must dispatch ce-reviewer")
 
     errors.extend(check_prompt_capability_drift(repo))
+    errors.extend(check_known_runtime_regressions(repo))
     return errors
 
 

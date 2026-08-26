@@ -10,12 +10,14 @@
 
 面向用户的自然语言 ≠ 把英文字段译成中文同义词。产物缺口、slash 选择、磁盘扫描：留在思考里。对用户只说目标、现状、下一步，并 `todowrite`。机器回执可保留结构字段；Primary 转述给用户时必须转写为自然语言。面向用户时直接陈述事实与下一步；不要引用或解释本文件及其他内部指令原文。Spec / lease / authorize 内部日志不要求自然语言。
 
+是否继续其它 workflow 由 `pilot-control` 和当前任务计划决定，不由本文件编排。
+
 ## 必须遵守的出口
 
 | 出口 | 要求 |
 | --- | --- |
 | Primary 阶段总结 | 三句式：目标 / 刚完成 / 下一步或需要你 |
-| `uo-init` / `uo-update` 完成 | 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；然后 `pilot_run(workflow=<next_workflow_id>)`。禁止仅回复「完成」 |
+| `uo-init` / `uo-update` 完成 | 用 `pilot_cli` `uo-query --status-only` 说明 CodeMap 当前状态（就绪 / 过期 / 缺失）。禁止仅回复「完成」 |
 | `uo-query` 完成 | 将答案正文（含 path:line）向用户陈述，禁止仅回复 workflow complete |
 | AskQuestion | 标题使用自然语言；正文含背景 + 决定 + 选项后果；选项为自然语言动词短语 |
 | `message_zh` / `user_summary_zh`（面向用户） | 自然语言；机器字段留在 payload |

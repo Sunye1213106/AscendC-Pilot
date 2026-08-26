@@ -75,8 +75,19 @@ TENSOR_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
 # Do not put "Mutex" here: it is a substring of project MutexBuffer.
 ASCENDC_NON_STORAGE_TYPES: frozenset[str] = frozenset({"TPipe", "GroupBarrier", "TQueSync"})
 
+#: The tier a register lives in. A register is storage one level in from UB, not
+#: a separate concept: a vector instruction reads and writes registers the way
+#: DataCopy reads and writes UB, and `is_storage_type_text` below has always
+#: accepted both spellings as storage. This was the one tier missing from the
+#: vocabulary, so register declarations carried no `memory_space` at all and sat
+#: outside every analysis keyed on which level of the hierarchy a value is in.
+#:
+#: The tier is one value, while `ASCENDC_REGISTER_TYPES` keeps the finer
+#: register-file distinction (VREG / MASK_REG / ...) under `register_class`.
+REGISTER_MEMORY_SPACE = "REG"
+
 BUFFER_MEMORY_SPACES: frozenset[str] = frozenset(
-    {"GM", "UB", "L1", "L0A", "L0B", "L0C", "QUEUE", "WORKSPACE", "C2"}
+    {"GM", "UB", "L1", "L0A", "L0B", "L0C", "QUEUE", "WORKSPACE", "C2", REGISTER_MEMORY_SPACE}
 )
 
 # CANN AscendC TPosition / QuePosition → logical memory space.

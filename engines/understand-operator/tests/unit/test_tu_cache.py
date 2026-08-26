@@ -73,6 +73,31 @@ def test_deserialize_func_record_accepts_usr():
     assert rec.qualified_name == "Ns::Process"
 
 
+def test_walk_result_macro_uses_roundtrip():
+    from uo_init.clang_walk import MacroUse
+
+    wr = WalkResult(
+        path="op_kernel/k.cpp",
+        macro_uses=[
+            MacroUse(
+                name="COMMON_RUN_PARAM",
+                file="op_kernel/k.cpp",
+                line=20,
+                parent_name="Process",
+                parent_kind="FUNCTION_DECL",
+            )
+        ],
+    )
+    payload = tu_cache.serialize_walk_result(wr)
+    assert payload["version"] == tu_cache.CACHE_VERSION
+    got = tu_cache.deserialize_walk_result(payload)
+    assert len(got.macro_uses) == 1
+    use = got.macro_uses[0]
+    assert use.name == "COMMON_RUN_PARAM"
+    assert use.parent_name == "Process"
+    assert use.parent_kind == "FUNCTION_DECL"
+
+
 def test_walk_result_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("UO_TU_CACHE", "1")
     monkeypatch.setenv("UO_CACHE_ROOT", str(tmp_path / "cache"))

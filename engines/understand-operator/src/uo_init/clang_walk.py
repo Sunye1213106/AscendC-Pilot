@@ -189,6 +189,10 @@ class CtrlNode:
     #: not one of the shapes we read, and callers must not guess from text.
     init_value: int | None = None
     step: int | None = None
+    #: Operand names clang resolved in the condition subtree (member paths and
+    #: DECL_REF of variables / parameters / fields / enumerators). Empty when
+    #: the condition cursor was missing. Not a regex over ``condition`` text.
+    reads: tuple[str, ...] = ()
 
 
 @dataclass
@@ -401,6 +405,17 @@ class FuncRecord:
 
 
 @dataclass
+class MacroUse:
+    """A clang MACRO_INSTANTIATION in operator scope."""
+
+    name: str
+    file: str
+    line: int
+    parent_name: str = ""
+    parent_kind: str = ""
+
+
+@dataclass
 class WalkResult:
     path: str
     controls: list[CtrlNode] = field(default_factory=list)
@@ -432,6 +447,8 @@ class WalkResult:
     alias_decls: list[AliasDecl] = field(default_factory=list)
     #: Base-class edges of derived types.
     base_decls: list[BaseDecl] = field(default_factory=list)
+    #: Clang MACRO_INSTANTIATION sites in operator scope.
+    macro_uses: list[MacroUse] = field(default_factory=list)
 
     @property
     def error_count(self) -> int:
@@ -964,6 +981,7 @@ class _Walker:
         self.type_decls: list[TypeDecl] = []
         self.alias_decls: list[AliasDecl] = []
         self.base_decls: list[BaseDecl] = []
+        self.macro_uses: list[MacroUse] = []
         self._type_seen: set[str] = set()
         self._alias_seen: set[str] = set()
         self._base_edge_seen: set[tuple[str, str]] = set()
@@ -1518,6 +1536,7 @@ class _Walker:
             induction_vars=tuple(dict.fromkeys(induction_vars + self._loop_vars)),
             init_value=init_value,
             step=step,
+            reads=tuple(collect_condition_operands(cond_cursor)),
         )
         node.universe = classify_universe(node, op_root=self.op_root)
         self.controls.append(node)
@@ -1725,6 +1744,67 @@ class _Walker:
         if path not in fr.writes:
             fr.writes.append(path)
 
+    def _record_macro_use(self, cursor, file: str | None, func: str) -> None:
+        name = cursor.spelling or ""
+        if not name or not file or not self._in_scope(file):
+            return
+        parent_name = ""
+        parent_kind = ""
+        parent = None
+        try:
+            parent = cursor.semantic_parent or cursor.lexical_parent
+        except Exception:  # noqa: BLE001
+            parent = None
+        if parent is not None:
+            try:
+                parent_kind = parent.kind.name
+                parent_name = parent.spelling or ""
+            except Exception:  # noqa: BLE001
+                parent_kind = ""
+                parent_name = ""
+            if parent_kind in {"TRANSLATION_UNIT", "UNEXPOSED_DECL", ""}:
+                parent_name = func
+                parent_kind = "FUNCTION_DECL" if func else parent_kind
+            elif not parent_name and func:
+                parent_name = func
+                parent_kind = parent_kind or "FUNCTION_DECL"
+        elif func:
+            parent_name = func
+            parent_kind = "FUNCTION_DECL"
+        line = 0
+        try:
+            line = int(getattr(cursor.location, "line", 0) or 0)
+        except Exception:  # noqa: BLE001
+            line = 0
+        self.macro_uses.append(
+            MacroUse(
+                name=name,
+                file=file,
+                line=line,
+                parent_name=parent_name,
+                parent_kind=parent_kind,
+            )
+        )
+
+    def attach_macro_parents(self) -> None:
+        if not self.macro_uses:
+            return
+        funcs = list(self.functions.values())
+        for use in self.macro_uses:
+            if use.parent_name:
+                continue
+            for fr in funcs:
+                start = int(fr.line or 0)
+                end = int(fr.line_end or fr.line or 0)
+                if start <= 0 or not fr.file or not use.file:
+                    continue
+                if _norm(fr.file) != _norm(use.file):
+                    continue
+                if start <= use.line <= max(end, start):
+                    use.parent_name = fr.name
+                    use.parent_kind = "FUNCTION_DECL"
+                    break
+
     # -- traversal ---------------------------------------------------------
     def walk(self, cursor, stack: list[PathCond], func: str) -> None:
         try:
@@ -1733,6 +1813,9 @@ class _Walker:
             return
         file = _file_of(cursor)
         if self._should_prune(cursor, kind_name, file, func):
+            return
+        if kind_name == "MACRO_INSTANTIATION":
+            self._record_macro_use(cursor, file, func)
             return
         if (
             self.collect_bases
@@ -2337,6 +2420,68 @@ def _loop_header(children: list, kind: str):
     return None, tuple(induction), None, None
 
 
+#: Clang cursor kinds whose spelling in a condition is an operand, not a call.
+_OPERAND_DECL_KINDS = frozenset(
+    {
+        "VAR_DECL",
+        "PARM_DECL",
+        "FIELD_DECL",
+        "ENUM_CONSTANT_DECL",
+        "NON_TYPE_TEMPLATE_PARM_DECL",
+    }
+)
+
+
+def collect_condition_operands(cursor, limit: int = 256) -> list[str]:
+    """Names clang resolved in a control-condition subtree.
+
+    Member paths come from ``MEMBER_REF_EXPR``. Bare names come from
+    ``DECL_REF_EXPR`` whose referenced decl is a variable, parameter, field
+    or enumerator. Callees in the same subtree are not operands.
+    """
+    out: list[str] = []
+    if cursor is None:
+        return out
+    for path in collect_member_paths(cursor, limit):
+        if path and path not in out:
+            out.append(path)
+    stack = [cursor]
+    seen = 0
+    while stack and seen < limit:
+        cur = stack.pop()
+        seen += 1
+        try:
+            kind = cur.kind.name
+        except Exception:  # noqa: BLE001
+            continue
+        if kind == "MEMBER_REF_EXPR":
+            continue
+        if kind == "DECL_REF_EXPR":
+            spelling = str(cur.spelling or "")
+            ref = None
+            try:
+                ref = cur.get_definition()
+            except Exception:  # noqa: BLE001
+                ref = None
+            if ref is None:
+                try:
+                    ref = cur.referenced
+                except Exception:  # noqa: BLE001
+                    ref = None
+            try:
+                ref_kind = ref.kind.name if ref is not None else ""
+            except Exception:  # noqa: BLE001
+                ref_kind = ""
+            if spelling and ref_kind in _OPERAND_DECL_KINDS and spelling not in out:
+                out.append(spelling)
+            continue
+        try:
+            stack.extend(cur.get_children())
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def collect_member_paths(cursor, limit: int = 256) -> list[str]:
     """All nested field paths read inside a subtree (RHS or guard condition)."""
     out: list[str] = []
@@ -2798,6 +2943,7 @@ def _walk_parsed_tu(
         for child in tu.cursor.get_children():
             w.walk(child, [], "")
         t_walk = _time.perf_counter() - t0
+    w.attach_macro_parents()
     result = WalkResult(
         path=_norm(path),
         controls=w.controls,
@@ -2813,6 +2959,7 @@ def _walk_parsed_tu(
         type_decls=w.type_decls,
         alias_decls=w.alias_decls,
         base_decls=w.base_decls,
+        macro_uses=w.macro_uses,
     )
     if cache_key:
         try:

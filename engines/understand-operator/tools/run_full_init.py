@@ -31,7 +31,7 @@ def main() -> int:
         "arch_dir": arch,
         "architecture": arch,
         "run_id": run_id,
-        "keep_other_runs": True,
+        "keep_other_runs": False,
     }
     phases = [
         ("prepare", ce.prepare),
@@ -205,7 +205,7 @@ def main() -> int:
         "phases": results,
         "completeness": completeness,
     }
-    out_path = op / ".ascendc-pilot" / arch / "uo" / "ir" / "full_init_timing_report.json"
+    out_path = ROOT / ".perf" / "full_init_timing_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n===== FULL INIT REPORT =====")

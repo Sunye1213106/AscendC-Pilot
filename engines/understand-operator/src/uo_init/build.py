@@ -19,6 +19,7 @@ from uo_init.passes.host_defuse_validate import validate_host_defuse
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.kernel_call_boundaries import classify_kernel_call_boundaries
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
+from uo_init.passes.clang_macro_uses import run as bind_clang_macro_uses_pass
 from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
 from uo_init.passes.kernel_identity import preserve_verified_kernel_identity
 from uo_init.passes.kernel_root_trace import finalize_kernel_root_trace
@@ -45,6 +46,7 @@ from uo_init.timing import log as _tlog, timing_enabled
 # Same-process reuse between analyze (commit=False) and commit. Avoids paying
 # the full source-enrichment stack twice in one uo-init run.
 _COMPILE_MEM: dict[str, dict[str, Any]] = {}
+ANALYZE_CACHE_VERSION = 1
 
 
 def _cache_key(op_root: Path, op_name: str, architecture: str) -> str:
@@ -67,6 +69,8 @@ def store_compile_cache(
     op_name: str,
     architecture: str,
     result: dict[str, Any],
+    *,
+    extract_fingerprint: str = "",
 ) -> None:
     """Keep analyze's compile result for a later commit in this (or next) process."""
     key = _cache_key(op_root, op_name, architecture)
@@ -79,6 +83,9 @@ def store_compile_cache(
         "gaps": result.get("gaps") or [],
         "audit": result.get("audit"),
         "tg_views": result.get("tg_views") or {},
+        "extract_fingerprint": extract_fingerprint
+        or str(result.get("extract_fingerprint") or ""),
+        "analyze_cache_version": ANALYZE_CACHE_VERSION,
     }
     _COMPILE_MEM[key] = payload
     try:
@@ -111,6 +118,26 @@ def load_compile_cache(
         return data
     except Exception:  # noqa: BLE001
         return None
+
+
+def load_fresh_compile_cache(
+    op_root: Path,
+    op_name: str,
+    architecture: str,
+    *,
+    extract_fingerprint: str,
+) -> dict[str, Any] | None:
+    """Reuse analyze's compile payload only when extract identity still matches."""
+    if not extract_fingerprint:
+        return None
+    cached = load_compile_cache(op_root, op_name, architecture)
+    if cached is None or cached.get("codemap") is None:
+        return None
+    if int(cached.get("analyze_cache_version") or 0) != ANALYZE_CACHE_VERSION:
+        return None
+    if str(cached.get("extract_fingerprint") or "") != str(extract_fingerprint):
+        return None
+    return cached
 
 
 def drop_compile_mem(op_root: Path | None = None, architecture: str | None = None) -> None:
@@ -246,6 +273,7 @@ def compile_codemap(
             ("kernel_tiling_closure", finalize_kernel_tiling_closure, {"needs_irs": True, "rebuild_bodies": False}),
             ("kernel_identity", preserve_verified_kernel_identity, {"skip_arch": True}),
             ("kernel_call_refine", refine_kernel_calls_and_tiling_reads, {}),
+            ("clang_macro_uses", bind_clang_macro_uses_pass, {"needs_irs": True}),
             ("kernel_call_frontiers", resolve_kernel_call_frontiers, {}),
             ("kernel_call_boundaries", classify_kernel_call_boundaries, {"skip_arch": True}),
             ("tiling_reads", rebuild_verified_tiling_reads, {}),

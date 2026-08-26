@@ -15,9 +15,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import product_uo
+from acp_common.paths import canonical_path, resolve_under_operator, strip_dot_slash
 
-PACKET_SCHEMA = "tg-plan-scope-packet/v2"
+from . import product_uo
+from .pr_ownership import (
+    annotate_candidate,
+    changed_use_lines,
+    consumed_names,
+    is_control_or_compare,
+    reaching_assignments,
+)
+
+PACKET_SCHEMA = "tg-plan-scope-packet/v3"
 
 # Bumped whenever the meaning of a plan section changes. Plan Owner receives
 # these verbatim; a stale methodology copy is detected by contract_digest.
@@ -25,9 +34,20 @@ METHOD_CONTRACT = {
     "schema": "tg-plan/v3",
     "guard_semantics": "activation/v1",
     "l2_contract": "full_cross_exclusions/v1",
-    "target_policy": "changed_assignment/v1",
-    "probe_policy": "branch_consumed_local/v1",
+    "target_policy": "pr-owned-observable/v1",
+    "probe_policy": "changed_use_reaching_def/v1",
     "observation_policy": "packet_allowlist/v1",
+}
+
+PACKET_USAGE = {
+    "observation_catalog.replay_allowed": "`replay.<field>` 只能引用这些名字",
+    "observation_catalog.replay_forbidden": "不得写成 `replay.*`；用 dispatch_map 或 probe",
+    "observation_catalog.probe_candidates": "`probe.*` 的唯一来源",
+    "controls.case_allowed": "`case.*` / controls / construct_hint.columns 只能用这些列",
+    "behavior_candidates": (
+        "发现用的词表。pr_regression Target 只能引用 "
+        "change.ownership.pr_eligible 且 change.evidence 含 ownership 关系的符号"
+    ),
 }
 
 # Kinds that can legitimately back a Target's observable assignment.
@@ -76,25 +96,15 @@ def _open_query(project_root: Path, *, op_name: str, architecture: str):
     return open_query(Path(project_root), op_name=op_name, architecture=architecture)
 
 
-def resolve_changed_file(project_root: Path, rel: str) -> Path | None:
-    """Map a contract path (repo-relative) onto this operator tree."""
-    text = str(rel or "").strip().replace("\\", "/").lstrip("./")
-    if not text:
-        return None
-    root = Path(project_root)
-    direct = root / text
-    if direct.is_file():
-        return direct
-    parts = text.split("/")
-    for cut in range(1, len(parts)):
-        cand = root / "/".join(parts[cut:])
-        if cand.is_file():
-            return cand
-    name = parts[-1]
-    for path in root.rglob(name):
-        if path.is_file():
-            return path
-    return None
+def resolve_changed_file(
+    project_root: Path,
+    rel: str,
+    *,
+    repo_root: Path | str | None = None,
+) -> Path | None:
+    """Map a contract path onto this operator tree. Fail closed on ambiguity."""
+    repo = Path(repo_root) if repo_root else None
+    return resolve_under_operator(Path(project_root), rel, repo_root=repo)
 
 
 def observation_catalog(
@@ -143,6 +153,20 @@ def observation_catalog(
     return out
 
 
+def _file_key(
+    project_root: Path,
+    rel: str,
+    *,
+    repo_root: Path | str | None = None,
+) -> str:
+    """Canonical operator-relative spelling, or a prefix-safe fallback."""
+    repo = Path(repo_root) if repo_root else None
+    canon = canonical_path(Path(project_root), rel, repo_root=repo)
+    if canon is not None:
+        return canon.canonical_operator_rel
+    return strip_dot_slash(rel)
+
+
 def _sites(rows: Any, *, limit: int = 4) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows or []:
@@ -156,7 +180,10 @@ def _sites(rows: Any, *, limit: int = 4) -> list[dict[str, Any]]:
             line_i = 0
         if not file:
             continue
-        out.append({"file": file, "line": line_i, "name": str(row.get("name") or "")})
+        item = {"file": file, "line": line_i, "name": str(row.get("name") or "")}
+        if row.get("id"):
+            item["id"] = str(row.get("id"))
+        out.append(item)
         if len(out) >= limit:
             break
     return out
@@ -169,19 +196,25 @@ def behavior_candidates(
     op_name: str = "",
     architecture: str = "",
     replay_allowed: list[str] | None = None,
+    repo_root: Path | str | None = None,
+    changed_hunks: list[dict[str, Any]] | None = None,
+    directed_proofs: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Observable assignments living in the pinned changed files, with writers/readers."""
+    """Observable assignments in the pinned files; ownership is hunk evidence."""
     if not changed_files:
         return {"candidates": [], "identifiers": [], "note": "pin 无 changed_files"}
     allow = {str(x) for x in (replay_allowed or [])}
-    changed_tails = {
-        str(rel).replace("\\", "/").lstrip("./").split("/")[-1] for rel in changed_files if rel
+    root = Path(project_root)
+    changed_keys = {
+        _file_key(root, str(rel), repo_root=repo_root) for rel in changed_files if rel
     }
+    hunks = list(changed_hunks or [])
+    proofs = directed_proofs or {}
     candidates: list[dict[str, Any]] = []
     identifiers: list[str] = []
     note = ""
     try:
-        with _open_query(Path(project_root), op_name=op_name, architecture=architecture) as query:
+        with _open_query(root, op_name=op_name, architecture=architecture) as query:
             hits = query.entities_in_files(changed_files)
             seen: set[str] = set()
             for hit in hits:
@@ -223,9 +256,19 @@ def behavior_candidates(
                     changed_writers = [
                         w
                         for w in writers
-                        if str(w.get("file") or "").split("/")[-1] in changed_tails
+                        if _file_key(root, str(w.get("file") or ""), repo_root=repo_root)
+                        in changed_keys
                     ]
                     row["written_in_changed_files"] = bool(changed_writers)
+                annotate_candidate(
+                    row,
+                    hunks=hunks,
+                    file_key=lambda rel, _root=root: _file_key(
+                        _root, rel, repo_root=repo_root
+                    ),
+                    query=query,
+                    directed_proofs=proofs.get(name),
+                )
                 candidates.append(row)
                 identifiers.append(name)
                 if len(candidates) >= _BEHAVIOR_CAP:
@@ -245,18 +288,20 @@ def branch_locals(
     changed_files: list[str],
     *,
     replay_allowed: list[str] | None = None,
+    repo_root: Path | str | None = None,
+    changed_hunks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Host locals assigned in the changed files, flagged when a branch consumes them.
+    """Locals consumed by a changed branch/compare, with unique reaching defs.
 
-    Probe eligibility needs a *unique* assignment inside the pinned change; the
-    same identifier written twice is reported as ambiguous rather than silently
-    picked, matching the injector's `PROBE_AMBIGUOUS`.
+    ``PROBE_AMBIGUOUS`` means more than one assignment in the containing
+    function can reach that changed use — not "hunk contains two `=`".
     """
     allow = {str(x) for x in (replay_allowed or [])}
-    assign = re.compile(r"\b([A-Za-z_]\w*)\s*=(?!=)")
+    hunks = list(changed_hunks or [])
     per_name: dict[str, dict[str, Any]] = {}
+    root = Path(project_root)
     for rel in changed_files or []:
-        path = resolve_changed_file(Path(project_root), rel)
+        path = resolve_changed_file(root, rel, repo_root=repo_root)
         if path is None or path.suffix not in _SOURCE_SUFFIXES:
             continue
         try:
@@ -264,14 +309,24 @@ def branch_locals(
         except OSError:
             continue
         lines = text.splitlines()
-        local: dict[str, dict[str, Any]] = {}
-        written_at: dict[str, set[int]] = {}
-        for idx, line in enumerate(lines, start=1):
-            if "TG_PROBE" in line:
-                continue
-            for match in assign.finditer(line):
-                name = match.group(1)
-                if not _IDENT.match(name) or len(name) < 4 or name in allow:
+        op_rel = _file_key(root, rel, repo_root=repo_root)
+        uses = changed_use_lines(lines, op_rel, hunks) if hunks else [
+            idx
+            for idx, line in enumerate(lines, start=1)
+            if is_control_or_compare(line)
+        ]
+        for use_line in uses:
+            line = lines[use_line - 1] if 1 <= use_line <= len(lines) else ""
+            consumed_by_branch = bool(
+                line.strip().startswith(("if", "} else if", "else if", "while"))
+                or " ? " in line
+            )
+            consumed_by_compare = (not consumed_by_branch) and is_control_or_compare(line)
+            for name in consumed_names(line):
+                if not _IDENT.match(name) or name in allow:
+                    continue
+                defs = reaching_assignments(lines, name, use_line)
+                if not defs:
                     continue
                 row = per_name.setdefault(
                     name,
@@ -282,26 +337,12 @@ def branch_locals(
                         "consumed_by_compare": False,
                     },
                 )
-                if len(row["assignments"]) < 4:
-                    row["assignments"].append({"file": path.name, "line": idx})
-                written_at.setdefault(name, set()).add(idx)
-                local[name] = row
-        # Consumption is judged inside the file that assigns the name (a host
-        # local never escapes its translation unit) and excludes the assignment
-        # itself, whose right-hand side says nothing about who reads the result.
-        for name, row in local.items():
-            needle = re.compile(rf"\b{re.escape(name)}\b")
-            skip = written_at.get(name) or set()
-            for idx, line in enumerate(lines, start=1):
-                if idx in skip or not needle.search(line):
-                    continue
-                stripped = line.strip()
-                if stripped.startswith(("if", "} else if", "else if", "while")) or " ? " in line:
-                    row["consumed_by_branch"] = True
-                if _ASSIGN_SKIP.search(line) or re.search(r"[<>]\s*[A-Za-z0-9_(]", line):
-                    row["consumed_by_compare"] = True
-                if re.search(r"\b(Min|Max|std::min|std::max)\s*\(", line):
-                    row["consumed_by_compare"] = True
+                row["consumed_by_branch"] = row["consumed_by_branch"] or consumed_by_branch
+                row["consumed_by_compare"] = row["consumed_by_compare"] or consumed_by_compare
+                for item in defs:
+                    site = {"file": path.name, "line": int(item["line"])}
+                    if site not in row["assignments"] and len(row["assignments"]) < 8:
+                        row["assignments"].append(site)
     out: list[dict[str, Any]] = []
     for row in per_name.values():
         if not (row["consumed_by_branch"] or row["consumed_by_compare"]):
@@ -309,7 +350,7 @@ def branch_locals(
         unique = len(row["assignments"]) == 1
         row["probeable"] = unique
         if not unique:
-            row["probe_blocked"] = "PROBE_AMBIGUOUS: 改动范围内多处赋值"
+            row["probe_blocked"] = "PROBE_AMBIGUOUS: 到达 changed use 的 reaching definition 不唯一"
         out.append(row)
     out.sort(
         key=lambda r: (not r.get("probeable"), not r.get("consumed_by_branch"), str(r.get("name")))
@@ -357,11 +398,13 @@ def build_semantic_packet(
     op_name: str = "",
     architecture: str = "",
     changed_files: list[str] | None = None,
+    changed_hunks: list[dict[str, Any]] | None = None,
     init_doc: dict[str, Any] | None = None,
     repo_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Assemble the UO-grounded half of the packet. Never raises on UO gaps."""
     files = [str(f) for f in (changed_files or []) if str(f).strip()]
+    hunks = [row for row in (changed_hunks or []) if isinstance(row, dict)]
     catalog = observation_catalog(
         Path(project_root), op_name=op_name, architecture=architecture
     )
@@ -372,8 +415,16 @@ def build_semantic_packet(
         op_name=op_name,
         architecture=architecture,
         replay_allowed=allowed,
+        repo_root=repo_root,
+        changed_hunks=hunks,
     )
-    locals_rows = branch_locals(Path(project_root), files, replay_allowed=allowed)
+    locals_rows = branch_locals(
+        Path(project_root),
+        files,
+        replay_allowed=allowed,
+        repo_root=repo_root,
+        changed_hunks=hunks,
+    )
     catalog["probe_candidates"] = [
         row["name"] for row in locals_rows if row.get("probeable")
     ]
@@ -384,6 +435,7 @@ def build_semantic_packet(
         "behavior_candidates": behavior.get("candidates") or [],
         "branch_locals": locals_rows,
         "identifiers": behavior.get("identifiers") or [],
+        "usage": dict(PACKET_USAGE),
         "packet_notes": [
             n
             for n in (behavior.get("note"), catalog.get("replay_forbidden_error"))

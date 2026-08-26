@@ -217,10 +217,10 @@ def _run_dir(uo: Path, ctx: dict[str, Any]) -> Path:
 def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Discover operator layout and seed the prepare working tree.
 
-    Resets ``.ascendc-pilot/<arch>/uo/`` to runs/summary/tiling/kernel (+ cache),
+    Resets ``.ascendc-pilot/<arch>/uo/`` to runs/summary (+ cache),
     writes manifest / operator / layout_receipt. Does **not** seed legacy layered
-    KB stubs (``flow/``, ``data_model``, ``pipeline``, …) — canonical product is
-    the single ``.uo`` CodeMap written at commit.
+    KB stubs (``flow/``, ``tiling/``, ``kernel/``, ``data_model``, ``pipeline``, …)
+    — canonical product is the single ``.uo`` CodeMap written at commit.
     """
     from uo_init.op_spec import discover
 
@@ -311,11 +311,10 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
 
 
 # Prepare-only working dirs under <arch>/uo/.
-# Canonical product is `.ascendc-pilot/<arch>/uo/<op>.<arch>.uo` (commit). Layered KB
-# YAML under flow/ / pipeline / data_model is legacy and must not be seeded.
+# Canonical product is `.ascendc-pilot/<arch>/uo/<op>.<arch>.uo` (commit).
+# Empty tiling/kernel folders were leftovers from layered-KB receipts that
+# extract no longer writes; views live inside the ``.uo`` product.
 _UO_SEED_DIRS = (
-    "tiling",   # extract receipts (key_bind / families), not layered data_model
-    "kernel",   # extract receipts (fold_receipt), not pipeline/resources views
     "summary",  # scope mirrors for gates / update fallback
     "runs",
 )
@@ -329,6 +328,8 @@ _DISALLOWED_TOP_DIRS = (
     "ledger",
     # Legacy layered-KB product tree — replaced by single .uo CodeMap.
     "flow",
+    "tiling",
+    "kernel",
 )
 
 # Created by extract/analyze/export; prepare must not leave them around.
@@ -343,10 +344,14 @@ _DEFER_UNTIL_EXPORT = (
 # Leftover files from the old prepare stub / layered-KB path.
 _LEGACY_STUB_FILES = (
     "tiling/data_model.yaml",
+    "tiling/key_space.yaml",
+    "tiling/key_derivations.yaml",
     "kernel/pipeline.yaml",
     "kernel/resources.yaml",
     "flow/golden_model.yaml",
     "flow/numerical_model.yaml",
+    "ir/_host_bundle_meta.yaml",
+    "ir/full_init_timing_report.json",
 )
 
 
@@ -1097,7 +1102,8 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
 
 
 def _bundle_cache(uo: Path) -> Path:
-    return uo / "ir" / "_host_bundle_meta.yaml"
+    """Extract receipt is the only host-bundle sidecar (no duplicate meta file)."""
+    return uo / "ir" / "host_extract_receipt.yaml"
 
 
 def _dump_ir_pickle(path: Path, obj: Any) -> None:
@@ -1268,7 +1274,6 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "restored_from": bundle.get("restored_from") or "",
         "persisted_ir": persisted,
     }
-    _dump(_bundle_cache(uo), meta)
     _dump(
         uo / "ir" / "host_extract_receipt.yaml",
         {"ok": True, "engine": "extract_host", **meta},

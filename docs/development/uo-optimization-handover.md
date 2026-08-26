@@ -6,9 +6,33 @@
 TEST/.ascendc-pr/gitcode.com--cann--ops-transformer--pr-10546/attention/flash_attention_score_grad
 ```
 
-这轮工作的前提是**不兼容旧产物**：遇到冲突直接改 schema、直接删字段，不留 shim。唯一的硬约束是**答案等价** —— 图的形状可以变，但 `uo-query` 对同一个问题给出的答案必须一字不差。所有改动都由 `tools/uo_answer_gate.py` 的 53 例把关。
+这轮工作的前提是**不兼容旧产物**：遇到冲突直接改 schema、直接删字段，不留 shim。唯一的硬约束是**答案等价** —— 图的形状可以变，但 `uo-query` 对同一个问题给出的答案必须一字不差。所有改动都由 `tools/uo_answer_gate.py` 的 59 例把关。
 
 已完成 Phase 0~3，Phase 4 做了一半并且**留下一个未查清的性能回退**。下面按「怎么复现 → 做了什么 → 还剩什么 → 坑在哪」组织。
+
+---
+
+## 0. 产物孤立度（2026-08-26 续）
+
+`flash_attention_score_grad` / arch35：完全孤立 **1,920 → 73（0.4%）**，锚点可达 **76.1% → 97.4%**。答案门 **59 例 PASS**（`Q19_get_tpl_key` 主命中从错误的 tiling-key 头 `:1460` 改到 host `tiling_normal_regbase.cpp:1460`，已 `--freeze`）。
+
+连边只用 clang 记下的事实，**不用正则扫源码硬连**：
+
+| 问题 | 做法 |
+| --- | --- |
+| REGISTER 脱图 | 调用点 `args` + 作用域名字查找 → `REFERENCES`；`memory_space=REG` |
+| arch22 FUNCTION 污染 | `host_ir_keeps_file` 丢掉 other-arch / `op_kernel/`；dataflow 不再 mint 无 reads 的 getter |
+| host BRANCH | `CtrlNode.function` / AST `reads` 接到 FUNCTION 与操作数；对不上的 regex 站点不再单独 mint |
+| enum COMPILE_VAR | 声明上的 `attrs['enum']` → TYPE `CONTAINS` |
+| platform OPERATION | clang `caller` → `CALLS` |
+| PREDICATE / TPL BW / attr INPUT | SELECTS / BINDS / FILE CONTAINS |
+| 99 孤立 MACRO | 同文件 `source_define` 去重；空 object-macro（include guard）不进图；`TplSchema` 构造名 `BINDS`；clang `MACRO_INSTANTIATION` `EXPANDS_TO` 已有 MACRO 或 FILE |
+
+剩余 73 个是编译器没使用点的库存（9 个 `GEN_*` MACRO、28 catalog TYPE、21 无调用 FUNCTION…），保持孤立。
+
+增量已接到 `/uo-update`：mtime+size 快筛后再 sha256；`skip_reextract` 只报真正变了的 confirmed source；`detect_kb_changes` 用同一套 stamp delta（git 行在指纹未变时变成 noop）；源码指纹未变时 analyze 复用 compile cache。源码有变时 analyze 仍全量（pass 级依赖未做）。
+
+审计：`python tools/uo_product_audit.py --isolated`。Golden：`tests/baselines/flash_attention_score_grad.arch35.answers.json`。
 
 ---
 
@@ -27,7 +51,7 @@ rm -f  "$UO_OP_DIR/.ascendc-pilot/arch35/uo/FlashAttentionScoreGrad.arch35.uo"
 rm -rf "$UO_OP_DIR/.ascendc-pilot/arch35/cache"
 python tools/run_full_init.py
 
-# 答案等价门槛（53 例）
+# 答案等价门槛（59 例）
 python tools/uo_answer_gate.py --op "$UO_OP_DIR" --arch arch35
 
 # 逐 pass 真实耗时（不是 profiler 数字）
@@ -59,7 +83,7 @@ grep "uo-timing.*compile\." <构建输出>
 没有可信的度量，后面每一步都是在猜。
 
 - **阶段计时接线**：`record_stage` 接进 prepare/extract/analyze/commit/verify 五个阶段函数（`src/uo_init/codemap_engines.py`、`src/uo_init/perf.py`）。之前有 102s 落在「未归因」里，现在是 1.9s。
-- **答案等价门槛**：`tools/uo_answer_gate.py`（新文件，308 行，53 例）。golden 落在 `artifacts/uo-answer-gate/fag-arch35.golden.json`，用 `--freeze` 重新冻结。
+- **答案等价门槛**：`tools/uo_answer_gate.py`。golden 落在 `engines/understand-operator/tests/baselines/flash_attention_score_grad.arch35.answers.json`，用 `--freeze` 重新冻结。运行时 dump（current/diff/perf）只写 `artifacts/uo-answer-gate/`（gitignore）。CI 不跑完整 FAG 59 问。
   - 自检过：同一产物连跑 3 次零差异，确定性成立。
   - **这是整轮工作的安全网。任何改动先跑它。**
 
@@ -140,7 +164,7 @@ Windows 上每次 `_getfinalpathname` 约 0.04ms，合计 5.05s。一个 stage �
 
 | 路径 | 用途 |
 | --- | --- |
-| `engines/understand-operator/tools/uo_answer_gate.py` | 答案等价门槛，53 例。`--freeze` 重冻 golden。**未提交（untracked）** |
+| `engines/understand-operator/tools/uo_answer_gate.py` | 答案等价门槛，59 例。`--freeze` 重冻 golden。golden 在 `tests/baselines/`。 |
 | `engines/understand-operator/tools/run_full_init.py` | 五阶段构建 |
 | `engines/understand-operator/tools/uo_init_perf_gate.py` | action 级性能 harness |
 
@@ -222,7 +246,7 @@ Windows 上每次 `_getfinalpathname` 约 0.04ms，合计 5.05s。一个 stage �
 - `tpl_dsl.py: strip_cpp_comments` —— 15 次调用 1.0s（大文件正则）
 - `passes/kernel_tiling_closure.py: enrich_kernel_field_branches` —— 1.23s
 - `source_gaps` 4.9s、`kernel_call_refine` 4.7s 两个大头本身没碰
-- **mtime/size 预过滤**：原计划里的增量构建跳过未改文件，没做
+- **mtime/size 预过滤**：已接到 `extract_cache` + `/uo-update` detect。未改文件不再哈希；指纹未变时 extract/analyze 短路。有文件变化时 analyze 仍全量。
 
 ### 4.5 已取消
 
@@ -271,14 +295,7 @@ engines/understand-operator/tests/unit/test_view_projection.py
 
 ### golden 快照进不了版本库 —— 这是个真缺口
 
-门槛的 golden 目前落在 `artifacts/uo-answer-gate/fag-arch35.golden.json`（53 条答案，38 KB），而 **`artifacts/` 在 `.gitignore:41` 里**。也就是说：
-
-- 这份 golden **不会被提交**，换机器/换人就没了。
-- 接手的人只能对**当时的状态**重新 `--freeze`，于是门槛退化成「和我上次跑的一样」，**失去了和优化前答案的连接** —— 而那个连接正是整轮工作的验收依据。
-
-**接手第一件事**：把 golden 挪进被跟踪的基线目录再提交。现成的位置是
-`engines/understand-operator/tests/baselines/`，它已经被 git 跟踪，而且已经放着同一个算子的
-`flash_attention_score_grad.yaml`。挪完改掉 `uo_answer_gate.py` 里的 `DEFAULT_GOLDEN`（第 35 行）。
+门槛的 golden 在 `engines/understand-operator/tests/baselines/flash_attention_score_grad.arch35.answers.json`（59 条答案）。`artifacts/` 只放 current/diff/perf 运行产物。CI 不跑完整 FAG 查询；单测只检查 golden 存在，以及 `compare()` 在 tiny fixture 上的 diff。
 
 golden 绑定在**当前这份产物**上。如果有意改变某个答案，用 `--freeze` 重冻，并在提交信息里说清改了哪几例、为什么 —— 门槛的意义在于「变化必须是被解释过的」，而不是「不许变」。
 

@@ -67,17 +67,18 @@ CREATE TABLE IF NOT EXISTS entity_name_leaf(
 CREATE INDEX IF NOT EXISTS idx_name_leaf ON entity_name_leaf(leaf, is_ascendc);
 """
 
-# Recall fallback scans source text with LIKE. An FTS5 index answers faster but
-# needs a full copy of the text (+6 MB) and its tokenizer silently misses
-# identifiers like `kernel_deter` that a substring scan finds. Substring
-# matching is also the semantics the agent expects, because it is what grep does.
-#
 # `source_span` only holds entity definition snippets, so scanning it can only
 # recall names the graph already knows. `source_line` holds every line of the
 # operator tree, which makes the fallback a real grep and lets a card report an
 # exact total instead of a sample.
+#
+# `id INTEGER PRIMARY KEY` is load-bearing, not decoration: `source_fts` indexes
+# this table by rowid via `content=`, and VACUUM is free to renumber the rowids
+# of a table that has no explicit integer key. Without it the index would
+# silently point at the wrong lines after the vacuum in `upgrade()`.
 SOURCE_LINE_SQL = """
 CREATE TABLE IF NOT EXISTS source_line(
+  id INTEGER PRIMARY KEY,
   path TEXT NOT NULL,
   line INTEGER NOT NULL,
   text TEXT NOT NULL
@@ -170,8 +171,12 @@ def build_source_line(
     entity in shared code was uncitable, which reads as "no such code" rather
     than "not indexed".
     """
+    # Dropped rather than emptied so an older product picks up the current
+    # schema: an in-place upgrade of a table built before `id` existed would
+    # otherwise keep the old shape and break the FTS `content_rowid`.
+    conn.execute("DROP TABLE IF EXISTS source_fts")
+    conn.execute("DROP TABLE IF EXISTS source_line")
     conn.executescript(SOURCE_LINE_SQL)
-    conn.execute("DELETE FROM source_line")
     root = Path(op_root)
     arch = str(architecture or "").strip().lower()
     files = 0
@@ -423,18 +428,31 @@ def build_template_blocks(conn: sqlite3.Connection) -> int:
 
 
 def build_source_fts(conn: sqlite3.Connection) -> bool:
-    """Trigram FTS over source_line. Returns False if FTS5 is unavailable."""
+    """Trigram FTS over `source_line`. Returns False if FTS5 is unavailable.
+
+    Recall answers `pattern` misses by scanning source text for a substring,
+    which `LIKE '%x%'` cannot index -- 10ms of full scan per needle, and the
+    slowest name cards spent most of their time there. A trigram tokenizer
+    indexes substrings, so it answers the same question in well under a
+    millisecond.
+
+    `content='source_line'` matters as much as the tokenizer. A standalone FTS5
+    table keeps its own copy of the indexed text, which on this product was a
+    4.9MB duplicate of bytes `source_line` already held; pointing the index at
+    that table instead costs a rowid join and takes the whole feature from
+    +13.8MB to +5.8MB. Measured on FAG/arch35: recall went 151ms -> 9ms across
+    14 needles with byte-identical row sets, including the `kernel_deter` style
+    of identifier that a word tokenizer would have split and lost.
+    """
     if not has_source_line(conn):
         return False
     try:
         conn.execute("DROP TABLE IF EXISTS source_fts")
         conn.execute(
             "CREATE VIRTUAL TABLE source_fts USING fts5("
-            "path UNINDEXED, line UNINDEXED, text, tokenize='trigram')"
+            "text, content='source_line', content_rowid='id', tokenize='trigram')"
         )
-        conn.execute(
-            "INSERT INTO source_fts(path, line, text) SELECT path, line, text FROM source_line"
-        )
+        conn.execute("INSERT INTO source_fts(rowid, text) SELECT id, text FROM source_line")
     except sqlite3.OperationalError:
         return False
     return True
@@ -488,9 +506,7 @@ def upgrade(
             )
             stats["source_files"] = files
             stats["source_lines"] = lines
-            stats["source_fts"] = False
-            # LIKE over ~35k lines is only used on identifier miss. FTS5
-            # trigram would copy the text again and grew this product by 16 MB.
+            stats["source_fts"] = build_source_fts(conn)
         if prune is not None:
             stats["view_blob_bytes_freed"] = prune_view_blobs(conn, prune)
         conn.execute(

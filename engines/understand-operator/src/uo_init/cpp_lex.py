@@ -48,7 +48,20 @@ class FuncHit:
 
 
 def line_index(text: str) -> list[int]:
-    return [i for i, ch in enumerate(text) if ch == "\n"]
+    """Offsets of every newline, ascending.
+
+    ``str.find`` walks the buffer in C and returns once per line; comparing
+    every character from Python returned once per *character*, which on these
+    multi-hundred-KB TUs is the same answer for roughly thirty times the work.
+    """
+    out: list[int] = []
+    start = 0
+    while True:
+        pos = text.find("\n", start)
+        if pos < 0:
+            return out
+        out.append(pos)
+        start = pos + 1
 
 
 def line_at(newlines: list[int], offset: int) -> int:

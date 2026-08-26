@@ -100,6 +100,14 @@ def enrich_host_checks(
             line = _line(raw, match.start())
             macro = match.group("macro")
             short = guard[:120]
+            targets: list[Entity] = []
+            for name in _guard_symbols(guard):
+                targets.extend(fields.get(name) or ())
+            if not targets:
+                # A check whose guard names nothing already on the map is a
+                # locatable comment, not a graph fact. Clang already minted the
+                # same sites when it had a containing function / operands.
+                continue
             eid = branch_id(
                 side="host",
                 file=file,
@@ -130,13 +138,16 @@ def enrich_host_checks(
                 "guard": short,
                 "macro": macro,
             }
-            for name in _guard_symbols(guard):
-                for ent in fields.get(name) or ():
-                    _attach_check(ent, site)
-                    edge = {"provenance": HOST_CHECK_PROVENANCE, "file": file, "line": line}
-                    codemap.link(RelationKind.GUARDED_BY, ent.id, br.id, attrs=dict(edge))
-                    codemap.link(RelationKind.CONTROLS, br.id, ent.id, attrs=dict(edge))
-                    bound += 1
+            seen_ids: set[str] = set()
+            for ent in targets:
+                if ent.id in seen_ids:
+                    continue
+                seen_ids.add(ent.id)
+                _attach_check(ent, site)
+                edge = {"provenance": HOST_CHECK_PROVENANCE, "file": file, "line": line}
+                codemap.link(RelationKind.GUARDED_BY, ent.id, br.id, attrs=dict(edge))
+                codemap.link(RelationKind.CONTROLS, br.id, ent.id, attrs=dict(edge))
+                bound += 1
 
     closure = dict(codemap.meta.get("kernel_tiling_closure") or {})
     closure["host_check_sites"] = sites

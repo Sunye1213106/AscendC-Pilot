@@ -235,16 +235,18 @@ def _discover_scopes(
         file = _rel(root, path)
         class_names.update(c.name for c in classes)
         for macro in macros:
-            ent = codemap.upsert(
-                EntityKind.MACRO,
-                macro.name,
-                eid=f"SRCKMACROV2::{file}::{macro.line}::{macro.name}",
-                attrs={
-                    "layer": "kernel", "source_definition": True,
-                    "architecture": architecture, "provenance": "source_kernel_macro_definition_v2",
-                },
-                file=file, line=macro.line, status="confirmed",
-            )
+            ent = _existing_macro(codemap, macro.name, file)
+            if ent is None:
+                ent = codemap.upsert(
+                    EntityKind.MACRO,
+                    macro.name,
+                    eid=f"SRCKMACROV2::{file}::{macro.line}::{macro.name}",
+                    attrs={
+                        "layer": "kernel", "source_definition": True,
+                        "architecture": architecture, "provenance": "source_kernel_macro_definition_v2",
+                    },
+                    file=file, line=macro.line, status="confirmed",
+                )
             scopes.append(_Scope(ent, macro.name, "", file, raw, masked, macro.start, macro.end, "", "macro"))
 
         newlines = line_index(raw)
@@ -340,9 +342,16 @@ def _bind_calls(codemap: CodeMap, scopes: list[_Scope], class_names: set[str]) -
         else:
             funcs[scope.name].append(scope)
 
+    # `setdefault(k, f())` evaluates `f()` on every pass, so the per-file cache
+    # this dict is here to be never took effect: `_aliases` re-scanned the whole
+    # masked file once per scope and 890 of the 949 results were discarded. Keep
+    # the membership test explicit. `scope.masked` is the whole file's masked
+    # text -- body_start/body_end index into it -- so one entry per file is the
+    # same answer the first scope produced.
     aliases_by_file: dict[str, dict[str, set[str]]] = {}
     for scope in scopes:
-        aliases_by_file.setdefault(scope.file, _aliases(scope.masked, class_names))
+        if scope.file not in aliases_by_file:
+            aliases_by_file[scope.file] = _aliases(scope.masked, class_names)
 
     def _scan(scope: _Scope) -> tuple[_Scope, dict[str, set[str]], list[tuple[str, str, int, int]]]:
         aliases = aliases_by_file[scope.file]
@@ -422,7 +431,11 @@ def _bind_tiling_reads(codemap: CodeMap, scopes: list[_Scope]) -> dict[str, int]
     sites = resolved = ambiguous = 0
     known = set(types)
     for scope in scopes:
-        aliases = aliases_by_file.setdefault(scope.file, _aliases(scope.masked, known))
+        # Same eager-default trap as in `_bind_calls`: the cache only works if
+        # the miss is tested for rather than defaulted into.
+        aliases = aliases_by_file.get(scope.file)
+        if aliases is None:
+            aliases = aliases_by_file[scope.file] = _aliases(scope.masked, known)
         var_types = _variable_types(scope, known, aliases)
         body = scope.masked[scope.body_start:scope.body_end]
         for match in _TILING_ACCESS_RE.finditer(body):
@@ -529,12 +542,31 @@ def _macro_spans(masked: str) -> list[_Macro]:
             i += 1
             continue
         start_i = i
+        rest = lines[i][match.end():]
+        function_like = rest.startswith("(")
         while i < len(lines) - 1 and lines[i].rstrip("\r\n").rstrip().endswith("\\"):
             i += 1
         end_i = i
+        if not function_like:
+            parts = [lines[start_i][match.end():]]
+            parts.extend(lines[j] for j in range(start_i + 1, end_i + 1))
+            body = "".join(parts).replace("\\\r\n", " ").replace("\\\n", " ")
+            if not body.strip():
+                i += 1
+                continue
         out.append(_Macro(match.group(1), offsets[start_i], offsets[end_i] + len(lines[end_i]), start_i + 1))
         i += 1
     return out
+
+
+def _existing_macro(codemap: CodeMap, name: str, file: str) -> Entity | None:
+    want = str(file or "").replace("\\", "/")
+    hits = [
+        ent
+        for ent in codemap.by_name(name, kind=EntityKind.MACRO)
+        if str(ent.file or "").replace("\\", "/") == want
+    ]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _call_sites(text: str, start: int, end: int) -> Iterable[tuple[str, str, int, int]]:

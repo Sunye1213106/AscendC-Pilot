@@ -47,6 +47,16 @@ def detect_kb_changes(
     if not base_revision:
         base_revision = head_sha if head_sha != "unknown" else "unknown"
 
+    skip_plan: dict[str, Any] | None = None
+    try:
+        from uo_init.extract_cache import skip_reextract_for_unchanged_tus
+
+        skip_plan = skip_reextract_for_unchanged_tus(
+            repo_root, uo_root=uo_root, arch=architecture or None
+        )
+    except Exception:  # noqa: BLE001
+        skip_plan = None
+
     inspected = inspect_git_changes(repo_root, base=base_revision, head=head_sha)
     name_status = list(inspected.get("rows") or [])
     warnings: list[str] = []
@@ -56,7 +66,7 @@ def detect_kb_changes(
         warnings.append(
             "git unavailable or not a repository; falling back to confirmed-source content fingerprint"
         )
-        name_status = _content_fallback_rows(repo_root, uo_root)
+        name_status = _content_fallback_rows(repo_root, uo_root, skip_plan=skip_plan)
 
     scope_index = load_scope_index(uo_root)
     files: list[dict[str, Any]] = []
@@ -79,6 +89,11 @@ def detect_kb_changes(
                 "suspicious_out_of_scope": suspicious,
             }
         )
+
+    if skip_plan is not None:
+        from uo_init.extract_cache import align_scoped_changes
+
+        files = align_scoped_changes(files, skip_plan)
 
     worktree_dirty = bool(inspected.get("worktree_dirty"))
     worktree_fingerprint = str(inspected.get("worktree_fingerprint") or "")
@@ -182,19 +197,26 @@ def _product_source_revision(uo_root: Path, repo_root: Path, manifest: dict[str,
     return sha if sha and sha != "unknown" else ""
 
 
-def _content_fallback_rows(repo_root: Path, uo_root: Path) -> list[tuple[str, str]]:
+def _content_fallback_rows(
+    repo_root: Path,
+    uo_root: Path,
+    *,
+    skip_plan: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
     """When git cannot list diffs, treat confirmed-source content drift as edits."""
+    plan = skip_plan
+    if plan is None:
+        try:
+            from uo_init.extract_cache import skip_reextract_for_unchanged_tus
+
+            plan = skip_reextract_for_unchanged_tus(repo_root, uo_root=uo_root)
+        except Exception:  # noqa: BLE001
+            plan = None
+    if plan is not None:
+        return [("M", path) for path in (plan.get("changed_or_cold") or [])]
     scope_index = load_scope_index(uo_root)
     if not scope_index:
         return []
-    try:
-        from uo_init.extract_cache import sources_unchanged
-
-        unchanged, _meta = sources_unchanged(repo_root, uo_root=uo_root)
-        if unchanged:
-            return []
-    except Exception:  # noqa: BLE001
-        pass
     return [("M", path) for path in sorted(scope_index)]
 
 

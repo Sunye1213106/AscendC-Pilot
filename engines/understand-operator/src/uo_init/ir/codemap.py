@@ -66,10 +66,48 @@ def _is_truncated_kernel_branch(cond: str) -> bool:
     return len(text) > 80 and "<" in text
 
 
-def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, str, str], int]) -> None:
-    """Mint locatable Host BRANCH nodes for OP_CHECK / VALIDATION_ONLY controls."""
-    from uo_init.ids import branch_id
+#: Host-check operands are looked up by the identifier clang recorded, not by
+#: scanning source text. Ambiguous names are left unlinked.
+_HOST_CHECK_OPERAND_KINDS = (
+    EntityKind.INPUT,
+    EntityKind.OUTPUT,
+    EntityKind.TILING_FIELD,
+    EntityKind.TILING_KEY,
+    EntityKind.FIELD,
+    EntityKind.VARIABLE,
+    EntityKind.COMPILE_VAR,
+)
 
+
+def _unique_named(cm: "CodeMap", name: str, kinds: tuple[EntityKind, ...]) -> Entity | None:
+    """The entity clang named, or None when the spelling is missing or clashes."""
+    ident = str(name or "").strip()
+    if not ident:
+        return None
+    hits: dict[str, Entity] = {}
+    for kind in kinds:
+        for ent in cm.by_name(ident, kind=kind):
+            hits[ent.id] = ent
+    if len(hits) == 1:
+        return next(iter(hits.values()))
+    if hits:
+        return None
+    if "." in ident:
+        return _unique_named(cm, ident.rsplit(".", 1)[-1], kinds)
+    return None
+
+
+def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, str, str], int]) -> None:
+    """Mint locatable Host BRANCH nodes for OP_CHECK / VALIDATION_ONLY controls.
+
+    Edges hang off the containing function and the condition operands clang
+    already resolved on the control node. No identifier is harvested from the
+    condition string.
+    """
+    from uo_init.ids import branch_id
+    from uo_init.source_layout import host_ir_keeps_file
+
+    arch = str(getattr(cm, "architecture", "") or "")
     for node in getattr(host_ir, "controls", None) or []:
         universe = str(getattr(node, "universe", "") or "")
         snippet = str(getattr(node, "snippet", "") or "")
@@ -80,6 +118,8 @@ def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, s
         file = str(getattr(node, "file", "") or "")
         line = int(getattr(node, "line", 0) or 0)
         if not file or line <= 0:
+            continue
+        if not host_ir_keeps_file(file, arch):
             continue
         fn_name = str(getattr(node, "function", "") or "")
         guard = (cond or snippet).strip()[:120]
@@ -95,7 +135,7 @@ def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, s
             guard=guard,
             ordinal=ordinal,
         )
-        cm.upsert(
+        br = cm.upsert(
             EntityKind.BRANCH,
             guard,
             eid=eid,
@@ -111,6 +151,17 @@ def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, s
             line=line,
             status="confirmed",
         )
+        edge = {"provenance": "clang_walk", "file": file, "line": line}
+        owner = _unique_named(cm, fn_name, (EntityKind.FUNCTION, EntityKind.METHOD))
+        if owner is not None:
+            cm.link(RelationKind.CONTROLS, br.id, owner.id, attrs=dict(edge))
+            cm.link(RelationKind.GUARDED_BY, owner.id, br.id, attrs=dict(edge))
+        for symbol in getattr(node, "reads", None) or ():
+            target = _unique_named(cm, str(symbol), _HOST_CHECK_OPERAND_KINDS)
+            if target is None or target.id == br.id:
+                continue
+            cm.link(RelationKind.READS, br.id, target.id, attrs={**edge, "symbol": str(symbol)})
+            cm.link(RelationKind.GUARDED_BY, target.id, br.id, attrs={**edge, "symbol": str(symbol)})
 
 
 def _ingest_host_write_events(
@@ -126,6 +177,8 @@ def _ingest_host_write_events(
     except Exception:  # noqa: BLE001
         RETURN_SLOT = "__return__"
 
+    from uo_init.source_layout import host_ir_keeps_file
+
     for ev in events or []:
         path = str(getattr(ev, "path", "") or "").replace("->", ".")
         if not path or path == RETURN_SLOT:
@@ -134,6 +187,8 @@ def _ingest_host_write_events(
         ev_line = int(getattr(ev, "line", 0) or 0)
         rhs = str(getattr(ev, "rhs", "") or "")
         if not ev_file or ev_line <= 0 or not rhs.strip():
+            continue
+        if not host_ir_keeps_file(ev_file, getattr(cm, "architecture", "") or ""):
             continue
         fn_name = str(getattr(ev, "function", "") or "")
         guards = list((ev.guards() if hasattr(ev, "guards") else []) or [])
@@ -969,9 +1024,14 @@ class CodeMap:
         if architecture:
             cm.architecture = architecture
 
+        from uo_init.source_layout import host_ir_keeps_file
+
         for name, summary in (getattr(host_ir, "summaries", None) or {}).items():
             start = int(getattr(summary, "line", 0) or 0)
             end = int(getattr(summary, "line_end", 0) or 0)
+            summary_file = str(getattr(summary, "file", "") or "")
+            if not summary_file or not host_ir_keeps_file(summary_file, architecture):
+                continue
             fn = cm.upsert(
                 EntityKind.FUNCTION,
                 str(name),
@@ -1022,28 +1082,33 @@ class CodeMap:
         )
 
         for site in getattr(host_ir, "call_sites", None) or []:
+            caller_name = str(getattr(site, "caller", "") or "")
+            callee_name = str(getattr(site, "callee", "") or "")
+            site_file = str(getattr(site, "file", "") or "")
+            if not caller_name or not callee_name:
+                continue
+            if not site_file or not host_ir_keeps_file(site_file, architecture):
+                continue
             caller = cm.upsert(
                 EntityKind.FUNCTION,
-                str(getattr(site, "caller", "") or ""),
+                caller_name,
                 attrs={"layer": "host", "provenance": "clang_walk"},
             )
             callee = cm.upsert(
                 EntityKind.FUNCTION,
-                str(getattr(site, "callee", "") or ""),
+                callee_name,
                 attrs={"layer": "host", "provenance": "clang_walk"},
             )
-            if caller.name and callee.name:
-                rel = cm.link(
-                    RelationKind.CALLS,
-                    caller.id,
-                    callee.id,
-                    attrs={"provenance": "clang_walk"},
-                )
-                site_file = str(getattr(site, "file", "") or "")
-                site_line = int(getattr(site, "line", 0) or 0)
-                if site_file and site_line > 0:
-                    rel.attrs["file"] = site_file
-                    rel.attrs["line"] = site_line
+            rel = cm.link(
+                RelationKind.CALLS,
+                caller.id,
+                callee.id,
+                attrs={"provenance": "clang_walk"},
+            )
+            site_line = int(getattr(site, "line", 0) or 0)
+            if site_line > 0:
+                rel.attrs["file"] = site_file
+                rel.attrs["line"] = site_line
 
         _ingest_host_checks(cm, host_ir, host_branch_ordinals)
         from uo_init.passes.host_graph_status import enrich_host_graph_status

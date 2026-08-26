@@ -746,10 +746,28 @@ def _compact_plan_scope_packet(
     is resolved here instead of being rediscovered from raw source.
     """
     arch = str(ctx.get("architecture") or "").strip()
-    from ascendc_pilot.change_contract import allow_legal_keys, changed_files_of, load_change_contract
+    from ascendc_pilot.change_contract import (
+        allow_legal_keys,
+        changed_files_of,
+        changed_hunks_of,
+        load_change_contract,
+        verify_pinned_head,
+    )
 
     contract = load_change_contract(project_root) or {}
+    head_err = verify_pinned_head(project_root, contract)
+    if head_err:
+        packet = {
+            "schema": plan_packet.PACKET_SCHEMA,
+            "has_diff": False,
+            "note": head_err.get("message_zh") or "HEAD mismatch",
+            "changed_files": [],
+            "change_contract": contract,
+            "head_mismatch": head_err,
+        }
+        return packet
     files = changed_files_of(contract)
+    hunks = changed_hunks_of(contract)
     has_diff = bool(files)
     note = ""
     if not has_diff:
@@ -760,6 +778,7 @@ def _compact_plan_scope_packet(
         "has_diff": has_diff,
         "note": note,
         "changed_files": files,
+        "changed_hunks": hunks,
         "change_contract": contract,
         "allow_legal_keys": allow_legal_keys(project_root),
         "identifiers": [],
@@ -776,6 +795,7 @@ def _compact_plan_scope_packet(
             op_name=str(tg_ctx.get("op_name") or Path(project_root).name),
             architecture=str(tg_ctx.get("architecture") or arch),
             changed_files=files,
+            changed_hunks=hunks,
             init_doc=init_doc,
             repo_root=_repo_root_for_contract(),
         )
@@ -811,6 +831,11 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     gate = pr_change_gate(project_root)
     if gate:
         return gate
+    from ascendc_pilot.change_contract import load_change_contract, verify_pinned_head
+
+    head_err = verify_pinned_head(project_root, load_change_contract(project_root))
+    if head_err:
+        return head_err
     from ascendc_pilot.contract_sync import contract_drift_gate
 
     drift = contract_drift_gate()

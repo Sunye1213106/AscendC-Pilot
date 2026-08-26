@@ -32,7 +32,58 @@ sys.path[:0] = [
     str(REPO / "pilot"),
 ]
 
-DEFAULT_GOLDEN = REPO / "artifacts" / "uo-answer-gate" / "fag-arch35.golden.json"
+#: Lives under the tracked baselines directory on purpose. The golden used to
+#: sit in ``artifacts/``, which ``.gitignore`` excludes, so it never reached the
+#: repository: a new machine could only re-freeze against whatever state it
+#: found, and the gate degraded from "answers did not change" to "answers match
+#: my own last run". Committing it is what connects a check to the answers the
+#: optimisation started from.
+DEFAULT_GOLDEN = (
+    REPO
+    / "engines"
+    / "understand-operator"
+    / "tests"
+    / "baselines"
+    / "flash_attention_score_grad.arch35.answers.json"
+)
+
+
+def source_digest(op: Path, arch: str) -> dict[str, Any]:
+    """Identify the sources the answers were frozen against.
+
+    The golden pins answers, and an answer is only meaningful about a particular
+    operator checkout. Freeze on one checkout, check on another, and every case
+    diffs at once -- which reads like 53 regressions instead of "this golden is
+    about different code". Recording what was read lets the check say which of
+    the two it is.
+
+    ``confirmed_sources`` is the file list extract already settled on, so this
+    follows the build's own notion of scope rather than re-deriving one.
+    """
+    import hashlib
+
+    import yaml
+
+    manifest = op / ".ascendc-pilot" / arch / "uo" / "cache" / "extract_fingerprint.yaml"
+    try:
+        loaded = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {"available": False}
+    rows = loaded.get("confirmed_sources") if isinstance(loaded, dict) else None
+    if not isinstance(rows, list):
+        return {"available": False}
+    digest = hashlib.sha256()
+    counted = 0
+    for rel in sorted(str(r) for r in rows):
+        path = op / rel
+        try:
+            body = path.read_bytes()
+        except OSError:
+            continue
+        digest.update(rel.encode("utf-8"))
+        digest.update(hashlib.sha256(body).digest())
+        counted += 1
+    return {"available": True, "file_count": counted, "digest": digest.hexdigest()[:16]}
 
 
 def _tail_path(value: Any, keep: int = 2) -> str:
@@ -195,6 +246,12 @@ def build_cases() -> list[dict[str, Any]]:
         ("E27_graphstatus", {"pattern": "graphStatus"}),
         ("E28_inittilingdata", {"pattern": "InitTilingData"}),
         ("E29_fag_tilingdata", {"pattern": "FlashAttentionScoreGradTilingData"}),
+        ("E30_regtensor", {"pattern": "RegTensor"}),
+        ("E31_vregsrc", {"pattern": "vregSrc"}),
+        ("E32_tpl_3_bw", {"pattern": "ASCENDC_TPL_3_BW"}),
+        ("E33_reg_tpl_varlen", {"pattern": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase"}),
+        ("E34_scale_value_attr", {"pattern": "scale_value"}),
+        ("E35_pse_type", {"pattern": "pse_type"}),
     ]
     return [{"id": cid, "argv": argv} for cid, argv in probe + exam]
 
@@ -248,6 +305,7 @@ def collect(op: Path, arch: str) -> dict[str, Any]:
     return {
         "schema": "uo-answer-gate/v1",
         "arch": arch,
+        "source": source_digest(op, arch),
         "answers": rows,
         "latency_ms": {
             "n": len(ms),
@@ -335,6 +393,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     gold = json.loads(args.golden.read_text(encoding="utf-8"))
+    gold_src = gold.get("source") if isinstance(gold.get("source"), dict) else {}
+    cur_src = current.get("source") if isinstance(current.get("source"), dict) else {}
+    if gold_src.get("digest") and cur_src.get("digest") != gold_src.get("digest"):
+        print(
+            "NOTE: golden was frozen against different operator sources "
+            f"({gold_src.get('digest')}/{gold_src.get('file_count')} files vs "
+            f"{cur_src.get('digest')}/{cur_src.get('file_count')} files). "
+            "Diffs below may describe the source change, not a regression.",
+            flush=True,
+        )
     diffs = compare(gold, current)
     if not diffs:
         print("ANSWER GATE PASS: no answer changed", flush=True)

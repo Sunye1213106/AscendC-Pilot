@@ -65,6 +65,9 @@ class TplDim:
     vals: list[str]
     bit_lo: int = 0
     bit_hi: int = 0
+    #: Original width token from ARGS_DECL, e.g. ``ASCENDC_TPL_4_BW``. Empty
+    #: when the width was a literal or a BOOL/KERNEL_TYPE dim.
+    bw_token: str = ""
 
     @property
     def value_domain(self) -> list[str]:
@@ -145,6 +148,31 @@ class TplSchema:
 
 def encode_tiling_key(schema: TplSchema, inst: dict[str, str | int | bool]) -> int:
     return schema.encode_tiling_key(inst)
+
+
+def schema_construct_macros(schema: TplSchema) -> frozenset[str]:
+    """CANN TPL construct names implied by a parsed schema, not a source scan."""
+    names = {"ASCENDC_TPL_ARGS_DECL", "GET_TPL_TILING_KEY"}
+    has_sel = bool(schema.selections and any(schema.selections))
+    if has_sel:
+        names.add("ASCENDC_TPL_ARGS_SEL")
+        names.add("ASCENDC_TPL_SEL")
+    for dim in schema.dims:
+        kind = str(dim.kind or "").upper()
+        if kind:
+            names.add(f"ASCENDC_TPL_{kind}_DECL")
+            if has_sel and kind != "KERNEL_TYPE":
+                names.add(f"ASCENDC_TPL_{kind}_SEL")
+        token = str(dim.bw_token or "").strip()
+        if token:
+            names.add(token)
+        if kind == "UINT" and dim.vals:
+            marker = str(dim.vals[0])
+            if "UI_LIST" in marker:
+                names.add("ASCENDC_TPL_UI_LIST")
+            if "UI_RANGE" in marker:
+                names.add("ASCENDC_TPL_UI_RANGE")
+    return frozenset(names)
 
 
 def _join_continuations(src: str) -> str:
@@ -485,16 +513,17 @@ def parse_args_decl(src: str) -> TplSchema:
         if not name:
             continue
         if kind == "UINT":
-            bw = _uint_bit_width(parts[1] if len(parts) > 1 else "")
+            bw_token = parts[1] if len(parts) > 1 else ""
+            bw = _uint_bit_width(bw_token)
             vals = parts[2:]
         elif kind == "BOOL":
-            bw, vals = 1, canonicalize_sel_vals("BOOL", parts[1:])
+            bw, vals, bw_token = 1, canonicalize_sel_vals("BOOL", parts[1:]), ""
         elif kind == "KERNEL_TYPE":
             # Host GET_TPL_TILING_KEY still passes this dim (cvMode / mix ratio).
-            bw, vals = 6, parts[1:]
+            bw, vals, bw_token = 6, parts[1:], ""
         else:
-            bw, vals = 8, parts[1:]
-        dims.append(TplDim(name=name, kind=kind, bw=bw, vals=vals))
+            bw, vals, bw_token = 8, parts[1:], ""
+        dims.append(TplDim(name=name, kind=kind, bw=bw, vals=vals, bw_token=bw_token))
     # assign bit ranges
     bit = 0
     for d in dims:

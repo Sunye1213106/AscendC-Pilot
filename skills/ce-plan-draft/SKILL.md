@@ -5,7 +5,7 @@ description: 把改码需求写成可被 apply 逐条执行的命名计划。自
 
 # 写出计划
 
-边查边问，当场写入本 Action 的 staging 草稿（`runs/**/actions/plan_draft/**`）。canonical `ce/plan/` 由引擎提升，本角色不得直写。形状见 `examples/`。一次 apply 做一个 `- [ ]`。本步只写计划：不改码、不审 diff、不写 CE yaml。
+直接更新 `ce/plan/{slug}_plan.md`。本步只写计划：不改码、不审 diff、不写 CE yaml。形状见 `examples/`。一次 apply 做一个 `- [ ]`。文件存在不等于已批准；apply 认 `ce-plan-confirmed-v1` 收据。
 
 ## 输入 / 输出 / 停
 
@@ -42,7 +42,7 @@ description: 把改码需求写成可被 apply 逐条执行的命名计划。自
 | 贴了 PR URL | 事实可取；计划仍写目标实现 |
 | 会改文件集的未决 | `UNRESOLVED` + 推荐答案，不编文件集 |
 | 一条 todo 横跨算子仓与测试仓 | 拆开 |
-| 想把刷图 / 审查 / `/tg-plan` 写成 todo | 删掉；Todo 只写改哪些文件 |
+| 想把 CodeMap 更新 / 审查 / `/tg-plan` 写成 todo | 删掉；Todo 只写改哪些文件 |
 | 测试内容写成 yaml / 变量表 | 改回散文 |
 | 没有当前计划却按修订做 | 新写 |
 | 已勾选与新范围冲突 | 新增回滚/收窄 todo，不改 `- [x]` |
@@ -68,14 +68,14 @@ description: 把改码需求写成可被 apply 逐条执行的命名计划。自
 
 ## 输出形状
 
-一份 staging 计划 markdown（引擎提升后才是 canonical `ce/plan/`）：
+一份 canonical 计划 markdown（`ce/plan/{slug}_plan.md`）：
 
 ```text
 ## 实现分析
 当前行为 / 目标行为 / 侧别(host|tiling|kernel|mixed) / 文件与符号 / 依赖 / 不做的范围 / UNRESOLVED
 
 ## 分步计划
-按依赖排序的实现阶段（不含查图、审查、刷图）
+按依赖排序的实现阶段（不含查图、审查、CodeMap 更新）
 
 ## Todo
 - [ ] 在 `path/a.cpp`、`path/a.h` 中……（一次 apply 一项）

@@ -99,6 +99,45 @@ def test_from_host_ir_validation_controls_are_located() -> None:
     assert checks[0].line_start == 90
 
 
+def test_from_host_ir_check_binds_clang_function_and_operand() -> None:
+    """Edges come from CtrlNode.function / CtrlNode.reads, not from the condition string."""
+    from uo_init.host_ir import FuncSummary
+    from uo_init.ir.relation import RelationKind
+
+    class _Ctrl:
+        universe = "VALIDATION_ONLY"
+        snippet = "OP_CHECK_IF(aicNum_ == 0, return GRAPH_FAILED)"
+        condition = "aicNum_ == 0"
+        file = "op_host/tiling.cpp"
+        line = 90
+        function = "DoOpTiling"
+        reads = ("aicNum_",)
+
+    class _Host:
+        backend = "clang"
+        summaries = {
+            "DoOpTiling": FuncSummary(
+                name="DoOpTiling",
+                file="op_host/tiling.cpp",
+                line=10,
+            )
+        }
+        writes = []
+        call_sites = []
+        controls = [_Ctrl()]
+
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.FIELD, "aicNum_", attrs={"layer": "host"})
+    cm = CodeMap.from_host_ir(_Host(), op_name="toy", architecture="arch35", codemap=cm)
+    br = next(e for e in cm.by_kind(EntityKind.BRANCH) if e.attrs.get("branch_kind") == "host_check")
+    fn = next(e for e in cm.by_kind(EntityKind.FUNCTION) if e.name == "DoOpTiling")
+    field = next(e for e in cm.by_kind(EntityKind.FIELD) if e.name == "aicNum_")
+    owned = {dst.id for _rel, dst in cm.neighbors(br.id, kind=RelationKind.CONTROLS, direction="out")}
+    assert fn.id in owned
+    reads = {dst.id for _rel, dst in cm.neighbors(br.id, kind=RelationKind.READS, direction="out")}
+    assert field.id in reads
+
+
 def test_from_host_ir_function_keeps_declaration_span() -> None:
     from uo_init.host_ir import FuncSummary
 

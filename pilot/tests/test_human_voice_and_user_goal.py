@@ -89,7 +89,7 @@ def test_bind_init_is_staged_analyst_with_method() -> None:
         "testcase-generation/bind-init",
     }
     method, prompt = _load_method_and_prompt(ROOT, action)
-    # bind-init/SKILL.md is a family manifest routing to per-axis references;
+    # bind-init/SKILL.md routes to per-axis references;
     # naming the canonical product is the review playbook's job, not its.
     assert method.strip(), "SKILL.md must be non-empty"
     assert prompt.strip()

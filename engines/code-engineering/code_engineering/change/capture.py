@@ -72,6 +72,66 @@ def parse_two_sided_spans(diff_text: str) -> list[dict[str, Any]]:
     return rows
 
 
+def parse_unified_hunks(diff_text: str) -> list[dict[str, Any]]:
+    """Two-sided hunks plus deleted/added line text (for old-side provenance)."""
+    out: list[dict[str, Any]] = []
+    old_path = ""
+    new_path = ""
+    current: dict[str, Any] | None = None
+
+    def _flush() -> None:
+        nonlocal current
+        if current is None:
+            return
+        current["hunk_id"] = f"H{len(out) + 1}"
+        out.append(current)
+        current = None
+
+    for line in diff_text.splitlines():
+        old = _OLD_FILE.match(line)
+        if old:
+            _flush()
+            old_path = (old.group(1) or old.group(2) or "").strip()
+            continue
+        new = _DIFF_FILE.match(line)
+        if new:
+            new_path = (new.group(1) or new.group(2) or "").strip()
+            continue
+        hunk = _HUNK.match(line)
+        if hunk:
+            _flush()
+            old_start, old_count = int(hunk.group(1)), int(hunk.group(2) or "1")
+            new_start, new_count = int(hunk.group(3)), int(hunk.group(4) or "1")
+            if old_path == "/dev/null":
+                status = "added"
+            elif new_path == "/dev/null":
+                status = "deleted"
+            elif old_path and new_path and old_path != new_path:
+                status = "renamed"
+            else:
+                status = "modified"
+            current = {
+                "old_file": None if old_path in {"", "/dev/null"} else old_path,
+                "new_file": None if new_path in {"", "/dev/null"} else new_path,
+                "old_start": old_start,
+                "old_end": old_start + max(old_count, 1) - 1,
+                "new_start": new_start,
+                "new_end": new_start + max(new_count, 1) - 1,
+                "status": status,
+                "deleted_lines": [],
+                "added_lines": [],
+            }
+            continue
+        if current is None:
+            continue
+        if line.startswith("-") and not line.startswith("---"):
+            current["deleted_lines"].append(line[1:])
+        elif line.startswith("+") and not line.startswith("+++"):
+            current["added_lines"].append(line[1:])
+    _flush()
+    return out
+
+
 _IDENT = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\b")
 _IDENT_SKIP = frozenset(
     {
@@ -109,7 +169,9 @@ def extract_added_identifiers(diff_text: str, *, limit: int = 24) -> list[str]:
 
 def operator_relative_path(path: str) -> str:
     """Strip repo prefixes. Keep ``tests/`` even when the file sits under ``tests/ut/op_host``."""
-    norm = str(path or "").replace("\\", "/").lstrip("./")
+    from acp_common.paths import strip_dot_slash
+
+    norm = strip_dot_slash(path)
     for marker in ("tests/", "examples/"):
         idx = norm.find(marker)
         if idx >= 0:

@@ -10,12 +10,14 @@ import pytest
 from uo_init.canonical_tpl_projection import project_tpl_views_from_codemap
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
 from uo_init.passes.tpl_schema import run as run_tpl_schema
 from uo_init.tg_projection import backfill_from_source, legal_key_count
 from uo_init.tg_views import finalize_tg_views
 
 
 HEADER = """\
+// ASCENDC_TPL_PRE is a CANN scanner token, not a schema construct.
 ASCENDC_TPL_ARGS_DECL(
   ToyOp,
   ASCENDC_TPL_BOOL_DECL(IsEmpty, 0, 1),
@@ -60,6 +62,31 @@ def test_tpl_schema_pass_builds_d(tmp_path: Path):
     macros = {e.name for e in cm.by_kind(EntityKind.MACRO)}
     assert "ASCENDC_TPL_ARGS_SEL" in macros
     assert "ASCENDC_TPL_BOOL_SEL" in macros
+    assert "ASCENDC_TPL_SEL" in macros
+    assert "ASCENDC_TPL_PRE" not in macros
+    split = next(k for k in keys if k.name == "Split")
+    split_bound = {
+        dst.name
+        for rel, dst in cm.neighbors(split.id, kind=RelationKind.BINDS)
+        if dst.kind_name() == EntityKind.MACRO.value
+    }
+    assert split_bound >= {
+        "ASCENDC_TPL_ARGS_DECL",
+        "ASCENDC_TPL_UINT_DECL",
+        "ASCENDC_TPL_3_BW",
+        "ASCENDC_TPL_UI_LIST",
+        "ASCENDC_TPL_ARGS_SEL",
+        "ASCENDC_TPL_UINT_SEL",
+        "GET_TPL_TILING_KEY",
+    }
+    empty = next(k for k in keys if k.name == "IsEmpty")
+    empty_bound = {
+        dst.name
+        for rel, dst in cm.neighbors(empty.id, kind=RelationKind.BINDS)
+        if dst.kind_name() == EntityKind.MACRO.value
+    }
+    assert "ASCENDC_TPL_BOOL_DECL" in empty_bound
+    assert "ASCENDC_TPL_BOOL_SEL" in empty_bound
 
 
 def test_split_decl_sel_headers_rebuild_canonical_views(tmp_path: Path):
@@ -94,6 +121,39 @@ def test_split_decl_sel_headers_rebuild_canonical_views(tmp_path: Path):
     rebuilt = project_tpl_views_from_codemap(cm)
     assert rebuilt
     assert int(rebuilt["tiling/exhaustive_key_space.yaml"]["legal_key_count"]) == 2
+
+
+def test_get_tpl_encoder_located_on_host_call_site(tmp_path: Path):
+    op = tmp_path / "toy"
+    kernel = op / "op_kernel"
+    (kernel / "arch35").mkdir(parents=True)
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (kernel / "toy_tiling_key_decl.h").write_text(
+        "ASCENDC_TPL_ARGS_DECL(Toy, ASCENDC_TPL_BOOL_DECL(FLAG, 0, 1));\n",
+        encoding="utf-8",
+    )
+    (kernel / "arch35" / "toy_apt_tiling_key.h").write_text(
+        '#include "../toy_tiling_key_decl.h"\n'
+        "ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(FLAG, 0, 1));\n",
+        encoding="utf-8",
+    )
+    (kernel / "toy_apt.cpp").write_text(
+        '#include "arch35/toy_apt_tiling_key.h"\n'
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *tiling) {}\n",
+        encoding="utf-8",
+    )
+    (host / "tiling.cpp").write_text(
+        "uint64_t k = GET_TPL_TILING_KEY(0);\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    ctx: dict = {"op_root": str(op), "architecture": "arch35", "tg_views": {}}
+    cm = run_tpl_schema(cm, context=ctx)
+    macros = cm.by_name("GET_TPL_TILING_KEY", kind=EntityKind.MACRO)
+    assert macros
+    assert macros[0].line_start == 1
+    assert "tiling.cpp" in macros[0].file.replace("\\", "/")
 
 
 def test_decl_only_schema_does_not_stamp_tpl_views(tmp_path: Path):

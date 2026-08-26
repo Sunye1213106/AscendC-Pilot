@@ -4,10 +4,7 @@ name_zh: CE 变更分析
 role: producer
 mode: subagent
 description: >
-  需求 grill 并写出或修订命名计划 markdown、会话交接的 producer。
-  直接写 canonical `ce/plan/{slug}_plan.md`（本 agent 就是该产物的 producer，
-  draft 由 `human_confirm` 把关、revise 由确定性 `plan_revise_check` 校验）；
-  禁止写 CE yaml。
+  写出或修订 `ce/plan/{slug}_plan.md`。禁止写 CE YAML。
 max_skill_ids: &skills [ce-plan-draft, session-handoff, uo-query]
 skill_ids: *skills
 read_scopes:

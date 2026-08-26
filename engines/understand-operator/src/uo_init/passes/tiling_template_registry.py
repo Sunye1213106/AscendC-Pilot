@@ -13,6 +13,7 @@ from pathlib import Path
 from uo_init.anchors import extract_registry
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
 from uo_init.registry_capable import extract_iscapable
 from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import selected_host_files, selected_kernel_files
@@ -91,6 +92,7 @@ def enrich_tiling_template_registry(
             line=line,
             status="confirmed",
         )
+        _bind_template_registry(codemap, eid, cls, architecture)
         count += 1
     t_cap = _time.perf_counter() - t_cap0
     defaults = _emit_register_tiling_defaults(codemap, root, architecture)
@@ -140,5 +142,52 @@ def _emit_register_tiling_defaults(
                 line=line,
                 status="confirmed",
             )
+            _bind_template_registry(
+                codemap, eid, cls.split("::")[-1], architecture
+            )
             count += 1
     return count
+
+
+def _bind_template_registry(
+    codemap: CodeMap, predicate_id: str, class_name: str, architecture: str
+) -> None:
+    """Hang a template-registry PREDICATE off the type it names, or the ARCH.
+
+    ``REGISTER_TILING_TEMPLATE_WITH_ARCH`` and ``REGISTER_TILING_DEFAULT``
+    already record the class they register. The packed-key sibling pass
+    (``tiling_registration``) emits SELECTS to TILING_DATA for the same
+    fact; this pass stopped at minting the PREDICATE, so the three registry
+    sites were degree-0. Prefer TILING_DATA / TYPE of that class; fall back
+    to ARCH because the macro is architecture-gated (``arch_expr``).
+    """
+    short = str(class_name or "").split("::")[-1]
+    if not short:
+        return
+    target = None
+    for kind in (EntityKind.TILING_DATA, EntityKind.TYPE):
+        hits = list(codemap.by_name(short, kind=kind)) or list(
+            codemap.by_name(class_name, kind=kind)
+        )
+        if hits:
+            target = hits[0]
+            break
+    if target is not None:
+        codemap.link(
+            RelationKind.SELECTS,
+            predicate_id,
+            target.id,
+            attrs={"provenance": "source_register_tiling_template", "class": short},
+            status="confirmed",
+        )
+        return
+    for arch in codemap.by_kind(EntityKind.ARCH):
+        if architecture and arch.name != architecture:
+            continue
+        codemap.link(
+            RelationKind.AVAILABLE_ON,
+            predicate_id,
+            arch.id,
+            attrs={"provenance": "source_register_tiling_template", "class": short},
+            status="confirmed",
+        )

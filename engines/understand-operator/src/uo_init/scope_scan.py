@@ -18,6 +18,7 @@ from uo_init.source_layout import (
     ARCH_DIR_RE as ARCH_SEGMENT_RE,
     architecture_in_scope,
     architectures_match,
+    is_other_arch_path,
     is_variant_architecture,
 )
 
@@ -972,6 +973,10 @@ def enrich_with_clang(
             )
             if kind in {KIND_EXTERNAL, KIND_SYSTEM}:
                 external_hits += 1
+                continue
+            if arch and is_other_arch_path(inc, arch):
+                # Clang will include a cousin architecture's tiling header
+                # for types. That path is not this product's source.
                 continue
             key = _key(inc)
             if key in index:

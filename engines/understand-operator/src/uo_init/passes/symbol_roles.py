@@ -12,6 +12,7 @@ from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.relation import RelationKind
 from uo_init.ir.evidence import (
     SOURCE_CLANG_AST,
     SOURCE_DSL,
@@ -192,6 +193,12 @@ def _project_kernel(codemap: CodeMap, kernel_ir: Any) -> None:
             provenance="symbol_role_kernel_entry_fn",
             source=SOURCE_DSL,
             trust=TRUST_DERIVED,
+        )
+        codemap.link(
+            RelationKind.DECLARES,
+            kernel.id,
+            fn.id,
+            attrs={"provenance": "symbol_role_kernel_entry_fn"},
         )
     functions = getattr(kernel_ir, "functions", None) or {} if kernel_ir is not None else {}
     for name, rec in functions.items():

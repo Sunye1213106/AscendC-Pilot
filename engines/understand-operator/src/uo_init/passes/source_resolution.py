@@ -125,6 +125,7 @@ def resolve_source_gaps(
     stats.update(_resolve_tiling_reads(codemap, sources))
     stats.update(_extract_compile_facts(codemap, sources + host_sources, architecture))
     stats.update(_extract_runtime_structs_and_resources(codemap, sources, architecture))
+    stats["enum_membership_edges"] = link_enum_membership(codemap)
     arch_dir = root / "op_kernel" / str(architecture or "")
     assign_sources = sources
     if arch_dir.is_dir():
@@ -699,6 +700,48 @@ def _extract_compile_facts(
         "source_type_aliases": type_aliases,
         "shared_compile_values": shared,
     }
+
+
+def link_enum_membership(codemap: CodeMap) -> int:
+    """CONTAINS from an enum TYPE to each COMPILE_VAR that recorded that enum.
+
+    The member already carries ``attrs['enum']`` from the declaration. This
+    join is that declared name, not a scan of source text. A TYPE is minted
+    only when the enum name is present and no TYPE of that name exists yet.
+    """
+    linked = 0
+    for cv in list(codemap.by_kind(EntityKind.COMPILE_VAR)):
+        enum_name = str((cv.attrs or {}).get("enum") or "").strip()
+        if not enum_name:
+            continue
+        types = list(codemap.by_name(enum_name, kind=EntityKind.TYPE))
+        if not types:
+            types = [
+                codemap.upsert(
+                    EntityKind.TYPE,
+                    enum_name,
+                    eid=f"SRCENUMTYPE::{cv.file or ''}::{enum_name}",
+                    attrs={
+                        "cpp_kind": "enum",
+                        "provenance": "source_enum",
+                    },
+                    file=str(cv.file or ""),
+                    line=int(cv.line_start or 0) or None,
+                    status="confirmed",
+                )
+            ]
+        for typ in types:
+            if typ.id == cv.id:
+                continue
+            codemap.link(
+                RelationKind.CONTAINS,
+                typ.id,
+                cv.id,
+                attrs={"provenance": "source_enum", "enum": enum_name},
+                status="confirmed",
+            )
+            linked += 1
+    return linked
 
 
 def _compile_value_text(ent: Entity) -> str:

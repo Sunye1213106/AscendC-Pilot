@@ -8,6 +8,7 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.source_layout import host_ir_keeps_file
 
 #: Writes and reads are read straight off the clang walk summaries.
 _CLANG = "clang_walk"
@@ -26,10 +27,14 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
 
     # Field write → FLOWS_TO consumers that read the same path tail.
     writes_by_path: dict[str, list[str]] = {}
+    arch = str(codemap.architecture or ctx.get("architecture") or "")
     for ev in getattr(host_ir, "writes", None) or []:
         path = str(getattr(ev, "path", "") or "")
         fn = str(getattr(ev, "function", "") or "")
+        ev_file = str(getattr(ev, "file", "") or "")
         if not path:
+            continue
+        if ev_file and not host_ir_keeps_file(ev_file, arch):
             continue
         field = codemap.upsert(
             EntityKind.FIELD, path, attrs={"layer": "host", "provenance": _CLANG}
@@ -44,6 +49,12 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
             writes_by_path.setdefault(path, []).append(writer.id)
 
     for name, summary in (getattr(host_ir, "summaries", None) or {}).items():
+        reads = list(getattr(summary, "reads", None) or [])
+        if not reads:
+            continue
+        summary_file = str(getattr(summary, "file", "") or "")
+        if not summary_file or not host_ir_keeps_file(summary_file, arch):
+            continue
         reader = codemap.upsert(
             EntityKind.FUNCTION, str(name), attrs={"layer": "host", "provenance": _CLANG}
         )

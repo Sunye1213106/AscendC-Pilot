@@ -212,6 +212,8 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "deterministic-tg-engine" not in tg_skill
         pilot_agent = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
         uo_query_agent = (generated / "agents" / "uo-query.md").read_text(encoding="utf-8")
+        assert "ScopeSet" not in pilot_agent
+        assert "ScopeSet" not in uo_query_agent
         assert "Select-Object *" in pilot_agent
         assert "Get-ChildItem: allow" in pilot_agent
         assert "glob: allow" in pilot_agent
@@ -349,6 +351,9 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
             assert "UO_ALREADY_READY" in text
             assert "then call `acp run-action auto` again" not in text
             assert "pilot_run" in text
+        elif name == "tg-plan":
+            assert "pilot_run" in text
+            assert "task_prompt_stub" not in text
         else:
             assert "then call `acp run-action auto` again" not in text
             assert "pilot_run" in text
@@ -385,12 +390,12 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     from compose_runtime import listed_skill_ids, CONTROL_PLANE_SKILL_IDS, _read_invariant_pack
 
     pack = _read_invariant_pack(REPO)
-    assert "简单查询" in pack
+    assert "CodeMap" in pack
     assert "短问" not in pack
     assert "深问" not in pack
     assert "同名不可互换" in pack
-    assert "Open" in pack
-    assert "PROVEN_UNREACHABLE" in pack
+    assert "change contract" in pack
+    assert "PROVEN_UNREACHABLE" not in pack
     assert "Host 运行时契约" not in pack
     assert "SOURCE_FALLBACK_UO_EMPTY" in pack
     assert "确定性脚本" not in pack
@@ -423,10 +428,14 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "pilot-pr-review" not in compiled
     assert "tdd-engines" not in compiled
     primary = (out / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
-    assert "简单查询" in primary
+    assert "CodeMap" in primary
     assert "短问" not in primary
     assert "深问" not in primary
     assert "同名不可互换" in primary
+    assert "ScopeSet" not in primary
+    assert "`pilot:" not in primary
+    assert "`source:" not in primary
+    assert "`method:" not in primary
     oa = (out / "skills" / "uo-query" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa
     assert not (out / "skills" / "workflow-orchestration" / "SKILL.md").exists()

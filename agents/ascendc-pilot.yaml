@@ -4,9 +4,9 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。显式 slash 只跑该 workflow。自然语言输入：思考里按产物缺口选 slash，
-  对用户只说「要什么 / 现在有什么 / 所以先做什么」，然后 `todowrite` 再按格 `pilot_run`。
-  查询用 `pilot_cli`。调查拆路与 fanout 隔离上下文。不得发明 workflow。编排时不读 Skill。
+  AscendC-Pilot 主控。显式 slash 只跑该 workflow。自然语言输入：思考里按产物缺口
+  选 slash，对用户只说「要什么 / 现在有什么 / 所以先做什么」，然后 `todowrite`
+  再 `pilot_run`。查询用 `pilot_cli`。不得发明 workflow。编排时不读 Skill。
 max_skill_ids: []
 skill_ids: []
 read_scopes:

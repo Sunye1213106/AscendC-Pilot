@@ -211,7 +211,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-plan": {
-        "command_description": "把测试意图写成独立变量与观测（根在 CSV 列）",
+        "command_description": "白盒测试规划，只落 tg/plan.md",
         "description": (
             "白盒测试规划，只落一份 `tg/plan.md`（散文 + YAML 变量表）。"
             "强制 `init.yaml`；未指定方向则独立变量 = TilingKey 维。"
@@ -1107,16 +1107,24 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             else:
                 remapped.append(s)
         read_scopes = remapped
-    reads = "\n".join(f"- `{x}`" for x in read_scopes) or "- (none)"
+    reads = (
+        "- 算子语义先 `uo-query`。读源码只打开查询结果，或当前 Action "
+        "`environment_capabilities.yaml` 的 `source_scope.file_paths`，"
+        "以及 packet / FOCUS 给出的 `file:line` 窗。\n"
+        "- 不要把权限命名空间当成文件系统路径去 Read。"
+    )
     write_scope_list = [str(x) for x in (agent_meta.get("write_scopes") or [])]
-    writes = "\n".join(f"- `{x}`" for x in write_scope_list) or "- (none)"
+    writes = (
+        "- 只写当前 Action 允许的产物（见 session `bundle.yaml` / `output_contract`）。"
+        "写权限以 lease 为准。"
+    )
     is_primary = agent_meta.get("mode") == "primary"
     if (
         not is_primary
         and len(write_scope_list) > 4
         and all("runs" in s.replace("\\", "/") for s in write_scope_list)
     ):
-        writes = "- 只写当前 Action 的 `pilot:runs/**` 草稿。"
+        writes = "- 只写当前 Action session 下的草稿。"
     inv_pack = _host_remap_skill_paths(
         _read_invariant_pack(repo, for_primary=is_primary, agent_id=str(aid)),
         host=host,
@@ -1216,7 +1224,7 @@ execution_variant = delegated_query。
     elif is_primary:
         runtime = """## 运行时契约
 
-工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（拆路见 pilot-control）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
+工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（拆路见 pilot-control）。禁止 `--help`。Host 给出 Task 正文时原样派发；`plan_precheck` 后按 `pilot-control` 用原生 Task 派 Plan Owner。缺 `pilot_run` 时请用户重装插件。
 """
     else:
         runtime = """## 运行时契约
@@ -1236,7 +1244,7 @@ execution_variant = delegated_query。
 {reads}
 
 机器范围的**算子源码**（`op_host/**`、`op_kernel/**` 等）在 `.ascendc-pilot` 之外。
-先用 UO 查询 / ScopeSet 定位，再窗口化 `Read` — 禁止整文件倒进上下文。
+禁止整文件倒进上下文。
 
 可写：
 

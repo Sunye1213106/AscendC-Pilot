@@ -181,7 +181,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     Residuals are recorded in ``ir/unresolved.yaml`` and retained — they are not
     LLM-resolved into canonical ``.uo``.
     """
-    from uo_init.build import compile_codemap, store_compile_cache
+    from uo_init.build import compile_codemap, load_fresh_compile_cache, store_compile_cache
     from uo_init.perf import stage
     from uo_init.progress import step
 
@@ -191,19 +191,29 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         with stage("analyze"):
             with step("analyze.resolve_inputs"):
                 op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
-            with step("analyze.compile_codemap"):
-                result = compile_codemap(
-                    op_name=op_name,
-                    architecture=arch,
-                    op_root=root,
-                    host_ir=host_ir,
-                    kernel_ir=kernel_ir,
-                    declared=declared,
-                    key_fields=[],
-                    commit=False,
-                )
-            with step("analyze.store_cache"):
-                store_compile_cache(root, op_name, arch, result)
+            extract_fp = pe._current_extract_fingerprint(root, ctx)
+            cached = load_fresh_compile_cache(
+                root, op_name, arch, extract_fingerprint=extract_fp
+            )
+            reused = cached is not None
+            if reused:
+                result = cached
+            else:
+                with step("analyze.compile_codemap"):
+                    result = compile_codemap(
+                        op_name=op_name,
+                        architecture=arch,
+                        op_root=root,
+                        host_ir=host_ir,
+                        kernel_ir=kernel_ir,
+                        declared=declared,
+                        key_fields=[],
+                        commit=False,
+                    )
+                with step("analyze.store_cache"):
+                    store_compile_cache(
+                        root, op_name, arch, result, extract_fingerprint=extract_fp
+                    )
     except Exception as exc:  # noqa: BLE001
         try:
             from uo_init.runtime import end_session
@@ -250,6 +260,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "deep_key_derivation": False,
         "global_sat": False,
         "compile_cached": True,
+        "reused_compile_cache": reused,
         "semantic_completeness": "complete" if locate_blocking == 0 else "partial",
     }
     pe._dump(uo / "ir" / "unresolved.yaml", unresolved)

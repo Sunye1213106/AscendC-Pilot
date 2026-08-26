@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from code_engineering.apply import apply_gate, patch_guard
+from code_engineering.apply import apply_gate, patch_guard, write_plan_confirmed
 from code_engineering.git import parse_pr_url
 from code_engineering.handoff import write_session_handoff
 from code_engineering.plan_md import unfinished_todos
@@ -41,6 +41,10 @@ def test_apply_gate_requires_open_todos(tmp_path: Path) -> None:
     assert done.get("reason_code") == "APPLY_TODOS_DONE"
     plan = tmp_path / ".ascendc-pilot" / "arch35" / "ce" / "plan" / "sync_plan.md"
     plan.write_text("# x\n\n- [ ] still open\n\n`op_kernel/foo.cpp`\n", encoding="utf-8")
+    unconfirmed = apply_gate(tmp_path, architecture="arch35")
+    assert unconfirmed.get("ok") is False
+    assert unconfirmed.get("reason_code") == "APPLY_PLAN_UNCONFIRMED"
+    write_plan_confirmed(tmp_path, architecture="arch35", plan=plan)
     allowed = apply_gate(tmp_path, architecture="arch35")
     assert allowed.get("ok") is True, allowed
 

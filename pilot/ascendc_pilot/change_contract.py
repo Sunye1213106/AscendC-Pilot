@@ -13,9 +13,11 @@ from typing import Any
 
 import yaml
 
-CHANGE_CONTRACT_SCHEMA = "tg-change-contract/v1"
+CHANGE_CONTRACT_SCHEMA = "tg-change-contract/v2"
 CLONE_RECEIPT_SCHEMA = "tg-clone-receipt/v1"
 PLAN_PR_CHANGE_REQUIRED = "PLAN_PR_CHANGE_REQUIRED"
+PLAN_PR_HUNKS_REQUIRED = "PLAN_PR_HUNKS_REQUIRED"
+PIN_HEAD_MISMATCH = "PIN_HEAD_MISMATCH"
 SOURCE_KIND_CONFLICT = "SOURCE_KIND_CONFLICT"
 PR_REGRESSION = "pr_regression"
 IMPLEMENTATION_COVERAGE = "implementation_coverage"
@@ -44,18 +46,100 @@ def _git_rev_parse(cwd: Path, spec: str = "HEAD") -> str:
         import subprocess
 
         proc = subprocess.run(
-            ["git", "rev-parse", spec],
-            cwd=str(cwd),
+            ["git", "-C", str(cwd), "rev-parse", spec],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )
     except Exception:  # noqa: BLE001
         return ""
-    if int(getattr(proc, "returncode", 1) or 1) != 0:
+    if proc.returncode != 0:
         return ""
-    return str(getattr(proc, "stdout", "") or "").strip()
+    return str(proc.stdout or "").strip()
+
+
+def _git_workdir(start: Path) -> Path:
+    """Nearest ancestor (inclusive) where ``git rev-parse HEAD`` works."""
+    cur = Path(start).expanduser()
+    try:
+        cur = cur.resolve()
+    except OSError:
+        pass
+    for _ in range(8):
+        if _git_rev_parse(cur, "HEAD"):
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return Path(start)
+
+
+def _git_diff_unified(cwd: Path, base_sha: str, head_sha: str) -> str:
+    try:
+        import subprocess
+
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), "diff", "--no-ext-diff", "--unified=0", str(base_sha), str(head_sha)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    if proc.returncode not in {0, 1}:
+        return ""
+    return str(proc.stdout or "")
+
+
+def capture_changed_hunks(
+    *,
+    worktree: Path,
+    base_sha: str,
+    head_sha: str,
+) -> dict[str, Any]:
+    """Two-sided hunks from an exact SHA pair. Never ``git diff HEAD`` / three-dot."""
+    git_cwd = _git_workdir(worktree)
+    actual = _git_rev_parse(git_cwd, "HEAD")
+    if not head_sha or actual != str(head_sha).strip():
+        return {
+            "ok": False,
+            "error": PIN_HEAD_MISMATCH,
+            "message_zh": (
+                f"worktree HEAD={actual or '(missing)'} 与 pin head_sha={head_sha} 不一致"
+            ),
+        }
+    if not base_sha:
+        return {
+            "ok": False,
+            "error": PLAN_PR_HUNKS_REQUIRED,
+            "message_zh": "缺少 base_sha，不能构造 changed_hunks",
+        }
+    diff = _git_diff_unified(git_cwd, base_sha, head_sha)
+    from code_engineering.change.capture import parse_unified_hunks
+
+    hunks = parse_unified_hunks(diff)
+    if not hunks:
+        return {
+            "ok": False,
+            "error": PLAN_PR_HUNKS_REQUIRED,
+            "message_zh": "git diff <base> <head> 没有 hunk，不能 pin pr_regression",
+        }
+    return {"ok": True, "hunks": hunks}
+
+
+def changed_hunks_of(contract: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(contract, dict):
+        return []
+    rows = contract.get("changed_hunks")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _as_files(raw: Any) -> list[str]:
@@ -130,8 +214,11 @@ def load_change_contract(project_root: Path | str) -> dict[str, Any] | None:
     kind = str(doc.get("kind") or "").strip()
     if kind not in _KINDS:
         return None
-    if kind == PR_REGRESSION and not changed_files_of(doc):
-        return None
+    if kind == PR_REGRESSION:
+        if not changed_files_of(doc) or not changed_hunks_of(doc):
+            return None
+        if str(doc.get("schema") or "") != CHANGE_CONTRACT_SCHEMA:
+            return None
     return doc
 
 
@@ -168,12 +255,25 @@ def pin_facts(
                 "error": "PIN_FACTS_MISSING",
                 "message_zh": "clone_receipt.changed_files 为空，不能 promote",
             }
+        worktree = Path(str((receipt or {}).get("worktree_head") or root))
+        base_sha = str((receipt or {}).get("base_sha") or "").strip()
+        head_sha = str((receipt or {}).get("head_sha") or "").strip()
+        captured = capture_changed_hunks(
+            worktree=worktree, base_sha=base_sha, head_sha=head_sha
+        )
+        if not captured.get("ok"):
+            return {
+                "ok": False,
+                "error": str(captured.get("error") or PLAN_PR_HUNKS_REQUIRED),
+                "message_zh": str(captured.get("message_zh") or "无法构造 changed_hunks"),
+            }
         doc = {
             "schema": CHANGE_CONTRACT_SCHEMA,
             "kind": PR_REGRESSION,
             "changed_files": files,
-            "base_sha": str((receipt or {}).get("base_sha") or "").strip(),
-            "head_sha": str((receipt or {}).get("head_sha") or "").strip(),
+            "changed_hunks": captured.get("hunks") or [],
+            "base_sha": base_sha,
+            "head_sha": head_sha,
             "enumerate": "",
             "consumers": [str(x) for x in (consumers or ["tg-plan"]) if str(x).strip()],
             "pinned_at": _now(),
@@ -183,6 +283,7 @@ def pin_facts(
             "schema": CHANGE_CONTRACT_SCHEMA,
             "kind": IMPLEMENTATION_COVERAGE,
             "changed_files": [],
+            "changed_hunks": [],
             "base_sha": "",
             "head_sha": "",
             "enumerate": enum_s,
@@ -199,6 +300,29 @@ def pin_facts(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return {"ok": True, "path": path.as_posix(), "contract": doc}
+
+
+def verify_pinned_head(project_root: Path | str, contract: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fail closed when the worktree is not the pinned head."""
+    if not isinstance(contract, dict) or str(contract.get("kind") or "") != PR_REGRESSION:
+        return None
+    head = str(contract.get("head_sha") or "").strip()
+    git_cwd = _git_workdir(Path(project_root))
+    actual = _git_rev_parse(git_cwd, "HEAD")
+    if not head or actual != head:
+        return {
+            "ok": False,
+            "engine": "plan_precheck",
+            "error": PIN_HEAD_MISMATCH,
+            "reason_code": PIN_HEAD_MISMATCH,
+            "retryable": True,
+            "failure_class": "format_transport",
+            "ask": "primary",
+            "message_zh": (
+                f"worktree HEAD={actual or '(missing)'} 与 pin head_sha={head} 不一致"
+            ),
+        }
+    return None
 
 
 def changed_files_of(contract: dict[str, Any] | None) -> list[str]:
@@ -280,5 +404,16 @@ def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
                 "PR 针对性 plan 需要先 pin-facts --project <算子>，从 clone_receipt promote。"
                 "缺 pin 不得进入 plan_ingest。"
             ),
+        }
+    if not changed_hunks_of(contract):
+        return {
+            "ok": False,
+            "engine": "plan_precheck",
+            "error": PLAN_PR_HUNKS_REQUIRED,
+            "reason_code": PLAN_PR_HUNKS_REQUIRED,
+            "retryable": True,
+            "failure_class": "format_transport",
+            "ask": "primary",
+            "message_zh": "PR 针对性 plan 需要 changed_hunks；仅 changed_files 不够。",
         }
     return None

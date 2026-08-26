@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.ids import operation_site_id
-from uo_init.ir.codemap import CodeMap
+from uo_init.ir.codemap import CodeMap, _unique_named
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
 from uo_init.passes.kernel_scan import norm_file
 
 # Frozen CANN gert::TilingContext methods. Not every host setter.
@@ -83,11 +84,12 @@ def enrich_tiling_context_apis(
         provenance = next(
             prov for names, _cat, prov in _API_CATALOGS if callee in names
         )
+        caller = str(_site_get(site, "caller") or "")
         attrs = {
             "callee": callee,
             "layer": "host",
             "catalog": catalog,
-            "function": str(_site_get(site, "caller") or ""),
+            "function": caller,
             "receiver": str(_site_get(site, "receiver") or ""),
             "receiver_type": str(_site_get(site, "receiver_type") or ""),
             "args": args,
@@ -96,7 +98,7 @@ def enrich_tiling_context_apis(
             "provenance": provenance,
             "column": column,
         }
-        codemap.upsert(
+        op = codemap.upsert(
             EntityKind.OPERATION,
             callee,
             eid=oid,
@@ -105,6 +107,24 @@ def enrich_tiling_context_apis(
             line=line,
             status="confirmed",
         )
+        owner = _unique_named(
+            codemap, caller, (EntityKind.FUNCTION, EntityKind.METHOD)
+        )
+        if owner is None and caller:
+            same_file = [
+                ent
+                for ent in codemap.by_name(caller, kind=EntityKind.FUNCTION)
+                if str(ent.file or "").replace("\\", "/") == nfile
+            ]
+            if len(same_file) == 1:
+                owner = same_file[0]
+        if owner is not None:
+            codemap.link(
+                RelationKind.CALLS,
+                owner.id,
+                op.id,
+                attrs={"provenance": provenance, "file": nfile, "line": line},
+            )
         per_api[callee] += 1
         minted += 1
     codemap.meta["tiling_context_apis"] = {

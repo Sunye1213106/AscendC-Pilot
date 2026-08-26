@@ -106,6 +106,13 @@ def test_ce_human_confirm_materialize_does_not_write_yaml(tmp_path: Path) -> Non
     assert not tg_confirm.is_file()
     yaml_hits = list(ce_root(tmp_path, arch="arch35").rglob("*.yaml")) if ce_root(tmp_path, arch="arch35").exists() else []
     assert yaml_hits == []
+    receipt = (
+        Path(tmp_path) / ".ascendc-pilot" / "arch35" / "context" / "ce_plan_confirmed.yaml"
+    )
+    assert receipt.is_file()
+    doc = yaml.safe_load(receipt.read_text(encoding="utf-8"))
+    assert doc["schema"] == "ce-plan-confirmed-v1"
+    assert doc["decision"] == "confirm"
 
 
 def test_ce_apply_report_is_hosted(tmp_path: Path) -> None:

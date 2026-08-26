@@ -1,0 +1,17 @@
+{
+  "harness": "evals/tg_init/grade_init.py",
+  "review": "evals/tg_init/inspect_part.py",
+  "columns": [
+    {
+      "id": "pr-9851-fag-deter-band",
+      "rubric": "evals/fixtures/tg-init/pr-9851-fag-deter-band/rubric.yaml",
+      "product": "tg/init.yaml"
+    },
+    {
+      "id": "alt-scene-aggregate-kwarg",
+      "rubric": "evals/fixtures/tg-init/alt-scene-aggregate-kwarg/rubric.yaml",
+      "product": "parts/bindN.yaml",
+      "notes": "Generality control: same grader, different operator vocabulary"
+    }
+  ]
+}

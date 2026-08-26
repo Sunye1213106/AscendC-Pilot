@@ -11,8 +11,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 REGISTRY_VERSION = "ascendc-semantic-registry/v1"
 
 _DIR = Path(__file__).resolve().parent
@@ -22,8 +20,9 @@ def _load_yaml(name: str) -> dict[str, Any]:
     path = _DIR / name
     if not path.is_file():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return data if isinstance(data, dict) else {}
+    from uo_init.yaml_io import read_yaml
+
+    return read_yaml(path)
 
 
 @lru_cache(maxsize=1)

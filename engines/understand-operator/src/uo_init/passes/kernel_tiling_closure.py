@@ -359,6 +359,14 @@ def enrich_kernel_field_branches(
     if not names:
         return 0
     name_re = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
+    named: dict[str, list[Entity]] = {}
+    for kind in _BRANCH_NAME_KINDS:
+        for ent in codemap.by_kind(kind):
+            leaf = str(ent.name or "").replace("::", ".").rsplit(".", 1)[-1]
+            if leaf:
+                named.setdefault(leaf, []).append(ent)
+            if ent.name and ent.name != leaf:
+                named.setdefault(str(ent.name), []).append(ent)
     minted = 0
     from uo_init.passes.source_text_cache import mask_cached, read_text
 
@@ -372,7 +380,7 @@ def enrich_kernel_field_branches(
         branch_kind: str,
     ) -> None:
         nonlocal minted
-        codemap.upsert(
+        br = codemap.upsert(
             EntityKind.BRANCH,
             field_name,
             eid=f"SRCKFIELDBRANCH::{file}::{line}::{field_name}::{branch_kind}",
@@ -389,6 +397,27 @@ def enrich_kernel_field_branches(
             status="confirmed",
         )
         minted += 1
+        # The ident that qualified this site was drawn from TILING_FIELD /
+        # MACRO / COMPILE_VAR / TEMPLATE_ARG / TILING_KEY. That is the
+        # operand of the branch, and without the edge the 1,300 kernel
+        # BRANCHes sat as degree-0 facts: extracted, named, and unused.
+        for target in named.get(field_name) or ():
+            if target.id == br.id:
+                continue
+            codemap.link(
+                RelationKind.READS,
+                br.id,
+                target.id,
+                attrs={"provenance": "source_kernel_field_if", "symbol": field_name},
+                status="confirmed",
+            )
+            codemap.link(
+                RelationKind.GUARDED_BY,
+                target.id,
+                br.id,
+                attrs={"provenance": "source_kernel_field_if", "symbol": field_name},
+                status="confirmed",
+            )
 
     for path in _branch_scan_files(root, architecture):
         try:
@@ -450,7 +479,63 @@ def enrich_kernel_field_branches(
                     fn=_fn_at(match.start()),
                     branch_kind=kind,
                 )
+    _attach_named_kernel_branches(codemap, named)
     return minted
+
+
+def _attach_named_kernel_branches(
+    codemap: CodeMap, named: dict[str, list[Entity]]
+) -> None:
+    """Give already-minted kernel BRANCHes the operand edge they recorded.
+
+    ``from_kernel_ir`` stores the ident it extracted as the entity name
+    (``IS_FP32_INPUT``, ``ORIG_DTYPE_QUERY``) but only emits CONTROLS when a
+    verified KERNEL already exists -- which it often does not, at ingest
+    time. The ident is the same name ``_branch_ident_names`` used to decide
+    the site was worth keeping, so the join is the compiler/decl name, not a
+    span guess.
+    """
+    kernels = list(codemap.by_kind(EntityKind.KERNEL))
+    for br in codemap.by_kind(EntityKind.BRANCH):
+        if str(br.attrs.get("layer") or "") != "kernel":
+            continue
+        symbol = str(br.attrs.get("tiling_field") or br.name or "").strip()
+        targets = named.get(symbol) or ()
+        if targets:
+            for target in targets:
+                if target.id == br.id:
+                    continue
+                if any(other.id == target.id for _, other in codemap.neighbors(br.id, direction="out")):
+                    continue
+                codemap.link(
+                    RelationKind.READS,
+                    br.id,
+                    target.id,
+                    attrs={
+                        "provenance": str(br.attrs.get("provenance") or "kernel_branch_operand"),
+                        "symbol": symbol,
+                    },
+                    status="confirmed",
+                )
+                codemap.link(
+                    RelationKind.GUARDED_BY,
+                    target.id,
+                    br.id,
+                    attrs={
+                        "provenance": str(br.attrs.get("provenance") or "kernel_branch_operand"),
+                        "symbol": symbol,
+                    },
+                    status="confirmed",
+                )
+        elif kernels and not codemap.neighbors(br.id, direction="both"):
+            for kernel in kernels:
+                codemap.link(
+                    RelationKind.CONTROLS,
+                    br.id,
+                    kernel.id,
+                    attrs={"provenance": "kernel_branch_scope"},
+                    status="confirmed",
+                )
 
 
 def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:

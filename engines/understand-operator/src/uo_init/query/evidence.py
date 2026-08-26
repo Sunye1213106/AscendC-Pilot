@@ -128,7 +128,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "conditional_flag",
         "mutex_policy",
     ),
-    EntityKind.REGISTER.value: ("register_class", "scope", "type_name"),
+    EntityKind.REGISTER.value: ("register_class", "memory_space", "scope", "type_name"),
     EntityKind.OPERATION.value: (
         "callee",
         "receiver",

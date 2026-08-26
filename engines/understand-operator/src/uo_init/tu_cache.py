@@ -22,7 +22,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-CACHE_VERSION = 5
+CACHE_VERSION = 7
 _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
@@ -264,6 +264,7 @@ def serialize_walk_result(result: Any) -> dict[str, Any]:
         "type_decls": _to_plain(getattr(result, "type_decls", None) or []),
         "alias_decls": _to_plain(getattr(result, "alias_decls", None) or []),
         "base_decls": _to_plain(getattr(result, "base_decls", None) or []),
+        "macro_uses": _to_plain(getattr(result, "macro_uses", None) or []),
     }
     return {"version": CACHE_VERSION, "kind": "WalkResult", "data": plain}
 
@@ -277,6 +278,7 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
         FieldDecl,
         FuncRecord,
         LocalDecl,
+        MacroUse,
         PathCond,
         TypeDecl,
         WalkResult,
@@ -312,6 +314,7 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             induction_vars=tuple(row.get("induction_vars") or ()),
             init_value=row.get("init_value"),
             step=row.get("step"),
+            reads=tuple(str(x) for x in (row.get("reads") or ()) if str(x).strip()),
         )
 
     def _write(row: dict[str, Any]) -> WriteRecord:
@@ -474,6 +477,17 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
         type_decls=type_decls,
         alias_decls=alias_decls,
         base_decls=base_decls,
+        macro_uses=[
+            MacroUse(
+                name=str(row.get("name") or ""),
+                file=str(row.get("file") or ""),
+                line=int(row.get("line") or 0),
+                parent_name=str(row.get("parent_name") or ""),
+                parent_kind=str(row.get("parent_kind") or ""),
+            )
+            for row in (data.get("macro_uses") or [])
+            if isinstance(row, dict)
+        ],
     )
 
 

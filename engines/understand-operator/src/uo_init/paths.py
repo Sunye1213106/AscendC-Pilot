@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from acp_common.paths import strip_dot_slash
+
 
 @lru_cache(maxsize=1 << 16)
 def _resolved(text: str) -> Path:
@@ -111,7 +113,7 @@ def resolve_operator_file(op_root: Path, raw: str) -> Path | None:
     the parents off `../common/x.h` and left a path that resolves under the
     wrong tree, and only one level of parent was ever tried.
     """
-    text = str(raw or "").replace("\\", "/").strip()
+    text = strip_dot_slash(str(raw or "").replace("\\", "/"))
     if not text:
         return None
     if text.startswith(CANN_MARKER):
@@ -120,8 +122,6 @@ def resolve_operator_file(op_root: Path, raw: str) -> Path | None:
             return None
         candidate = root / text[len(CANN_MARKER) :]
         return candidate if candidate.is_file() else None
-    while text.startswith("./"):
-        text = text[2:]
     direct = Path(text)
     if direct.is_absolute():
         return direct if direct.is_file() else None

@@ -37,6 +37,7 @@ from uo_init.semantics import registry as semreg
 from uo_init.semantics.ascendc_storage import (
     ASCENDC_BUFFER_TYPES,
     ASCENDC_REGISTER_TYPES,
+    REGISTER_MEMORY_SPACE,
     SHARE_BUFFER_CALLEES,
     STACK_BUFFER_CALLEES,
     TENSOR_METHOD_BRIDGES,
@@ -2875,6 +2876,9 @@ def finalize_kernel_root_trace(
                 eid=rid,
                 attrs={
                     "register_class": reg_class,
+                    # Registers are storage; naming their tier is what lets a
+                    # question about where a value lives include them.
+                    "memory_space": REGISTER_MEMORY_SPACE,
                     "type_name": _persist_type_name(type_text),
                     "scope": function,
                     "root_status": "REACHED",
@@ -3652,6 +3656,36 @@ def finalize_kernel_root_trace(
                         "column": column,
                     },
                     status="partial",
+                )
+        if ent is not None:
+            # Operands are storage too, not just receivers. An AscendC vector
+            # instruction is a free function -- `Add(vregDst, vregSrc0, vregSrc1)`
+            # -- so the tensors and registers it touches arrive as arguments,
+            # and a receiver-only edge can never see them. That is why every
+            # REGISTER in the product carried one ROOTED_AT to its type and
+            # nothing else: extracted, named, and unreachable by any walk from
+            # the kernel.
+            #
+            # The binding is the compiler's, not a guess: `args` is the argument
+            # list clang resolved at this call site, and `_lookup_storage` walks
+            # the enclosing scope chain the way C++ name lookup does. Restricted
+            # to arguments that *are* an identifier, because a bare name in a
+            # scope denotes one declaration, while `buf.Get()[i]` would need the
+            # expression's type to say what it denotes -- and a wrong operand
+            # edge is worse than a missing one.
+            for arg in args:
+                symbol = str(arg).strip()
+                if not symbol.isidentifier():
+                    continue
+                sid = _lookup_storage(symbol, identity_scopes, nfile)
+                if not sid or sid == ent.id or sid == bid_recv:
+                    continue
+                _link(
+                    codemap,
+                    RelationKind.REFERENCES,
+                    ent.id,
+                    sid,
+                    attrs={"symbol": symbol, "via": "operand"},
                 )
         if ent is not None and bid_recv:
             _link(

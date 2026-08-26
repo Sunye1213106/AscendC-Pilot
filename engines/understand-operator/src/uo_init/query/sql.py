@@ -15,9 +15,11 @@ import sqlite3
 import threading
 from collections import OrderedDict, deque
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
+from acp_common.paths import strip_dot_slash
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.evidence import TRUST_ADVISORY
 from uo_init.ir.relation import RelationKind
@@ -188,6 +190,13 @@ MAX_SAME_VALUE = 8
 _VIEW_CACHE_MAX = 1
 _TEMPLATE_BLOCKS_LOCK = threading.Lock()
 _TEMPLATE_BLOCKS_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+#: Split source files, keyed by path -> ((mtime_ns, size), lines). Bounded by
+#: file count rather than bytes: an answer touches a handful of files and the
+#: largest here is a ~4k-line tiling header, so 64 entries is tens of MB at
+#: worst while covering the working set of a whole session.
+_SOURCE_LINES_MAX = 64
+_SOURCE_LINES_LOCK = threading.Lock()
+_SOURCE_LINES_CACHE: OrderedDict[str, tuple[tuple[int, int], tuple[str, ...]]] = OrderedDict()
 _IDENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _AROUND_KIND_PRIORITY = {
     EntityKind.TILING_FIELD.value: 0,
@@ -276,15 +285,8 @@ def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
 
 
 def _strip_dot_slash(text: str) -> str:
-    """Drop leading ``./`` segments. Never touches ``../``.
-
-    `lstrip('./')` is a character set, so it ate the parents off ``../common/x``
-    and turned a sibling path into one that resolves somewhere else.
-    """
-    out = str(text or "")
-    while out.startswith("./"):
-        out = out[2:]
-    return out
+    """Drop leading ``./`` segments. Never touches ``../``."""
+    return strip_dot_slash(text)
 
 
 def _norm_file(file: str) -> str:
@@ -1274,7 +1276,15 @@ def _seed_rows_for_file(
     ).fetchall()
 
 
+@lru_cache(maxsize=4096)
 def _resolve_source_path(op_root: Path | None, file: str) -> Path | None:
+    """Locate a stored path on this reader's disk, memoized.
+
+    The probe costs two or three ``is_file`` calls, and a name-pattern answer
+    resolves the same handful of files once per hit: `OP_CHECK_IF` alone spent
+    17ms of a 100ms answer here, almost all of it re-asking the filesystem
+    questions it had just asked.
+    """
     if not file:
         return None
     text = str(file).replace("\\", "/")
@@ -1300,22 +1310,50 @@ def _resolve_source_path(op_root: Path | None, file: str) -> Path | None:
     return next((p for p in candidates if p.is_file()), None)
 
 
-def _read_line_range(path: Path, start: int, end: int) -> list[str]:
-    """Read ``start..end`` (1-based, inclusive) without slurping the whole file."""
-    out: list[str] = []
-    lo = max(1, int(start))
-    hi = max(lo, int(end))
+def _file_lines(path: Path) -> tuple[str, ...]:
+    """Every line of `path`, cached per (path, mtime, size).
+
+    One answer reads the same few files many times over: an entity's window, a
+    BRANCH's backward probe, a long function's head and tail are separate reads,
+    so 114 hits opened 228 handles and walked each file from line 1 to the line
+    it wanted. Holding the split lines makes every read after the first a slice.
+
+    Reading the whole file costs more than the old early-``break`` when a window
+    sits near the top, which is why this is a cache and not just a helper -- the
+    second read of a file is what pays for the first.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return ()
+    key = str(path)
+    stamp = (int(stat.st_mtime_ns), int(stat.st_size))
+    with _SOURCE_LINES_LOCK:
+        hit = _SOURCE_LINES_CACHE.get(key)
+        if hit is not None and hit[0] == stamp:
+            _SOURCE_LINES_CACHE.move_to_end(key)
+            return hit[1]
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
-            for idx, raw in enumerate(handle, 1):
-                if idx < lo:
-                    continue
-                if idx > hi:
-                    break
-                out.append(raw.rstrip("\n"))
+            lines = tuple(raw.rstrip("\n") for raw in handle)
     except OSError:
+        return ()
+    with _SOURCE_LINES_LOCK:
+        _SOURCE_LINES_CACHE[key] = (stamp, lines)
+        _SOURCE_LINES_CACHE.move_to_end(key)
+        while len(_SOURCE_LINES_CACHE) > _SOURCE_LINES_MAX:
+            _SOURCE_LINES_CACHE.popitem(last=False)
+    return lines
+
+
+def _read_line_range(path: Path, start: int, end: int) -> list[str]:
+    """Lines ``start..end`` (1-based, inclusive), or [] if the file is unreadable."""
+    lines = _file_lines(path)
+    if not lines:
         return []
-    return out
+    lo = max(1, int(start))
+    hi = max(lo, int(end))
+    return list(lines[lo - 1 : hi])
 
 
 def _numbered_lines(start: int, rows: Sequence[str]) -> list[str]:
@@ -2112,6 +2150,12 @@ class UoSqlQuery:
         key = str(self.product)
         with _TEMPLATE_BLOCKS_LOCK:
             _TEMPLATE_BLOCKS_CACHE.pop(key, None)
+        # The line cache revalidates on mtime, but the path memo caches mere
+        # existence, so a test that adds or removes a source file between opens
+        # would otherwise read a stale answer.
+        with _SOURCE_LINES_LOCK:
+            _SOURCE_LINES_CACHE.clear()
+        _resolve_source_path.cache_clear()
         self._engine = None
         self._accel = None
 
@@ -4968,8 +5012,13 @@ class UoSqlQuery:
 
             samples: list[dict[str, Any]] = []
             total = 0
+            sample_rows: list[Any] | None = None
             fts_q = _fts_match_query(text)
             if has_source_fts(conn) and fts_q:
+                # `source_fts` is an external-content index over `source_line`
+                # and stores no columns of its own, so path and line come back
+                # through the rowid join. A quoted trigram MATCH asks the same
+                # substring question as the LIKE branch below, from an index.
                 try:
                     total = int(
                         conn.execute(
@@ -4980,34 +5029,39 @@ class UoSqlQuery:
                     )
                     sample_rows = conn.execute(
                         """
-                        SELECT path, line, text FROM source_fts
-                        WHERE source_fts MATCH ?
-                        ORDER BY path, line LIMIT ?
+                        SELECT sl.path, sl.line, sl.text
+                        FROM source_fts f JOIN source_line sl ON sl.id = f.rowid
+                        WHERE f.source_fts MATCH ?
+                        ORDER BY sl.path, sl.line LIMIT ?
                         """,
                         (fts_q, max(int(limit), 8)),
                     ).fetchall()
                 except sqlite3.OperationalError:
+                    # A rejected MATCH expression or a half-built index must not
+                    # read as "no such text" -- fall through to the scan, which
+                    # needs no index and answers identically.
                     total = 0
-                    sample_rows = []
-            elif has_source_line(conn):
-                total = int(
-                    conn.execute(
-                        "SELECT COUNT(*) FROM source_line WHERE text LIKE '%' || ? || '%'",
-                        (text,),
-                    ).fetchone()[0]
-                    or 0
-                )
-                sample_rows = conn.execute(
+                    sample_rows = None
+            if sample_rows is None and has_source_line(conn):
+                # `LIKE '%needle%'` cannot use an index, so this is a full scan of
+                # `source_line`. Counting and sampling in two statements scanned it
+                # twice for one answer -- 7-12ms each on a 40k-row table, and this
+                # path is what the slowest name cards spend their time in. One scan
+                # returns both: the count is exact because it *is* the row set, and
+                # the sample is the same rows the LIMIT would have kept. The whole
+                # table is ~5MB, which bounds the worst case a broad needle can pull
+                # into memory.
+                matched = conn.execute(
                     """
                     SELECT path, line, text FROM source_line
                     WHERE text LIKE '%' || ? || '%'
-                    ORDER BY path, line LIMIT ?
+                    ORDER BY path, line
                     """,
-                    (text, max(int(limit), 8)),
+                    (text,),
                 ).fetchall()
-            else:
-                return [], [], 0
-            if not total:
+                total = len(matched)
+                sample_rows = matched[: max(int(limit), 8)]
+            if not total or sample_rows is None:
                 return [], [], 0
             samples = [
                 {

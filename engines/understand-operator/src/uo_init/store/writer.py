@@ -754,6 +754,7 @@ def write_codemap(
         from uo_init.store.accel import (
             ACCEL_VERSION,
             build_name_leaf,
+            build_source_fts,
             build_source_line,
             build_template_blocks,
             clamp_spans_to_file_length,
@@ -781,6 +782,8 @@ def write_codemap(
             accel_stats["source_lines"] = lines
             for key, value in clamp_spans_to_file_length(conn).items():
                 accel_stats[f"span_{key}"] = value
+            # After source_line is final: the index is keyed on its rowids.
+            accel_stats["source_fts"] = build_source_fts(conn)
         accel_stats["name_leaf_rows"] = build_name_leaf(conn)
         accel_stats["sel_lines_patched"] = patch_sel_lines(conn, op_root)
         accel_stats["template_blocks"] = build_template_blocks(conn)

@@ -30,11 +30,18 @@ def _command_body(workflow_id: str) -> str:
 
 用 Host `pilot_run` 启动。Host 返回 `UO_ALREADY_READY` 时按选项原样呈现，不要自动 `pilot_run workflow=uo-query`。
 """
+    if workflow_id == "tg-plan":
+        return """对当前算子项目运行 AscendC-Pilot 工作流 `tg-plan`。
+
+用户参数：$ARGUMENTS
+
+用 Host `pilot_run` 启动 `tg-plan`。后续严格执行 Host 返回的下一步。
+"""
     return f"""对当前算子项目运行 AscendC-Pilot 工作流 `{workflow_id}`。
 
 用户参数：$ARGUMENTS
 
-用 Host `pilot_run` 启动 `{workflow_id}`。Task 正文用 `task_prompt_stub` 原文。
+用 Host `pilot_run` 启动 `{workflow_id}`。Host 给出 Task 正文时原样派发。
 """
 
 

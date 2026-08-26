@@ -9,8 +9,17 @@ accept the FAG spelling drop KERNEL / packing / TilingData.
 from __future__ import annotations
 
 import re
+import threading
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Iterator
+
+# Module scope on purpose. These were imported inside the functions below, and
+# the functions run tens of thousands of times per analyze, so every call paid a
+# `sys.modules` lookup for a module that is always already loaded. `paths` pulls
+# in nothing from this package, so there is no cycle to avoid here.
+from uo_init.paths import ops_root, resolved
+
 
 def _text(path: Path | str) -> str:
     from uo_init.passes.source_text_cache import read_text
@@ -242,18 +251,26 @@ def path_owned_architecture(path: Path) -> str:
     return ""
 
 
+@lru_cache(maxsize=1 << 15)
+def _is_other_arch_path(path_text: str, arch: str) -> bool:
+    if not is_variant_architecture(arch):
+        return False
+    for part in Path(path_text).parts:
+        if ARCH_DIR_RE.match(part) and not architecture_in_scope(part, arch):
+            return True
+    return False
+
+
 def is_other_arch_path(path: Path | str, architecture: str) -> bool:
     """True when a path segment is an ``arch*`` folder outside this scope.
 
     Cousin folders (``arch35`` while analysing ``arch-920r1``) are in scope.
+
+    Memoized on the spelling: this decides a question about a path's *text*,
+    not about anything on disk, and callers ask it about the same few dozen
+    files tens of thousands of times while classifying walk-cited references.
     """
-    arch = str(architecture or "").strip()
-    if not is_variant_architecture(arch):
-        return False
-    for part in Path(path).parts:
-        if ARCH_DIR_RE.match(part) and not architecture_in_scope(part, arch):
-            return True
-    return False
+    return _is_other_arch_path(str(path), str(architecture or "").strip())
 
 
 def keep_lexical_kernel_path(path: Path | str, architecture: str) -> bool:
@@ -277,13 +294,9 @@ def include_root_owned_architecture(path: Path | str) -> str:
 _ENTRY_TU_SUFFIXES = {".cpp", ".cc", ".cxx"}
 
 
-def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
-    """True for another architecture's compile unit, not an included header.
-
-    Cousin ``arch35/*.cpp`` stays a foreign entry when analysing 920r1: the
-    sources may be included, but they are not this arch's kernel TU.
-    """
-    p = Path(path)
+@lru_cache(maxsize=1 << 15)
+def _is_foreign_arch_entry_tu(path_text: str, architecture: str) -> bool:
+    p = Path(path_text)
     if p.suffix.lower() not in _ENTRY_TU_SUFFIXES:
         return False
     if not is_variant_architecture(architecture):
@@ -292,6 +305,18 @@ def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
     if not owned:
         return False
     return not architectures_match(owned, architecture)
+
+
+def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
+    """True for another architecture's compile unit, not an included header.
+
+    Cousin ``arch35/*.cpp`` stays a foreign entry when analysing 920r1: the
+    sources may be included, but they are not this arch's kernel TU.
+
+    Memoized for the same reason as `is_other_arch_path`: purely a question
+    about the spelling, asked repeatedly about a small set of files.
+    """
+    return _is_foreign_arch_entry_tu(str(path), str(architecture or "").strip())
 
 
 def includes_architecture(text: str, architecture: str) -> bool:
@@ -436,8 +461,6 @@ def resolve_quoted_includes(path: Path) -> list[Path]:
         text = _text(path)
     except OSError:
         return out
-    from uo_init.paths import resolved
-
     for inc in _QUOTED_INCLUDE_RE.findall(text):
         cand = resolved(parent / inc.replace("\\", "/"))
         if cand.is_file():
@@ -466,18 +489,14 @@ def _resolve_confirmed_path(op: Path, rel: str) -> Path | None:
         return None
     candidates = [op / rel_path, op.parent / rel_path]
     try:
-        from uo_init.paths import ops_root
-
         repo = ops_root()
         if repo is not None:
             candidates.append(Path(repo) / rel_path)
     except Exception:  # noqa: BLE001
         pass
-    from uo_init.paths import resolved as _resolve
-
     seen: set[Path] = set()
     for cand in candidates:
-        hit = _resolve(cand)
+        hit = resolved(cand)
         if hit in seen:
             continue
         seen.add(hit)
@@ -486,47 +505,80 @@ def _resolve_confirmed_path(op: Path, rel: str) -> Path | None:
     return None
 
 
-def load_confirmed_source_files(root: Path, architecture: str) -> list[Path] | None:
-    """Clang-confirmed files from prepare, or None when that list is not ready.
+#: Keyed by operator, architecture and the scope set's mtime/size. Prepare
+#: writes that file and analyze reads it, and `run_full_init` runs both in one
+#: interpreter, so keying on the operator alone would serve analyze a list built
+#: before prepare rewrote it. Stat is the cheap part; parsing the YAML and
+#: resolving sixty paths is what this avoids.
+_CONFIRMED_MEMO: dict[tuple[str, str, int, int], tuple[tuple[Path, str], ...]] = {}
+_CONFIRMED_LOCK = threading.Lock()
 
-    Analyze/stub scans must not invent a second file universe. Layout heuristics
-    remain only as bootstrap before ``summary/scope_set.yaml`` exists.
+
+def _confirmed_with_rel(root: Path, architecture: str) -> tuple[tuple[Path, str], ...]:
+    """Confirmed files paired with their operator-relative spelling.
+
+    Empty means "prepare has not produced a usable list", which callers read as
+    permission to fall back to layout heuristics.
+
+    One analyze asked for this set 53 times. Each ask re-read the same 16 KB
+    scope set, re-resolved the same sixty paths against three candidate bases,
+    and recomputed the same sixty relative spellings -- none of which can change
+    while a stage runs. The relative spelling is cached alongside the path
+    because every consumer classifies on it, and recomputing it was the rest of
+    the cost once the parse was gone.
     """
     arch = str(architecture or "").strip()
     if not arch:
-        return None
-    op = Path(root).expanduser().resolve()
+        return ()
+    op = resolved(root)
     scope_path = op / ".ascendc-pilot" / arch / "uo" / "summary" / "scope_set.yaml"
-    if not scope_path.is_file():
-        return None
+    try:
+        stamp = scope_path.stat()
+    except OSError:
+        return ()
+    key = (str(op), arch, stamp.st_mtime_ns, stamp.st_size)
+    with _CONFIRMED_LOCK:
+        hit = _CONFIRMED_MEMO.get(key)
+    if hit is not None:
+        return hit
+
     try:
         from uo_init.yaml_io import read_yaml
 
         doc = read_yaml(scope_path)
     except Exception:  # noqa: BLE001
-        return None
+        return ()
     raw = doc.get("confirmed_source_files") if isinstance(doc, dict) else None
     if not isinstance(raw, list) or not raw:
-        return None
-    out: list[Path] = []
+        return ()
+    rows: list[tuple[Path, str]] = []
     seen: set[Path] = set()
     for item in raw:
         rel = str(item or "").replace("\\", "/").strip()
         if not rel:
             continue
         cand = _resolve_confirmed_path(op, rel)
-        if cand is None:
-            continue
-        if cand in seen:
+        if cand is None or cand in seen:
             continue
         seen.add(cand)
-        out.append(cand)
-    return out or None
+        rows.append((cand, _posix_rel(op, cand)))
+    built = tuple(rows)
+    with _CONFIRMED_LOCK:
+        _CONFIRMED_MEMO[key] = built
+    return built
+
+
+def load_confirmed_source_files(root: Path, architecture: str) -> list[Path] | None:
+    """Clang-confirmed files from prepare, or None when that list is not ready.
+
+    Analyze/stub scans must not invent a second file universe. Layout heuristics
+    remain only as bootstrap before ``summary/scope_set.yaml`` exists.
+    """
+    rows = _confirmed_with_rel(root, architecture)
+    return [path for path, _rel in rows] or None
 
 
 def _posix_rel(root: Path, path: Path) -> str:
-    from uo_init.paths import resolved
-
     try:
         return resolved(path).relative_to(resolved(root)).as_posix()
     except ValueError:
@@ -548,6 +600,24 @@ def _is_host_scope_rel(rel: str) -> bool:
     return posix.startswith("op_host/") or "/op_host/" in posix
 
 
+def host_ir_keeps_file(path: str | Path, architecture: str) -> bool:
+    """Whether a Host IR definition site belongs in this product.
+
+    Clang indexes every function in the include closure. TilingData headers
+    under ``op_kernel/`` (including a foreign ``arch22/`` tree while this
+    product is arch35) then show up as host FUNCTION entities: named, located,
+    and reachable from nothing, because they were never called from Host code.
+    The definition's path is the compiler's own record of which translation
+    the symbol belongs to -- kernel-side and other-arch files are not Host.
+    """
+    text = str(path or "").replace("\\", "/")
+    if not text:
+        return True
+    if is_other_arch_path(text, architecture):
+        return False
+    return not _is_kernel_scope_rel(text)
+
+
 def _is_generated_rel(rel: str) -> bool:
     posix = rel.replace("\\", "/")
     return posix.startswith(".ascendc-pilot/") or "/.ascendc-pilot/" in posix
@@ -559,18 +629,17 @@ def _confirmed_subset(
     *,
     predicate,
 ) -> list[Path] | None:
-    confirmed = load_confirmed_source_files(root, architecture)
-    if confirmed is None:
+    rows = _confirmed_with_rel(root, architecture)
+    if not rows:
         return None
     out: list[Path] = []
     seen: set[Path] = set()
-    for path in confirmed:
-        rel = _posix_rel(root, path)
+    for path, rel in rows:
         if _is_generated_rel(rel):
             continue
         if not predicate(rel, path):
             continue
-        key = path.resolve()
+        key = resolved(path)
         if key in seen:
             continue
         seen.add(key)
@@ -726,10 +795,8 @@ def selected_tiling_headers(root: Path, architecture: str) -> list[Path]:
 
 def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
     """Quoted-include walk from current-arch kernel entries (no other-arch)."""
-    from uo_init.paths import resolved as _resolve
-
     kernel_files = list(selected_kernel_files(root, architecture))
-    by_key = {_resolve(p): p for p in kernel_files}
+    by_key = {resolved(p): p for p in kernel_files}
     entries: list[Path] = []
     for path in kernel_files:
         if path.suffix.lower() not in {".cpp", ".cc", ".cxx"}:
@@ -747,7 +814,7 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
     pending = list(entries)
     while pending:
         path = pending.pop(0)
-        key = _resolve(path)
+        key = resolved(path)
         if key in seen:
             continue
         seen.add(key)
@@ -755,7 +822,7 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
         for inc in resolve_quoted_includes(path):
             if is_other_arch_path(inc, architecture):
                 continue
-            hit = _resolve(inc)
+            hit = resolved(inc)
             if hit in seen:
                 continue
             pending.append(by_key.get(hit, inc))
@@ -764,8 +831,6 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
 
 def _path_is_under(path: Path, root: Path) -> bool:
     """True when ``path`` lives in this operator tree, not a sibling op include."""
-    from uo_init.paths import resolved
-
     try:
         resolved(path).relative_to(resolved(root))
         return True
