@@ -19,6 +19,7 @@ read_scopes:
 - source:test_script/**
 - method:skills/test-plan/**
 - method:skills/source-proof/**
+- method:skills/proof-review/**
 write_scopes:
 - pilot:tg/**
 - pilot:runs/**

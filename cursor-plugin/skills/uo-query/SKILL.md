@@ -1,46 +1,55 @@
 ---
 name: uo-query
-description: 只读查询已有 Operator CodeMap。用户问图上有什么、谁调用、Key/Data/Kernel 怎么连时使用。
+description: 只读消费已有 Operator CodeMap，回答图上已经确定的语义事实。用户问图上有什么、谁写谁读、某维能否编过时使用。不要用于修图、补边、或诊断 UO 引擎 residual。
 ---
 
 # 查 CodeMap
 
-用已 commit 的 `.uo` 回答本路 FOCUS。工具：Cursor 用 MCP `uo_query`；OpenCode 用插件 `pilot_cli` 的 `uo-query`。四种形态见 kb-query。全局访问约束见 code-access。不要 `python -m ascendc_pilot uo-query`，不要包装脚本。
+用已 commit 的 `.uo` 回答本路 FOCUS。统一 `.uo` 是查询的唯一 authority。工具：Cursor 用 MCP `uo_query`；OpenCode 用插件 `pilot_cli` 的 `uo-query`。四种形态见 kb-query。全局访问约束见 code-access。不要 `python -m ascendc_pilot uo-query`，不要包装脚本。
 
 Agent 只选输入形状。不要规划 `field_impact` / `neighbors` / `edges` / `controllability` —— 那些是引擎内部的。卡片上的 `host.writers`、`kernel.readers`、`coverage` 是读结果，不是再调一次工具。
 
+不要把自然语言句子塞进 pattern。先把问题翻译成下表某一种形状。
+
+```text
+❌ "who writes deterBandScheduleMode and why?"
+✅ deterBandScheduleMode
+```
+
 ## 输入 / 输出 / 停
 
-读：本路 FOCUS、已有 `.uo`、查询卡片。写：对话作答。不写正式产物，不改 `.uo`。
+读：本路 FOCUS、run state / packet / framework 给出的 architecture、已有 `.uo`、查询卡片。写：对话作答。不写正式产物，不改 `.uo`。
 
-缺 `.uo`：停，交给主控 `/uo-init` 或源码作答。已有标识符 / `Dim=V` / `--file --line` 时直接用。否则先无参数索引。
+**architecture 前置（本 Skill 不选择，只声明缺失则不能工作）：**
 
-完成：本 FOCUS 能用 `file:line` 作答，或 PARTIAL 并写明缺什么。partial 图不能证明「不存在」。
+- architecture 必须由 run state / packet / framework 提供。
+- 不自行推断 architecture。禁止默认 arch35。禁止借其它 architecture 的卡片回答。
+- 缺失时停止查询，返回 `ARCHITECTURE_MISSING`（引擎码 `ARCHITECTURE_MISSING_IN_RUN_STATE`）。
 
-## 四种输入
+缺 `.uo`：停，交给主控 `/uo-init` 或源码作答。不要自己打开 `product_map.json` 当第二套真值。
 
-1. **无参数** — 索引（三相 launch / PIPE 名）。
-2. **标识符** — 名字 / 定义 / 谁写谁读。一张卡含 `definition`、`host.writers`、`kernel.readers`、`flow`。不必再跟 `next` 才能答写读。
-3. **`Dim=<维名>` 或 `Name=Value`** — 某维合法集 / 某组能否编过。看 `sel_sites` / `dim_coverage`。
-4. **`file` + `line`** — 已知位点的语句窗。卡含 enclosing + `impact`。路径只从上一张卡复制。
+完成：本 FOCUS 能用 `file:line` 作答，或 PARTIAL / UNKNOWN 并写明缺什么。partial 图不能证明「不存在」。不要因为缺口去修 UO 引擎。
 
 ## 步骤
 
-1. **选最短形态。** 上表四选一。多阶段 launch 先看无参数索引。
-2. **卡片是证据指针。** 用 `file:line`、`sel_sites`、`host.writers` / `kernel.readers` 定位。snippet 只帮助认地方；引用一个构造前必须看到该构造自己的行。
-3. **`count:0` 缩短再查。** 跟 `hint` / `canonical` / `text_hits`。仍空：对算子目录做 `pilot_cli` `ro-search`。然后 PARTIAL / UNKNOWN。
-4. **列表结论要有总数。** 模板维用 `dim_coverage` / `matching_block_count` / `legal_key_count`。写点用 `host.writers` 与 `edges.*.count`。`count` 大于已列出邻居 ⇒ PARTIAL。
-5. **问哪一层答哪一层。** Host 不产生 ≠ 模板不接纳。差分题（hang / 精度）无运行时日志不得 ANSWERED。
+1. **确认 architecture。** 没有就不查。
+2. **把问题收成一种形状。** 见路由表。多阶段 launch 先看无参数索引。
+3. **调用一次查询，读卡片。** 用 `file:line`、`sel_sites`、`host.writers` / `kernel.readers`、覆盖字段定位。snippet 只帮助认地方；引用一个构造前必须看到该构造自己的行。
+4. **按停规则决定是否再查。** 卡片已回答就停。
+5. **`count: 0` 时只消费卡片给出的线索。** 跟 `hint` / `canonical` / `text_hits`；有 source window 就用窗口。确定性卡片仍不够 → 服从 `code-access` 的受控兜底。搜索结果只是定位器，不能单独证明复杂语义。未决保持 PARTIAL / UNKNOWN。
+6. **列表结论要有总数。** 模板维用 `dim_coverage` / `matching_block_count` / `legal_key_count`。写点用 `host.writers` 与 `edges.*.count`。`count` 大于已列出邻居 ⇒ PARTIAL。
+7. **问哪一层答哪一层。** Host 不产生 ≠ 模板不接纳。差分题（hang / 精度）无运行时日志不得 ANSWERED。
 
 ## 常驻判断
 
-**Claim 五层（不静默扩大）**
+**Claim 四层（不静默扩大，不宣布 runtime 全可达）**
 
 1. domain — 声明域允许什么值
 2. template-admissible — 编译期模板/宏是否接纳
 3. host-produced — Host 在何条件下写出
 4. kernel-consumed — Kernel 是否消费
-5. full reachability — 端到端可达（常需测试生成，不在本步发明）
+
+`template accepts` + `host can produce` + `kernel consumes` 仍不天然等于某 concrete test runtime 一定可达。那是 Plan / Solve / Replay 的组合结论。本步可以提供组分事实，**不声明 runtime full reachability**。
 
 完整性用语（全部 / 唯一 / 从不）依赖覆盖字段或 `edges.*.count`；索引 partial 时最多 PARTIAL。
 
@@ -48,33 +57,40 @@ Agent 只选输入形状。不要规划 `field_impact` / `neighbors` / `edges` /
 
 ## 看到这样
 
-| 现象 | 判断 |
+| Intent | Shape |
 | --- | --- |
-| 没有标识符 | 无参数索引 |
-| 这个名字是什么 / 谁写谁读 | 标识符；读 `host.writers` / `kernel.readers` |
-| 这维会不会编过 / 有没有 kernel | `Dim=V` 或 `Name=Value`；看 `sel_sites` |
-| 已有 `file:line`，要该行语句 | `--file --line`；读 `enclosing` / `impact` |
-| `count:0` | 按 `hint` 缩短再查；不是「不存在」 |
+| 浏览 UO 可回答什么 | 无参数索引 |
+| 某 identifier 的定义 / producer / consumer | 标识符；读 `host.writers` / `kernel.readers` |
+| 某维 / 某值是否合法、是否编译 | `Dim=V` 或 `Name=Value`；看 `sel_sites` |
+| 延续已有 evidence window | `--file --line`；读 `enclosing` / `impact` |
+| 自然语言整句 | 先翻译成上表某一行，禁止原句进 pattern |
+| `count:0` | 跟卡片 `hint` / 窗口；不是「不存在」 |
 | `edges.CALLS.count` > 列出的 neighbors | 列表未穷尽，PARTIAL |
 | 时序 / 测量 / sanitizer | 停：不在 UO |
+| 缺 architecture | 停：`ARCHITECTURE_MISSING` |
 | 缺 `.uo` | 停：不是本步 |
+| 卡片缺确定性证据 | `PARTIAL` + `gap_code` / `residual_id`；到此停止 |
+
+**停规则：** 卡片已经回答问题 → STOP。只有卡片明确 incomplete、`count` 大于已返回项、或当前 claim 必须依赖尚未展开的 evidence 时，才继续 query。不要为「找 writer」再查一次。不要 follow 无关 `next`。
 
 ## 完成勾选
 
-- [ ] 结论有 `file:line`，或 PARTIAL 并写出缺什么
+- [ ] architecture 来自 run state / packet / framework，没有猜
+- [ ] 结论有 `file:line`，或 PARTIAL / UNKNOWN 并写出缺什么
 - [ ] 列表型结论引用了覆盖字段或 `edges.*.count`
-- [ ] 层没扩：Host 没说成 Kernel，「没查到」没说成「不存在」
-- [ ] 没有改 `.uo`，没有跨 arch 借命中
+- [ ] 层没扩：Host 没说成 Kernel，「没查到」没说成「不存在」，没有宣布 full reachability
+- [ ] 没有改 `.uo`，没有跨 arch 借命中，没有打开 `product_map.json` 当真值
 - [ ] 没有把 DECL / 第一页 snippet 当成 SEL 命中块
+- [ ] 缺口没有自动转去修 UO 引擎
 
 ## 循环
 
 每一轮只推进本路 FOCUS。
 
-1. 手头有标识符 / `Dim=V` / `file:line`？没有 → 无参数索引。
-2. 调用 MCP `uo_query`（或 OpenCode `pilot_cli` `uo-query`）。读卡片上的 `file`、`host.writers`、`kernel.readers`、`impact`、覆盖字段。
-3. 够作答就停。`next` 只跟卡里还没展开的相关名，不要为「找 writer」再查一次。
-4. 不够：按 `hint` 缩短。仍不够 → 最小源码窗，或 PARTIAL。
+1. 没有 architecture → 停。
+2. 按路由表选一种形状。没有标识符 / `Dim=V` / `file:line` → 无参数索引。
+3. 调用 MCP `uo_query`（或 OpenCode `pilot_cli` `uo-query`）。读卡片上的 `file`、`host.writers`、`kernel.readers`、`impact`、覆盖字段。
+4. 够作答就停。不够：跟 `hint` 缩短。仍不够 → `code-access` 受控兜底，或 PARTIAL / UNKNOWN。
 5. 写结论：先 verdict，再窗口。问哪一层答哪一层。
 
 ## 输出形状
@@ -85,6 +101,8 @@ layer: domain | template | host | kernel
 span: file:line
 coverage: dim_coverage=... / count=...   # 列表型结论必填
 missing: ...                             # PARTIAL 必填
+gap_code: ...                            # 有缺口时
+residual_id: ...                         # 卡片给出时原样带回
 ```
 
 ## 指针
@@ -96,6 +114,6 @@ missing: ...                             # PARTIAL 必填
 - Kernel 分支：`references/uo-kernel.md`
 - Template / BuildVariant：`references/uo-template.md`
 - Buffer：`references/uo-buffer.md`
-- unresolved：`references/uo-gaps.md`
+- unresolved 怎么写缺口：`references/uo-gaps.md`
 
-权威分层与任务→形态：`references/uo-product-map.md`。
+权威分层：`references/uo-product-map.md`。

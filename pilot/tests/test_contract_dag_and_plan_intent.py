@@ -16,7 +16,7 @@ def test_plan_intent_action_removed() -> None:
     assert ingest is not None
     assert ingest.get("execution_mode") == "primary_review"
     assert ingest.get("skill_id") == "test-plan"
-    assert ingest.get("method_ref") == "coverage-planning.md"
+    assert not str(ingest.get("method_ref") or "").strip()
     assert ingest.get("output_mode") == "return_value"
     pre = action_by_id("tg-plan", "plan_precheck")
     assert pre is not None

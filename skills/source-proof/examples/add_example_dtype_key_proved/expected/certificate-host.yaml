@@ -2,7 +2,7 @@ schema: source-proof/v1
 claim:
   layer: host
   premise: host sees dataType == ge::DT_FLOAT
-  conclusion: kernel float arm (TILING_KEY_EXAMPLE_FLOAT / schMode 0) is the selected template path
+  conclusion: Host writes schMode == ELEMENTWISE_TPL_SCH_MODE_0
 coverage:
   declared: []
   product: []
@@ -11,23 +11,18 @@ obligations:
   entry: CLOSED
   control: CLOSED
   writes: CLOSED
-  calls: OPEN
+  calls: NA
   overwrite: CLOSED
   alternatives: CLOSED
-  completeness: CLOSED
+  completeness: NA
 result: PROVED
 reasoning:
   - step: Host SetTilingKey writes ELEMENTWISE_TPL_SCH_MODE_0 for DT_FLOAT
     cites: [EV_host]
-  - step: Kernel if constexpr consumes the same float arm
-    cites: [EV_kernel]
 evidence:
   - id: EV_host
     source: add_example_tiling.cpp
     role: host write
-  - id: EV_kernel
-    source: add_example.cpp
-    role: kernel consume
 counterexample:
   checked: true
   result: none

@@ -351,6 +351,7 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         "plan_ingest": "派 Plan Owner 交 Coverage IR",
         "plan_promote": "写出 plan.md",
         "analyze_promote": "写出 worklog.md",
+        "proof_promote": "accept 后写入 PROVED_UNREACHABLE",
         "code_review": "CE 审查",
     }
     out: list[dict[str, Any]] = []

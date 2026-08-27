@@ -1,0 +1,38 @@
+schema: source-proof/v1
+claim:
+  layer: kernel
+  premise: template schMode == ELEMENTWISE_TPL_SCH_MODE_0
+  conclusion: kernel selects TILING_KEY_EXAMPLE_FLOAT branch
+coverage:
+  declared: []
+  product: []
+  completeness: first_hit
+obligations:
+  entry: CLOSED
+  control: CLOSED
+  writes: NA
+  calls: NA
+  overwrite: NA
+  alternatives: CLOSED
+  completeness: NA
+result: PROVED
+reasoning:
+  - step: Kernel if constexpr consumes ELEMENTWISE_TPL_SCH_MODE_0 as the float arm
+    cites: [EV_kernel]
+evidence:
+  - id: EV_kernel
+    source: add_example.cpp
+    role: kernel consume
+counterexample:
+  checked: true
+  result: none
+completeness:
+  writers:
+    status: partial
+    source: ""
+  calls:
+    status: partial
+    source: ""
+  macros:
+    status: unknown
+    source: ""

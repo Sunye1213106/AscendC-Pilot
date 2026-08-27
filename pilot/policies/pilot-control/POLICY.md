@@ -50,7 +50,7 @@ clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.ya
 
 需要测试契约时再 `tg-init`。
 
-消费工作流（有对应产物才跑）：`ce-review`、`uo-investigate`、`ce-plan`、`ce-apply`（完成后若还要查图或生成测试，先 `uo-update`）、`tg-plan`、`tg-solve`、`handoff`。
+消费工作流（有对应产物才跑）：`ce-review`、`ce-plan`、`ce-apply`（完成后若还要查图或生成测试，先 `uo-update`）、`tg-plan`、`tg-solve`、`handoff`。`uo-investigate` 只在用户显式诊断 UO build residual / quality failure 时启动；普通 query 缺口不得自动进入。
 
 查询用 `pilot_cli uo-query`。`auto` 返回的 `(operator, architecture)` 用于后续 `pilot_run`；`status` / `uo-query --status-only` 也必须带算子路径。
 

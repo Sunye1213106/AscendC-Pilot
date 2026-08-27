@@ -13,7 +13,7 @@ def _repo(tmp_path: Path) -> Path:
     refs = repo / "skills" / "test-plan" / "references"
     refs.mkdir(parents=True)
     (repo / "prompts" / "tasks" / "tg" / "plan-owner.md").write_text("owner\n", encoding="utf-8")
-    (refs / "coverage-planning.md").write_text(
+    (refs / "coverage-ir.md").write_text(
         "predicate TRUE = SATISFIED\n", encoding="utf-8"
     )
     (repo / "skills" / "test-plan" / "SKILL.md").write_text("skill\n", encoding="utf-8")
@@ -24,7 +24,7 @@ def _install(tmp_path: Path, body: str) -> Path:
     plugin = tmp_path / "plugin"
     dst = plugin / "cognitive-skills" / "test-plan" / "references"
     dst.mkdir(parents=True)
-    (dst / "coverage-planning.md").write_text(body, encoding="utf-8")
+    (dst / "coverage-ir.md").write_text(body, encoding="utf-8")
     return plugin
 
 
@@ -49,7 +49,7 @@ def test_stale_guard_semantics_blocks_the_window(tmp_path: Path, monkeypatch) ->
 
     drift = contract_sync.contract_drift(repo)
     assert len(drift) == 1
-    assert drift[0]["repo"] == "skills/test-plan/references/coverage-planning.md"
+    assert drift[0]["repo"] == "skills/test-plan/references/coverage-ir.md"
 
     gate = contract_sync.contract_drift_gate(repo)
     assert gate is not None
@@ -57,5 +57,5 @@ def test_stale_guard_semantics_blocks_the_window(tmp_path: Path, monkeypatch) ->
     assert gate["reason_code"] == contract_sync.DRIFT_REASON
     # The message must name the file to refresh and a command that actually
     # replaces the installed bundle, not one that only rebuilds generated/.
-    assert "coverage-planning.md" in gate["message_zh"]
+    assert "coverage-ir.md" in gate["message_zh"]
     assert "refresh-opencode" in gate["message_zh"]

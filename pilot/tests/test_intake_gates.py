@@ -670,11 +670,11 @@ def test_record_prepare_failure_surfaces_in_inspect_failure(tmp_path: Path, caps
         action_id="plan_ingest",
         result={
             "error": "PROMPT_IDENTITY_UNRESOLVED",
-            "message_zh": "skills/test-plan/references/coverage-planning.md:68 <TILING_FIELD>",
+            "message_zh": "skills/test-plan/references/coverage-ir.md:68 <TILING_FIELD>",
             "unresolved": [
                 {
                     "source": "method",
-                    "file": "skills/test-plan/references/coverage-planning.md",
+                    "file": "skills/test-plan/references/coverage-ir.md",
                     "token": "<TILING_FIELD>",
                     "line": 68,
                 }

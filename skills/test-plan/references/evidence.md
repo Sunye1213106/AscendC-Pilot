@@ -49,7 +49,7 @@ DeterType                ❌ 裸 symbol，必须写成 replay.DeterType / case.D
 
 源码里 TilingData 是嵌套结构，但解码器把所有字段**展平**、且**不带 struct 名**，观察包再把它们提到 `replay` 顶层。多写一层 struct 前缀会被 `plan_validate` 拒绝。
 
-`replay.*` 只写 `observation_catalog.replay_allowed` 里的键。`probe.*` 只写 `probe_candidates` / `probeable: true` 的名字。拿不准字段叫什么，就查 UO 的 `kernel_tiling_view` stub 里的**叶子字段名**，别抄它的结构路径。禁止「看起来应该算 tail」。
+`replay.*` 只写 `observation_catalog.replay_allowed` 里的键。`probe.*` 只写 `probe_candidates` / `branch_locals.probeable` 的名字。`case.*` 只写 `controls.case_allowed`。字段不在 packet 观测词表里：标 packet / observation gap，不要再 query UO 补名字。禁止「看起来应该算 tail」。
 
 ## 探针
 

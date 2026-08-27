@@ -132,7 +132,7 @@ def test_method_contract_digest_tracks_methodology_files(tmp_path: Path) -> None
     (repo / "prompts" / "tasks" / "tg").mkdir(parents=True)
     (repo / "skills" / "test-plan" / "references").mkdir(parents=True)
     owner = repo / "prompts" / "tasks" / "tg" / "plan-owner.md"
-    cov = repo / "skills" / "test-plan" / "references" / "coverage-planning.md"
+    cov = repo / "skills" / "test-plan" / "references" / "coverage-ir.md"
     owner.write_text("v1\n", encoding="utf-8")
     cov.write_text("guard activation\n", encoding="utf-8")
 

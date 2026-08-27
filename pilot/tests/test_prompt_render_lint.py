@@ -67,14 +67,14 @@ def _iter_lint_targets():
 def test_locate_unresolved_reports_file_and_line() -> None:
     text = "ok\nuse replay.<TILING_FIELD> then probe\n"
     rows = locate_unresolved_placeholders(
-        text, source="method", file="skills/test-plan/references/coverage-planning.md"
+        text, source="method", file="skills/test-plan/references/coverage-ir.md"
     )
     assert rows
     assert rows[0]["token"] == "<TILING_FIELD>"
     assert rows[0]["line"] == 2
-    assert rows[0]["file"].endswith("coverage-planning.md")
+    assert rows[0]["file"].endswith("coverage-ir.md")
     msg = format_unresolved_message(rows)
-    assert "coverage-planning.md:2" in msg
+    assert "coverage-ir.md:2" in msg
     assert "<TILING_FIELD>" in msg
 
 

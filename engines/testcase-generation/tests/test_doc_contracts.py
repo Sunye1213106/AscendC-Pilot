@@ -52,6 +52,25 @@ def test_paths_md_hard_isolation() -> None:
     assert ".ascendc-pilot" in text
 
 
+def test_plan_evidence_does_not_requery_uo() -> None:
+    evidence = (SKILLS_ROOT / "test-plan" / "references" / "evidence.md").read_text(encoding="utf-8")
+    assert "kernel_tiling_view" not in evidence
+    assert "不要再 query UO" in evidence
+    skill = (SKILLS_ROOT / "test-plan" / "SKILL.md").read_text(encoding="utf-8")
+    assert "不要再查图" in skill
+
+
+def test_source_proof_atomic_layer_contract() -> None:
+    skill = (SKILLS_ROOT / "source-proof" / "SKILL.md").read_text(encoding="utf-8")
+    assert "两份 accepted" not in skill
+    assert "所需的 accepted atomic certificates" in skill
+    review = (SKILLS_ROOT / "proof-review" / "SKILL.md").read_text(encoding="utf-8")
+    assert "layer=host 却直接声称 kernel" in review or "layer=host 却声称 kernel" in review
+    schema = (ROOT / "schemas" / "source-proof" / "certificate-v1.yaml").read_text(encoding="utf-8")
+    assert "- NA" in schema
+    assert "UO_CALL_CLOSURE_RECEIPT" in schema
+
+
 def test_install_skips_retired_tg_domain_review_agent() -> None:
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")

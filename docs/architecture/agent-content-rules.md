@@ -18,7 +18,7 @@
 
 两种负载分开算：
 
-- **人**：只记 slash（`/uo-query` `/uo-init` `/uo-investigate` `/tg-init` `/tg-plan` `/tg-solve` `/ce-plan` `/ce-apply` `/ce-review` `/handoff`）。磁盘 `skills/` 目录不是入口。
+- **人**：只记 slash（`/uo-query` `/uo-init` `/uo-investigate` `/tg-init` `/tg-plan` `/tg-solve` `/ce-plan` `/ce-apply` `/ce-review` `/handoff`）。`/uo-investigate` 仅显式 UO 引擎诊断，不是普通查询下一步。磁盘 `skills/` 目录不是入口。
 - **执行 id**：编排与 `pilot_run.workflow` 写 `uo-init`。聊天 slash 才是 `/uo-init`。入口剥 `/`，两边同一条工作流。模型 playbook 不要把聊天前缀当成工具协议。
 - **窗**：每个 LLM Action 只装一份 `method.md`。磁盘 skill 数 ≠ 常驻 token。
 
@@ -159,15 +159,15 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 
 | slash | 磁盘执行步 | 窗 / method_ref |
 | --- | --- | --- |
-| `/tg-init` | `bind-init` | harness / columns；review 在 SKILL.md |
-| `/tg-plan` | `test-plan` | target-planning / coverage-planning |
-| `/tg-solve` | `solve` | construct / replay-classification |
+| `/tg-init` | `bind-init` | harness / columns；review 在 bind-review prompt |
+| `/tg-plan` | `test-plan` | SKILL 规划步骤；coverage-ir / target-planning / evidence |
+| `/tg-solve` | `solve`；overlay `source-proof` / `proof-review` | construct / replay-classification；证明走 overlay |
 | `/ce-review` | `standalone-review` | spec / standards |
 | `/ce-plan` | `ce-plan-draft` | 单窗 |
 | `/ce-apply` | `ce-apply` | 单窗 |
 | `/uo-query` | `uo-query` | 单窗 |
 | `/uo-init` | `propose-include-heal` | 单窗 |
-| `/uo-investigate` | `uo-investigate` | 单窗 |
+| `/uo-investigate` | `uo-investigate` | 仅显式 UO 引擎诊断 |
 | `/handoff` | `session-handoff` | 单窗 |
 
 叠加原语：`source-proof`、`proof-review`。lemma 是 worklog / 证书里的产物名词，不是 Skill。精度/性能命中后邻域在 `skills/certify/`。领域事实在 `knowledge/ascendc/`。

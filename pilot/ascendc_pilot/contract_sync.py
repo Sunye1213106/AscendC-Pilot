@@ -20,8 +20,8 @@ DRIFT_REASON = "PLAN_CONTRACT_DRIFT"
 # runtime bundle uses for the same content ("" = repo-only, no installed twin).
 CONTRACT_FILES: tuple[tuple[str, str], ...] = (
     (
-        "skills/test-plan/references/coverage-planning.md",
-        "cognitive-skills/test-plan/references/coverage-planning.md",
+        "skills/test-plan/references/coverage-ir.md",
+        "cognitive-skills/test-plan/references/coverage-ir.md",
     ),
     (
         "skills/test-plan/references/target-planning.md",

@@ -32,7 +32,7 @@ WORKFLOW_SUMMARY_ZH = {
     "uo-init": "按算子目录与架构建立 CodeMap",
     "uo-update": "按变更增量更新已有 CodeMap",
     "uo-query": "查询 CodeMap 语义",
-    "uo-investigate": "调查 CodeMap 未闭合项",
+    "uo-investigate": "显式诊断 UO build residual（维护用）",
     "tg-init": "绑定测试变量并写前置 yaml",
     "tg-plan": "把测试意图收成有限覆盖计划",
     "tg-solve": "定向构造并回放生成用例",

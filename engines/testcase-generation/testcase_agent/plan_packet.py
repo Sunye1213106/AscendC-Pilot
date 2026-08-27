@@ -72,7 +72,8 @@ def contract_digest(repo_root: Path | str) -> str:
     parts: list[bytes] = []
     for rel in (
         "prompts/tasks/tg/plan-owner.md",
-        "skills/test-plan/references/coverage-planning.md",
+        "skills/test-plan/SKILL.md",
+        "skills/test-plan/references/coverage-ir.md",
         "skills/test-plan/references/target-planning.md",
         "skills/test-plan/references/evidence.md",
     ):

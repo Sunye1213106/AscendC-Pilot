@@ -1,8 +1,6 @@
-# 构建失败 vs 图缺口
+# 构建失败 vs 图缺口（UO engine）
 
-**何时加载**：要区分「编译/探针没过」和「图上真有 residual」时。开发 UO engine 时同一份也在 `engines/understand-operator/docs/codemap-build-gotchas.md`。
-
-Agent 规则。假编译环境、补头、prelude 由 engine 做。
+UO engine 开发 / 修 extractor 时用。假编译环境、补头、prelude 由 engine 做，不要让业务 Agent 用这份当语义查询手册。
 
 - **确定性提取优先**：未闭合项记入 `unresolved.yaml`；不要用 LLM 补进正式 `.uo`。
 - **范围不由人工确认文件清单**：operator + arch 给定后，prepare 用 Clang include closure 建范围；失败记 blocker。
@@ -13,7 +11,7 @@ Agent 规则。假编译环境、补头、prelude 由 engine 做。
 - **跨层边必须有证据**：Host→Tiling→Kernel 边缺少 source span 时保持 unresolved。
 - **BuildVariant 混用**：不同 architecture / 编译宏下的符号不得并进同一无身份。
 - **局部变量生命周期**：保存-修改-恢复里，临时写回不是最终 defining site。
-- **artifact existence ≠ semantic completeness**：文件在、空壳、`not_extracted` 不能当抽取完成。
+- **artifact existence ≠ semantic completeness**：文件在 projection 路径上、空壳、`not_extracted` 不能当抽取完成。
 - **LLM digest 不是下一轮静态事实**：模型补丁必须走 candidate → evidence → review → accepted fact。
 
-探针缺头、include 路径没对齐 → 交给 include-heal，不要在本步当图缺口结案。
+探针缺头、include 路径没对齐 → include-heal，不要当图缺口结案。

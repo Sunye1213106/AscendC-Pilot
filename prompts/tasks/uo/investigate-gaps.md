@@ -1,5 +1,5 @@
 <task>
-调查当前 unresolved CodeMap semantic residuals：分类根因，指出确定性引擎还缺什么能力。
+显式诊断当前 unresolved CodeMap semantic residuals：分类根因，指出确定性引擎还缺什么能力。不要用于普通语义查询。
 </task>
 
 <context>

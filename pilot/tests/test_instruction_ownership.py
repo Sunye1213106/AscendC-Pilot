@@ -124,6 +124,25 @@ def test_method_skill_ids_intersect_action_and_ceiling() -> None:
     ) == ["ce-apply"]
 
 
+def test_overlay_skill_id_is_not_stripped_by_ceiling() -> None:
+    from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+
+    ceiling = ["bind-init", "test-plan", "solve", "uo-query"]
+    assert method_skill_ids_for_action(
+        {"skill_id": "source-proof"},
+        agent_skill_ids=ceiling,
+    ) == ["source-proof"]
+    assert method_skill_ids_for_action(
+        {"skill_id": "proof-review"},
+        agent_skill_ids=ceiling,
+    ) == ["proof-review"]
+    assert method_skill_ids_for_action(
+        {"skill_id": "source-proof"},
+        agent_skill_ids=ceiling,
+        extra_ref_paths=["skills/uo-query/references/does-not-need-to-exist.md"],
+    ) == ["source-proof", "uo-query"]
+
+
 def test_deleted_verify_review_method_is_gone() -> None:
     method, prompt = _load_method_and_prompt(
         REPO,

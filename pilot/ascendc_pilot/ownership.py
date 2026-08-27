@@ -68,6 +68,8 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "tg-solve": {
         "construct_cases": [],
         "analyze_round": [],
+        "source_proof": [],
+        "proof_review": [],
     },
     "ce-plan": {
         "plan_draft": [
@@ -106,6 +108,7 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "construct_promote": [],
         "coverage_eval": ["tg/worklog.md"],
         "analyze_promote": ["tg/worklog.md"],
+        "proof_promote": ["tg/worklog.md"],
         "solve_certify": ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"],
     },
     "ce-plan": {
@@ -201,6 +204,9 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "coverage_eval": ["tg/worklog.md", "tg/replay/**"],
         "analyze_round": [],
         "analyze_promote": ["tg/worklog.md"],
+        "source_proof": [],
+        "proof_review": [],
+        "proof_promote": ["tg/worklog.md"],
         "solve_certify": [
             "runs/{run_id}/receipts/solve_certify.yaml",
             "tg/cases.csv",
@@ -368,6 +374,29 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/analyze_round/**",
         ],
         "analyze_promote": ["tg/worklog.md", "runs/{run_id}/actions/analyze_round/**"],
+        "source_proof": [
+            "uo/*.uo",
+            "tg/init.yaml",
+            "tg/plan.md",
+            "tg/worklog.md",
+            "runs/{run_id}/receipts/analyze_round.yaml",
+            "runs/{run_id}/actions/analyze_round/**",
+            "runs/{run_id}/actions/source_proof/**",
+        ],
+        "proof_review": [
+            "uo/*.uo",
+            "tg/plan.md",
+            "tg/worklog.md",
+            "runs/{run_id}/receipts/replay_round.yaml",
+            "runs/{run_id}/actions/source_proof/**",
+            "runs/{run_id}/actions/proof_review/**",
+        ],
+        "proof_promote": [
+            "tg/worklog.md",
+            "runs/{run_id}/receipts/analyze_round.yaml",
+            "runs/{run_id}/actions/source_proof/**",
+            "runs/{run_id}/actions/proof_review/**",
+        ],
         "solve_certify": ["tg/worklog.md", "tg/plan.md", "tg/replay/**", "tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"],
     },
     "ce-review": {

@@ -26,6 +26,7 @@ read_scopes:
 - method:skills/solve/**
 - method:skills/uo-query/**
 - method:skills/source-proof/**
+- method:skills/proof-review/**
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed

@@ -1,14 +1,22 @@
 schema: source-proof/v1
 description: >
   Source-proof certificate. Producer emits PROVED | REFUTED | INSUFFICIENT.
-  claim.layer is atomic (domain|template|host|kernel). Cross-layer full
-  facts are composed by the engine from accepted certificates.
+  claim.layer is atomic (domain|template|host|kernel). Cross-layer facts are
+  composed by the engine from the required accepted atomic certificates.
   completeness.*.status full requires a machine receipt in source.
-  Exclusion is engine-owned after proof-review accept.
+  calls completeness must use UO_CALL_CLOSURE_RECEIPT, not writer closure.
+  PROVED requires every applicable obligation CLOSED (NA is not applicable).
+  Structural checks: testcase_agent.proof_validate. Exclusion is engine-owned
+  after proof-review accept of a schema-valid certificate.
 required:
   - schema
   - claim
   - result
+  - obligations
+  - reasoning
+  - evidence
+  - counterexample
+  - completeness
 enums:
   claim.layer:
     - domain
@@ -23,12 +31,22 @@ enums:
     - CLOSED
     - OPEN
     - BLOCKED
+    - NA
   completeness.status:
     - full
     - partial
     - unknown
-  completeness.source:
+  completeness.writers.source:
     - UO_WRITER_CLOSURE_RECEIPT
     - SOURCE_CLOSURE_RECEIPT
     - PRODUCT_COVERAGE_RECEIPT
+    - ""
+  completeness.calls.source:
+    - UO_CALL_CLOSURE_RECEIPT
+    - SOURCE_CLOSURE_RECEIPT
+    - PRODUCT_COVERAGE_RECEIPT
+    - ""
+  completeness.macros.source:
+    - PRODUCT_COVERAGE_RECEIPT
+    - SOURCE_CLOSURE_RECEIPT
     - ""

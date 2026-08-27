@@ -84,6 +84,8 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["tg-plan-ingest-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-construct-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-analyze-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-source-proof-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-proof-review-v1"] == []
     assert "tg-plan-staging-v1" not in OUTPUT_CONTRACT_PATHS
     assert "tg-construct-staging-v1" not in OUTPUT_CONTRACT_PATHS
     assert "tg-analyze-staging-v1" not in OUTPUT_CONTRACT_PATHS
@@ -459,6 +461,97 @@ def test_analyze_promote_merges_capture_into_ledger(tmp_path: Path) -> None:
     receipt = receipts_dir(root, run_id) / "analyze_round.yaml"
     assert receipt.is_file()
     assert "seed_changes" in receipt.read_text(encoding="utf-8")
+    from ascendc_pilot.paths import agent_root
+
+    na = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "source_proof" / "not_applicable.yaml"
+    assert na.is_file()
+
+
+def test_analyze_promote_continues_when_proof_requests(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_analyze_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.coverage.ledger import dump_worklog, seed_ledger
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    tg = tg_root(root, arch=_ARCH)
+    (tg / "worklog.md").write_text(
+        dump_worklog(seed_ledger([{"id": "O7", "status": "MISS"}])),
+        encoding="utf-8",
+    )
+    _write_capture(
+        root,
+        run_id,
+        "analyze_round",
+        text="actions:\n  proof_requests:\n    - obligation: O7\n      claim: host P=>Q\n",
+    )
+    out = run_analyze_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is True, out
+    assert out.get("pending_proofs") == 1
+    from ascendc_pilot.paths import agent_root
+
+    na = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "source_proof" / "not_applicable.yaml"
+    assert not na.is_file()
+
+
+_PROOF_CERT = """
+obligation: O7
+schema: source-proof/v1
+claim:
+  layer: host
+  premise: P
+  conclusion: Q is unreachable on host
+obligations:
+  entry: CLOSED
+  control: CLOSED
+  writes: CLOSED
+  calls: NA
+  overwrite: CLOSED
+  alternatives: CLOSED
+  completeness: NA
+result: PROVED
+reasoning:
+  - step: host write
+    cites: [EV_h]
+evidence:
+  - {id: EV_h, source: host.cpp:10, role: host write}
+counterexample: {checked: true, result: none}
+completeness:
+  writers: {status: partial, source: ""}
+  calls: {status: partial, source: ""}
+  macros: {status: unknown, source: ""}
+"""
+
+
+def test_proof_promote_marks_obligation_unreachable(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_proof_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.coverage.ledger import dump_worklog, parse_worklog_fence, seed_ledger
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    tg = tg_root(root, arch=_ARCH)
+    (tg / "worklog.md").write_text(
+        dump_worklog(seed_ledger([{"id": "O7", "status": "MISS"}])),
+        encoding="utf-8",
+    )
+    _write_capture(root, run_id, "source_proof", text=_PROOF_CERT)
+    _write_capture(root, run_id, "proof_review", text="verdict: accept\nobligation: O7\n")
+    out = run_proof_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is True, out
+    assert out.get("applied") == ["O7"]
+    ledger = parse_worklog_fence((tg / "worklog.md").read_text(encoding="utf-8"))
+    assert ledger["obligations"]["O7"]["status"] == "PROVED_UNREACHABLE"
 
 
 def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:

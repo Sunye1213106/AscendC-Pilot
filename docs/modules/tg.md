@@ -39,7 +39,7 @@ TG 永不改算子仓
     → construct 交回 rows 和/或 recipe（不写正式 cases）
     → Host Replay（无 NPU；无 WSL/CANN 则 replay_round 失败停住）
     → coverage_eval 分类 CLOSED / MISS / UNKNOWN / GUARD_LEAK
-    → analyze 只处理 MISS / UNKNOWN
+    → analyze 只处理 MISS / UNKNOWN；proof_request 走 source-proof → proof-review → 引擎 exclusion
     → ledger 闭合才签发，并物化 cases
 ```
 
@@ -64,6 +64,7 @@ solve_precheck [D] → compile_obligations [D]
     → construct_cases [S return_value] → construct_promote [D]
     → replay_round [D] → coverage_eval [D]
     → analyze_round [S return_value] → analyze_promote [D]
+    → source_proof [S overlay] → proof_review [S overlay] → proof_promote [D]
     → solve_certify [D]
                                           ──gate: worklog_closed
 rework: analyze → construct；validate → model/bind

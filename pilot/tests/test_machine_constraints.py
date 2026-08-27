@@ -26,6 +26,8 @@ def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
     assert "test-plan" in ceiling
     assert "solve" in ceiling
     assert "uo-query" in ceiling
+    assert "source-proof" not in ceiling
+    assert "proof-review" not in ceiling
     assert "test-modes" not in ceiling
     assert "lemma" not in ceiling
     assert "standalone-review" not in ceiling

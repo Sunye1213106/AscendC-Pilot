@@ -16,14 +16,14 @@ Harness 回答「这个 CSV 列控制 API 的什么」；UO 回答「这个控�
 - **开关维不是 dtype / shape / layout 的身份。** `Is*`、`*DType`、`*TemplateNum` 只有「列本身就是该开关」才能当 `uo.id`。投影写 `domains.projection`。
 - **metadata 只有 Enable / 用例名 / 是否跑这行。** 确定性等 host 会读的运行上下文 → `active`。
 - **`call_args.sources[].column` 必须 `active`，且必须是本路 mapping key。** shadowed 列禁止进入 `sources[]`。全空 ≠ `unwired`。`unwired` 仅当草稿 `call_args` 里没有对应实参。
-- **仅 active 列做 semantic identity resolution**（按 `code-access`）。不要用 `dim_names`（`*TemplateNum` / `*DType` / `Is*`）当尺寸或 dtype 的查询词或 `uo.id`。
+- **仅 active 列做 semantic identity resolution。** 身份只走 uo-query 合同，只采用返回的 canonical / 短名。不要复制查询 CLI。不要用 `dim_names`（`*TemplateNum` / `*DType` / `Is*`）当尺寸或 dtype 的查询词或 `uo.id`。
 
 ## 路径
 
-1. **读 `repo_scan.yaml` 表头。** 不要通读 CSV，不要读对轴产物。需要 `dim_names` 或标识符时按 `code-access` 查图。
+1. **读 `repo_scan.yaml` 表头。** 不要通读 CSV，不要读对轴产物。需要标识符时走 uo-query 合同。
 2. **打开草稿 `call.site` 那一个窗口**（同一文件内即可）。对本路每一列名搜赋值：它进了哪个局部变量、该变量进了调用的哪个**已有**关键字或第几个位置。位置实参的 `call_args.name` 用草稿已有签名名，`runtime_expr` 用局部变量。给本路列补 `call_args.sources[]`，再写列 `control`。
 3. **本路每列**写 `control.status` + `relation`。先看 `domains.<col>.profile.empty_rate`：全空且窗口里的局部是从另一列重算 → 空列 `shadowed`；kwargs 的 source 写有数的那一列，不要把空列写进 `sources[]`。
-4. **仅 active 解析身份。** 查列名或相关 ident，把命中的 canonical / 短名写入 `uo.id`。不要把 `call_args.name` 填进 `uo.id`。只作为张量维的列查列名，取 `TILING_FIELD.name`。dtype 不要查 `*DType` / `Is*`。同 struct 邻维只当阅读上下文，不写进其它列的 `uo.id`。一个张量实参对应多列时，全部进该 arg 的 `sources[]`，不要挑一列当「这个张量的 uo.id」。够闭合就停。
+4. **仅 active 解析身份。** 用 uo-query 合同解析列名或相关 ident，把返回的 canonical / 短名写入 `uo.id`。不要把 `call_args.name` 填进 `uo.id`。只作为张量维的列取 `TILING_FIELD.name`。dtype 不要拿 `*DType` / `Is*` 当查询词。同 struct 邻维只当阅读上下文，不写进其它列的 `uo.id`。一个张量实参对应多列时，全部进该 arg 的 `sources[]`，不要挑一列当「这个张量的 uo.id」。够闭合就停。
 5. **Edit 本路语义格**，然后 `inspect yaml --rel <本路 bindN.yaml>`。失败就改到 ok。不要读对轴产物。
 
 ## 分类

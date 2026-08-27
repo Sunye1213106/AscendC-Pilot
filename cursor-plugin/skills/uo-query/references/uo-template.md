@@ -20,4 +20,4 @@ OpenCode：插件 `pilot_cli`，command 即上列 argv。
 
 ## Claim 提示
 
-「模板是否接纳某值」停在 template-admissible；不要自动升级到 full reachability。
+「模板是否接纳某值」停在 template-admissible；不要自动升级成 runtime 可达。

@@ -26,4 +26,4 @@ Cursor：MCP `uo_query`（`pattern` / `file`+`line`）。OpenCode：插件 `pilo
 
 - 「某枚举值是否在声明域」→ domain  
 - 「Host 是否写出该值」→ host-produced（看 packing + guards + final overwrite）  
-- 「能否端到端触发」→ full reachability（常超出 UO-only）
+- 「能否端到端触发」→ 组分事实可查；runtime full reachability 不由本步宣布

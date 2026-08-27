@@ -279,6 +279,57 @@ def _parse_analyze_actions(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _extract_proof_requests(parsed: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(parsed, dict):
+        return []
+    raw = parsed.get("proof_requests")
+    if raw is None and isinstance(parsed.get("actions"), dict):
+        raw = parsed["actions"].get("proof_requests")
+    if not isinstance(raw, list):
+        return []
+    return [row for row in raw if isinstance(row, dict)]
+
+
+def _mark_not_applicable(
+    project_root: Path,
+    ctx: dict[str, Any],
+    action_ids: list[str],
+    *,
+    reason: str,
+) -> None:
+    rid = _run_id(ctx)
+    for aid in action_ids:
+        path = _action_dir(project_root, ctx, aid) / "not_applicable.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "status": "not_applicable",
+                    "action_id": aid,
+                    "run_id": rid,
+                    "reason": reason,
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+
+def _parse_captured_docs(text: str) -> list[Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:yaml)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        docs = list(yaml.safe_load_all(raw))
+    except yaml.YAMLError:
+        return []
+    return [doc for doc in docs if doc is not None]
+
+
 _PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
 
 
@@ -1770,7 +1821,16 @@ def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     path.write_text(merge_prose(existing, ledger, extra_prose=extra_prose), encoding="utf-8")
     remaining = open_ids(ledger)
     reason = _open_failure_reason(ledger)
-    if remaining:
+    proof_requests = _extract_proof_requests(parsed)
+    pending = bool(remaining) and bool(proof_requests)
+    if not pending:
+        _mark_not_applicable(
+            project_root,
+            ctx,
+            ["source_proof", "proof_review", "proof_promote"],
+            reason="no_proof_requests" if not proof_requests else "ledger_closed",
+        )
+    if remaining and not pending:
         blocking = reason in {"PLAN_INVALID", "HARNESS_CONTROL_GAP", "HARNESS_OBSERVATION_GAP"}
         code = reason if blocking else (reason or CASE_REFINABLE)
         if code == CASE_REFINABLE:
@@ -1783,7 +1843,64 @@ def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
             "reason_code": code,
             "error": code,
         }
-    return {"ok": True, "engine": "analyze_promote", "artifact": path.as_posix(), "open": remaining}
+    return {
+        "ok": True,
+        "engine": "analyze_promote",
+        "artifact": path.as_posix(),
+        "open": remaining,
+        "pending_proofs": len(proof_requests) if pending else 0,
+    }
+
+
+def run_proof_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.coverage.contract import CASE_REFINABLE
+    from testcase_agent.coverage.ledger import merge_prose, open_ids, parse_worklog_fence
+    from testcase_agent.proof_promote import pair_items, promote
+
+    items = pair_items(
+        certificates=_parse_captured_docs(_captured_text(project_root, ctx, "source_proof")),
+        reviews=_parse_captured_docs(_captured_text(project_root, ctx, "proof_review")),
+    )
+    tg = _tg(project_root, ctx)
+    path = products.worklog_path(tg)
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    ledger = parse_worklog_fence(existing)
+    if not ledger:
+        return {"ok": False, "engine": "proof_promote", "error": "missing worklog ledger"}
+    out = promote(items=items, ledger=ledger)
+    if not out.get("ok"):
+        return {
+            "ok": False,
+            "engine": "proof_promote",
+            "error": "PROOF_INVALID",
+            "reason_code": "PROOF_INVALID",
+            "errors": out.get("errors") or [],
+        }
+    isolation.assert_tg_write_path(path)
+    path.write_text(merge_prose(existing, ledger), encoding="utf-8")
+    remaining = open_ids(ledger)
+    if remaining:
+        reason = _open_failure_reason(ledger)
+        blocking = reason in {"PLAN_INVALID", "HARNESS_CONTROL_GAP", "HARNESS_OBSERVATION_GAP"}
+        code = reason if blocking else (reason or CASE_REFINABLE)
+        if code == CASE_REFINABLE:
+            code = "OPEN_REMAINING"
+        return {
+            "ok": False,
+            "engine": "proof_promote",
+            "artifact": path.as_posix(),
+            "open": remaining,
+            "applied": out.get("applied") or [],
+            "reason_code": code,
+            "error": code,
+        }
+    return {
+        "ok": True,
+        "engine": "proof_promote",
+        "artifact": path.as_posix(),
+        "open": remaining,
+        "applied": out.get("applied") or [],
+    }
 
 
 def run_solve_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1849,4 +1966,5 @@ def install(registry: dict[tuple[str, str], Any]) -> None:
     registry[("tg-solve", "replay_round")] = run_replay_round
     registry[("tg-solve", "coverage_eval")] = run_coverage_eval
     registry[("tg-solve", "analyze_promote")] = run_analyze_promote
+    registry[("tg-solve", "proof_promote")] = run_proof_promote
     registry[("tg-solve", "solve_certify")] = run_solve_certify

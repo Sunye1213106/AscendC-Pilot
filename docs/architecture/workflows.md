@@ -15,7 +15,7 @@
    /uo-init  ──►  .uo CodeMap
         │
         ├── /uo-query         只读提问
-        ├── /uo-investigate   查 unresolved（不改 .uo）
+        ├── /uo-investigate   仅显式诊断 UO 引擎 residual
         ├── /uo-update        源码变了再刷新
         │
         ├── /tg-init ──► /tg-plan ──► /tg-solve     覆盖闭环
@@ -167,13 +167,13 @@ done        Primary 用 `pilot_cli` `uo-query --status-only` 看刷新后产物�
 
 子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `pilot_run workflow=uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `pilot_cli` 工具（`command=uo-query --project …`），不要 bash。
 
-### `/uo-investigate` — 查 unresolved
+### `/uo-investigate` — 显式诊断 UO 引擎 residual
 
 ```text
 investigate [S uo-gap-investigator]  →  report
 ```
 
-不修改正式 `.uo`。
+不修改正式 `.uo`。不要从普通 `/uo-query` 自动进入。仅在 quality failure、UO engine 开发或显式维护诊断时使用。
 
 ---
 

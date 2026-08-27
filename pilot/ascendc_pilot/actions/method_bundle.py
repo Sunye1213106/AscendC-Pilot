@@ -500,19 +500,27 @@ def method_skill_ids_for_action(
     agent_skill_ids: list[str] | None = None,
     extra_ref_paths: list[str] | None = None,
 ) -> list[str]:
-    """Action Skill plus owners of extra qualified refs, intersected with ceiling."""
+    """Action Skill plus owners of extra qualified refs.
+
+    Overlay skills stay out of ``max_skill_ids``. The agent's ceiling filters
+    extra refs only; the Action's own ``skill_id`` is always kept.
+    """
     ceiling = {str(s).strip() for s in (agent_skill_ids or []) if str(s).strip()}
-    wanted: set[str] = set()
+    own = ""
     raw = str((action or {}).get("skill_id") or (action or {}).get("action_method_id") or "").strip()
     if raw:
-        wanted.add(raw.rsplit("/", 1)[-1].strip())
+        own = raw.rsplit("/", 1)[-1].strip()
+    extras: set[str] = set()
     for raw_path in extra_ref_paths or []:
         parsed = parse_qualified_ref_path(str(raw_path))
         if parsed is None:
             continue
-        wanted.add(parsed[0])
+        extras.add(parsed[0])
     if ceiling:
-        wanted &= ceiling
+        extras &= ceiling
+    wanted = set(extras)
+    if own:
+        wanted.add(own)
     return sorted(sid for sid in wanted if sid)
 
 

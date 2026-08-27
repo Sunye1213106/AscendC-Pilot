@@ -1,9 +1,11 @@
 ---
 name: uo-investigate
-description: 调查 CodeMap 里留下的 unresolved residual。问某个 gap 为何未闭合、或要指出引擎缺什么时使用。
+description: 仅在显式诊断 UO build residual、quality failure、或开发 UO engine 时使用。不要用于普通算子语义查询、CE、TG、绑定、规划或测试求解。
 ---
 
-# 调查缺口
+# 诊断 UO 缺口
+
+本步回答「为什么 UO 没知道这件事」，不是「当前 UO 已经知道什么」。只在 maintainer / quality-failure / engine 回归工作流里用。不要从普通 query、CE、TG、绑定或规划自动切过来。
 
 分类根因，指出确定性引擎缺什么。不修改 canonical `.uo`。Deterministic pass 无法闭合的 residual 合法存在；不得默认用 LLM 补边、补字段、补 span 进正式图。
 
@@ -17,21 +19,25 @@ description: 调查 CodeMap 里留下的 unresolved residual。问某个 gap 为
 
 HOST 运行时叶、PROJECT/BUILTIN 实体不算定位失败。不要把它们当成 locate_blocking。
 
+缺 architecture 或 freshness 过期：停。不要猜 arch，不要用过期 unresolved 视图当事实。
+
 ## 步骤
 
 1. **只查被点名的 residual。** bucket 为 `locate_blocking` / `host_runtime_leaf` / `catalog_unproven` 时先看 freshness。过期视图不能当事实。
 2. **分类，不要发明边。** 典型根因：缺 include / 探针失败（那是 heal，不是本步补图）、Clang 没抽到的跨层边缺 span、宏/模板身份混用、命名相似但不是同一符号、源码窗口不够。
 3. **证据窗口。** 每个结论落到 `file:line`。禁止凭变量名相似、文件邻近闭合。跨层边（Host→Tiling→Kernel）缺少 source span 时保持 unresolved。
 4. **完整性。** 「文件在 projection 路径上」不等于 authority 已填充。空壳 / `not_extracted` 不能当抽取完成。artifact existence ≠ semantic completeness。索引 partial 时不得报「无其他符号」。
-5. **停在建议。** 指出引擎缺什么（补抽取、补 span、走 include-heal、保持 unresolved）。不要手改 `.uo`，不要用 digest 当下一轮静态事实。
+5. **停在建议。** 指出引擎缺什么（补抽取、补 span、走 include-heal、保持 unresolved）。不要手改 `.uo`，不要用 digest 当下一轮静态事实，不要建议「先当它是这样」。
 
 ## 常驻判断
 
-权威分层：正式产品是已 commit 的 `.uo`；dump/query 视图可重建；LLM digest 只是说明层，**不得**成为下一轮静态事实。模型补丁必须走 candidate → evidence → review → accepted fact，不得悄悄写回。
+正式产品是已 commit 的 `.uo`。dump/query 视图可重建。LLM digest 只是说明层，不得成为下一轮静态事实。模型补丁必须走 candidate → evidence → review → accepted fact。
 
 BuildVariant 混用：不同 architecture / 编译宏下的符号不得并进同一无身份。局部变量保存-修改-恢复里，临时写回不是最终 defining site。
 
-查询纪律与 `uo-query` 相同：空结果 ≠ 不存在；SEL 第一页不是全集。本步可以查图，但目的是给 residual 找根因，不是回答用户的产品问题。
+查询纪律与消费查询相同：空结果 ≠ 不存在；SEL 第一页不是全集。本步可以查图，但目的是给 residual 找根因，不是回答用户的产品问题，也不得把 query miss 改写成「应该是这样」。
+
+UNKNOWN 必须保留 UNKNOWN。本步的输出是引擎缺口说明，不是给业务 Agent 的补事实通道。
 
 ## 看到这样
 
@@ -45,12 +51,14 @@ BuildVariant 混用：不同 architecture / 编译宏下的符号不得并进同
 | 探针缺头 | 那是 include-heal，不是补图 |
 | 想改 canonical `.uo` | 禁止 |
 | 索引 partial | 不得报「无其他符号」 |
+| 普通语义问题误进本步 | 停；回到 uo-query 的 PARTIAL / UNKNOWN |
 
 ## 完成勾选
 
 - [ ] 每个被查 residual 有根因类别与证据窗口，或 INSUFFICIENT
 - [ ] 指出了引擎缺什么，没有发明边
 - [ ] 没有用 digest 当静态事实，没有手改 `.uo`
+- [ ] 没有把 query miss 写成「应该是这样」
 
 ## 循环
 
@@ -74,9 +82,8 @@ HOST 运行时叶不算定位失败。文件存在但 `not_extracted` 不算完�
 - 过期 unresolved 视图当事实
 - 用 digest 当下一轮静态输入
 - 把 query 空结果写成「图上不存在」
-
-模型补丁必须走 candidate → evidence → review，不得悄悄写回 authority。
+- 从普通 uo-query PARTIAL 自动切进本步去「补解释」
 
 ## 指针
 
-权威分层：`references/codemap-authority.md`。完整性：`references/codemap-completeness.md`。构建失败 vs 图缺口：`references/codemap-build-gotchas.md`。
+构建失败 vs 图缺口：`references/codemap-build-gotchas.md`。

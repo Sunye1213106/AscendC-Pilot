@@ -546,7 +546,7 @@ def check_all(
             elif mode in {"deterministic", "primary_interactive"} and method_id:
                 errors.append(f"{wid}/{aid}: {mode} Action must omit skill_id")
             elif mode == "primary_review" and prompt_id:
-                if not method_id or mp is None or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                if method_id and (mp is None or not mp.is_file() or not mp.read_text(encoding="utf-8").strip()):
                     errors.append(f"{wid}/{aid}: missing SKILL.md for {method_id!r}")
 
             if prompt_ids:

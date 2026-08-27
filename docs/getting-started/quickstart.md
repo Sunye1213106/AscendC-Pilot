@@ -102,9 +102,9 @@ CodeMap 建立后可直接提问，不必让 Agent 重读整个算子：
 LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），中间有没有项目自己的 wrapper？
 ```
 
-显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
+显式入口：`/uo-query --project <算子目录>`。普通 query 缺口停在 PARTIAL / UNKNOWN。显式诊断 UO build residual：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/uo-query/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。形态见 code-access 不变量。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
+查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/uo-query/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。形态见 code-access 不变量。不要因为 query 缺口自动进入 `/uo-investigate`。
 
 默认 `/uo-init` 抽 **1 个 kernel dtype**（`UO_KERNEL_MAX_VARIANTS=1`，未设置即 1）。`UO_WITH_KERNEL` 控制是否抽 Kernel。要扫全部声明 dtype 时设 `UO_KERNEL_MAX_VARIANTS=0`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
@@ -194,7 +194,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |
-| `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
+| `/uo-investigate` | 仅显式诊断 UO build residual / quality failure（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
 | `/ce-plan` | 自己有需求：边问边写出 `{slug}_plan.md` |
 | `/ce-apply` | 按当前计划未完成 todo 改码（需已有 `.uo`） |

@@ -7,20 +7,12 @@
 ## 查什么
 
 - `quality.unresolved.locate_blocking`（字段无 owner、缺 Kernel span 等）
-- `ir/unresolved.yaml` 里 `bucket` 为 `locate_blocking` / `host_runtime_leaf` / `catalog_unproven` 的条目（须 freshness）
-- gap 根因归类 → 交给 `/uo-investigate`，不是 query 静默发明边
-
-## 推荐接口
-
-```text
-uo-query --project <op>
-```
-
-OpenCode：插件 `pilot_cli`，command 即上列 argv。
-
-无参数索引含 `gaps_count`。细节交给 `/uo-investigate`。
+- 无参数索引里的 `gaps_count`
+- 卡片上的 incomplete / missing 字段
 
 ## 回答纪律
 
 图缺口 → `PARTIAL` 或 `UNKNOWN` + `reason_code`（如 `NOT_FOUND_IN_SCOPE`）。  
-列出缺口 id；不要声称 ANSWERED。
+列出缺口 id / `gap_code` / `residual_id`（卡片有则原样带回）。不要声称 ANSWERED。
+
+消费事实的本步到这里停止。不要因为事实缺失自动进入「修事实系统」的模式。是否诊断 UO build residual 由 Framework / maintainer workflow 决定，不是 query 的下一步。

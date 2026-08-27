@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OWNER = (ROOT / "prompts" / "tasks" / "tg" / "plan-owner.md").read_text(encoding="utf-8")
 FIXTURES = ROOT / "evals" / "fixtures" / "tg-plan"
 LIVE = ROOT / "evals" / "tg_plan" / "live"
-METHOD_SRC = ROOT / "skills" / "test-plan" / "references" / "coverage-planning.md"
+METHOD_SRC = ROOT / "skills" / "test-plan" / "SKILL.md"
 CASES = [
     "pr-9851-fag-deter-band",
     "pr-10335-fag-tnd-dense-swizzle",

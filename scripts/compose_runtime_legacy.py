@@ -165,11 +165,11 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-investigate": {
-        "command_description": "调查知识库 gap（unresolved residual）",
+        "command_description": "显式诊断 UO build residual（维护用）",
         "description": (
-            "调查算子知识库 / `.uo` 中保留的 unresolved semantic residual：分类根因、指出 "
-            "deterministic engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
-            "或要改进 analyzer 时使用。"
+            "仅在显式诊断 UO build residual、quality failure、或开发 UO engine 时使用。"
+            "分类根因、指出 deterministic engine 缺什么。不修改 canonical `.uo`。"
+            "不要用于普通算子语义查询、CE、TG、绑定、规划或测试求解。"
         ),
     },
     "ce-review": {

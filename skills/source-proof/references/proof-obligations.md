@@ -2,7 +2,18 @@
 
 **何时加载**：建立或关闭证明义务清单时。
 
-对 `P ⇒ Q`，逐项关闭义务。每项状态：`OPEN | CLOSED | BLOCKED`。一次只证一层：`domain` / `template` / `host` / `kernel`。
+对 `P ⇒ Q`，逐项关闭义务。每项状态：`OPEN | CLOSED | BLOCKED | NA`。一次只证一层：`domain` / `template` / `host` / `kernel`。
+
+```text
+OPEN  = 本 claim 适用，但还没证完
+NA    = 本 atomic claim 不适用
+CLOSED = 已用证据关闭
+BLOCKED = 适用，但当前证据闭不上
+
+PROVED ⇒ 所有 applicable 义务 == CLOSED
+```
+
+`OPEN` 永远不是「我觉得没必要」。没必要就写 `NA`。
 
 ## 入口
 
@@ -20,12 +31,15 @@
 
 - 对结论涉及的每个状态，列出全部 write sites（含间接写）
 - 对每个可能推翻 Q 的写入：在 P 下不可达，或写入值仍满足 Q
-- 写入集合没有 writer-closure receipt → 该项最多 `BLOCKED`，禁止 `PROVED`
+- 声称写点全集但没有 writer-closure receipt → 该项最多 `BLOCKED`，禁止 `PROVED`
+- 局部「此处写入发生」可以把 writes 标 `CLOSED`，completeness 义务用 `NA`
 
 ## 调用
 
 - 覆盖跨函数路径：callers / callees / 间接调用目标
 - 调用目标未解析 → `BLOCKED` 或继续读源码
+- 本 claim 不依赖 call graph → `NA`，不要用 writer-closure receipt 冒充 call 完整性
+- call 穷尽依赖 `UO_CALL_CLOSURE_RECEIPT`
 
 ## 覆盖
 
@@ -57,4 +71,4 @@
 
 下列用语依赖机器 receipt：全部、唯一、从不、没有其他、必然、不可能、不可达。
 
-维值列表看 `dim_coverage` 且 `completeness=coverage_checked`。写点全集看 writer-closure receipt。没有 receipt 时：继续关闭缺口，或整体 `INSUFFICIENT`。
+维值列表看 `dim_coverage` 且 `completeness=coverage_checked`。写点全集看 writer-closure receipt。调用全集看 call-closure receipt。没有 receipt 时：该项 `NA`（若不适用）、继续关闭缺口，或整体 `INSUFFICIENT`。

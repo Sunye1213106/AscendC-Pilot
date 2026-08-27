@@ -1291,8 +1291,8 @@ def _complete_plan_ingest_prepare(
     )
     contract = ""
     for rel in (
-        "refs/test-plan/coverage-planning.md",
         "method.md",
+        "refs/test-plan/coverage-ir.md",
     ):
         cand = sdir / rel
         if cand.is_file():

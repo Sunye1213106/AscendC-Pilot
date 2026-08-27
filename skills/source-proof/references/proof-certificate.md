@@ -8,7 +8,7 @@ Producer 产出可被独立审证 replay 的证书。语义结论只有：
 PROVED | REFUTED | INSUFFICIENT
 ```
 
-机器合同：`schemas/source-proof/certificate-v1.yaml`。本步不写 exclusion。`full` 跨层事实由引擎合成，证书 `claim.layer` 不得填 `full`。
+机器合同：`schemas/source-proof/certificate-v1.yaml`。形式正确性由 `proof_validate` 检查。本步不写 exclusion。跨层事实由引擎从所需的 accepted atomic certificates 合成，证书 `claim.layer` 不得填 `full`。
 
 ## 证书字段
 
@@ -23,13 +23,13 @@ coverage:
   product: [...]
   completeness: coverage_checked | first_hit | unknown
 obligations:
-  entry: CLOSED | OPEN | BLOCKED
-  control: CLOSED | OPEN | BLOCKED
-  writes: CLOSED | OPEN | BLOCKED
-  calls: CLOSED | OPEN | BLOCKED
-  overwrite: CLOSED | OPEN | BLOCKED
-  alternatives: CLOSED | OPEN | BLOCKED
-  completeness: CLOSED | OPEN | BLOCKED
+  entry: CLOSED | OPEN | BLOCKED | NA
+  control: CLOSED | OPEN | BLOCKED | NA
+  writes: CLOSED | OPEN | BLOCKED | NA
+  calls: CLOSED | OPEN | BLOCKED | NA
+  overwrite: CLOSED | OPEN | BLOCKED | NA
+  alternatives: CLOSED | OPEN | BLOCKED | NA
+  completeness: CLOSED | OPEN | BLOCKED | NA
 result: PROVED | REFUTED | INSUFFICIENT
 reasoning:
   - step: ...
@@ -47,13 +47,15 @@ completeness:
     source: UO_WRITER_CLOSURE_RECEIPT | SOURCE_CLOSURE_RECEIPT | PRODUCT_COVERAGE_RECEIPT | ""
   calls:
     status: full | partial | unknown
-    source: UO_WRITER_CLOSURE_RECEIPT | SOURCE_CLOSURE_RECEIPT | PRODUCT_COVERAGE_RECEIPT | ""
+    source: UO_CALL_CLOSURE_RECEIPT | SOURCE_CLOSURE_RECEIPT | PRODUCT_COVERAGE_RECEIPT | ""
   macros:
     status: full | partial | unknown
     source: PRODUCT_COVERAGE_RECEIPT | ""
 ```
 
-`completeness.*.status: full` 必须带非空 `source`，且该 source 是机器 receipt。没有 receipt 最多 `partial` / `unknown`。声称「全部 / 唯一 / 从不 / 不可达」却没有 full receipt → 不得 `PROVED`。
+`OPEN` = 适用但未证完。`NA` = 本 atomic claim 不适用。`PROVED` ⇒ 所有 applicable 义务都是 `CLOSED`，禁止残留 `OPEN` / `BLOCKED`。
+
+`completeness.*.status: full` 必须带非空 `source`，且该 source 是该字段合法的机器 receipt。calls 用 `UO_CALL_CLOSURE_RECEIPT`，不要用 writer closure 给 call completeness 背书。没有 receipt 最多 `partial` / `unknown`。声称「全部 / 唯一 / 从不 / 不可达」却没有 full receipt → 不得 `PROVED`。局部 P⇒Q 可以在 completeness=partial 时 `PROVED`，前提是 completeness 义务为 `NA` 或未声称穷尽。
 
 ## 写作标准
 

@@ -25,7 +25,7 @@ entries:
     file: tg/plan-v3.yaml
     role: llm_write
     skill: test-plan
-    playbook: references/coverage-planning.md
+    playbook: references/coverage-ir.md
     stored_as: tg-plan/v3
 
   - id: tg-plan-fill/v1

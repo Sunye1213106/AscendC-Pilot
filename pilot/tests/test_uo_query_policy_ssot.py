@@ -27,6 +27,10 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
 
     assert "禁止 Write `answer.yaml`" in invariant
     assert "partial" in skill or "不存在" in skill
+    assert "ARCHITECTURE_MISSING" in skill
+    assert "pilot_cli ro-search" not in skill
+    assert "code-access" in skill
+    assert "不要把自然语言句子塞进 pattern" in skill
     assert "Dim=V" in skill
     assert "Dim=V" in capability
     assert "无参数索引" in capability

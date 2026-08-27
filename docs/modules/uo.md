@@ -230,7 +230,7 @@ meta + BuildVariant
 ## 四条 UO 入口
 
 ```text
-Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
+Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派） | /uo-update 受控增量刷新 | /uo-investigate 仅显式诊断引擎 residual}
 ```
 
 `/uo-init` 从源码建立新的 CodeMap：`prepare -> extract -> analyze -> commit -> verify`。
@@ -260,7 +260,7 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 
-`/uo-investigate` 调查 unresolved residual：分类根因、指出确定性引擎还缺什么能力，产出 bounded report。不修改 canonical `.uo`。
+`/uo-investigate` 仅用于显式诊断 unresolved residual：分类根因、指出确定性引擎还缺什么能力，产出 bounded report。不修改 canonical `.uo`。普通 query 缺口不得自动进入本步。
 
 ---
 

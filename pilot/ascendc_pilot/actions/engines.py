@@ -966,6 +966,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "tg-replay-v1": ["runs/{run_id}/receipts/replay_round.yaml"],
     "tg-worklog-v1": ["tg/worklog.md"],
     "tg-analyze-v1": [],
+    "tg-source-proof-v1": [],
+    "tg-proof-review-v1": [],
     "tg-certify-v1": ["runs/{run_id}/receipts/solve_certify.yaml"],
     "intent-promoted-v1": ["runs/{run_id}/receipts/intent_promoted.yaml"],
 }

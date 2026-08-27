@@ -4,8 +4,9 @@ name_zh: UO unresolved 调查
 role: readonly_analyst
 mode: subagent
 description: >
-  只读调查 `ir/unresolved.yaml`：分类根因、指出确定性引擎缺口、给出改进建议。
-  禁止写正式 `.uo`，禁止把 gap patch 并进 CodeMap。
+  仅在显式诊断 UO build residual、quality failure、或开发 UO engine 时使用。
+  分类根因、指出确定性引擎缺口。禁止写正式 `.uo`，禁止把 gap patch 并进 CodeMap。
+  不要用于普通算子语义查询、CE、TG、绑定、规划或测试求解。
 max_skill_ids: &skills [uo-investigate]
 skill_ids: *skills
 read_scopes:

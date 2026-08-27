@@ -85,7 +85,8 @@ Architecture **对 `/uo-init` 和 `/uo-update` 强制**：选项从当前算子�
 | 目标 | 命令或说法 |
 | --- | --- |
 | 建立 / 更新 CodeMap | `/uo-init`、`/uo-update` |
-| 查询或调查 gap | `/uo-query`、`/uo-investigate` |
+| 查询 CodeMap | `/uo-query` |
+| 显式诊断 UO build residual（维护用） | `/uo-investigate` |
 | 生成测试覆盖 | `/tg-init` → `/tg-plan` → `/tg-solve` |
 | 自己有需求：计划并改码 | `/ce-plan` → `/ce-apply` |
 | 已有 diff / PR：只读审查 | `/ce-review` |

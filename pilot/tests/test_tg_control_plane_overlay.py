@@ -22,7 +22,13 @@ def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-solve", "gate") == ["solve_precheck", "compile_obligations"]
     assert phase_pipeline("tg-solve", "construct") == ["construct_cases", "construct_promote"]
     assert phase_pipeline("tg-solve", "replay") == ["replay_round", "coverage_eval"]
-    assert phase_pipeline("tg-solve", "analyze") == ["analyze_round", "analyze_promote"]
+    assert phase_pipeline("tg-solve", "analyze") == [
+        "analyze_round",
+        "analyze_promote",
+        "source_proof",
+        "proof_review",
+        "proof_promote",
+    ]
     assert phase_pipeline("tg-solve", "certify") == ["solve_certify"]
     assert not (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
     assert "lemma_mine" not in [a["id"] for a in WORKFLOWS["tg-solve"]["actions"]]
@@ -45,6 +51,7 @@ def test_tg_engines_registered() -> None:
         ("tg-solve", "replay_round"),
         ("tg-solve", "coverage_eval"),
         ("tg-solve", "analyze_promote"),
+        ("tg-solve", "proof_promote"),
         ("tg-solve", "solve_certify"),
     ):
         assert key in ENGINE_REGISTRY, key
@@ -78,7 +85,8 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert ingest.get("execution_mode") == "primary_review"
     assert ingest.get("output_mode") == "return_value"
     assert ingest.get("skill_id") == "test-plan"
-    assert ingest.get("method_ref") == "coverage-planning.md"
+    assert not str(ingest.get("method_ref") or "").strip()
+    assert ingest.get("refs") == ["coverage-ir.md", "target-planning.md", "evidence.md"]
     assert ingest.get("task_prompt_id") == "tg/plan-owner"
     assert list(ingest.get("allowed_write_paths") or []) == []
     assert action_by_id("tg-plan", "plan_scope") is None
@@ -90,6 +98,17 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     analyze = action_by_id("tg-solve", "analyze_round") or {}
     assert analyze.get("skill_id") == "solve"
     assert analyze.get("method_ref") == "replay-classification.md"
+    proof = action_by_id("tg-solve", "source_proof") or {}
+    review = action_by_id("tg-solve", "proof_review") or {}
+    promote = action_by_id("tg-solve", "proof_promote") or {}
+    assert proof.get("skill_id") == "source-proof"
+    assert proof.get("output_mode") == "return_value"
+    assert list(proof.get("allowed_write_paths") or []) == []
+    assert review.get("skill_id") == "proof-review"
+    assert review.get("output_mode") == "return_value"
+    assert list(review.get("allowed_write_paths") or []) == []
+    assert promote.get("execution_mode") == "deterministic"
+    assert "tg/worklog.md" in (promote.get("allowed_write_paths") or [])
     assert list(construct.get("allowed_write_paths") or []) == []
     assert list(analyze.get("allowed_write_paths") or []) == []
     axes = bind.get("fanout_axes") or []
@@ -99,7 +118,7 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert {a.get("skill") for a in axes} == {"bind-init"}
     assert not any(a.get("refs") for a in axes)
     review = action_by_id("tg-init", "bind_review") or {}
-    assert review.get("skill_id") == "bind-init"
+    assert not review.get("skill_id")
     assert not str(review.get("method_ref") or "").strip()
     bind_axis = next(a for a in axes if a.get("id") == "bind")
     assert bind_axis.get("chunk_size") == 20

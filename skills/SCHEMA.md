@@ -109,7 +109,7 @@ description: <做什么>。<什么时候用>。第三人称。
 
 父步（fanout / 序列路由，如 `bind-init`、`test-plan`、`solve`、`standalone-review`）写清各窗交什么、禁止混轴、本步不代替切片。叠加原语（`source-proof`、`proof-review`）与命中后邻域（`certify`）同样允许短文。不要为凑行数写背景课。按 slash 窗口收目录，禁止按主题焊成一份 always-loaded 正文。
 
-切片 HOW 若只属于某一轴，放 `references/<axis>.md`，由 Spec `fanout_axes[].method_ref` 装进该窗的 `method.md`；`refs` 是该窗才拷的一层指针（轴文件禁止 hop）。父窗口 `SKILL.md` 写清各窗交什么、禁止混轴，并承载 Primary 后序裁判；prepare 不把轴 HOW 拷进父 session。禁止把多窗正文拼进一份始终装载的 `SKILL.md`。
+切片 HOW 若只属于某一轴，放 `references/<axis>.md`，由 Spec `fanout_axes[].method_ref` 装进该窗的 `method.md`；`refs` 是该窗才拷的一层指针（轴文件禁止 hop）。父窗口 `SKILL.md` 写清各窗交什么、禁止混轴；prepare 不把轴 HOW 拷进父 session。Primary 后序裁判走独立 reviewer action 的 prompt，不装 producer Skill。禁止把多窗正文拼进一份始终装载的 `SKILL.md`，也禁止同一个 Skill 既生产又裁判。
 
 ### 禁止
 

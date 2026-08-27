@@ -4,7 +4,7 @@
 
 Target 立不住，后面的 partition 全是猜。四道必答门缺一，**这个 Target 不得进 Solve**；缺口写入 `untestable[]`，plan YAML 仍要交，不要猜 partition。
 
-观测词表只认 packet：`controls.case_allowed`、`observation_catalog.replay_allowed`、`probe_candidates` / `branch_locals.probeable`。观测字段与 HIT/MISS 只认命中观测文，本页不重复。
+观测词表只认 packet：`controls.case_allowed`、`observation_catalog.replay_allowed`、`probe_candidates` / `branch_locals.probeable`。观测字段与 HIT/MISS 只认命中观测文，本页不重复。字段不在这些名单里：标 gap，不要再查 UO。
 
 ## 必答门
 
@@ -23,7 +23,7 @@ Target 立不住，后面的 partition 全是猜。四道必答门缺一，**这
 
 - **PR-owned：** 新增或修改的 predicate、`&&` / `||` arm、assignment / value、control / data 依赖、删除行为。`pr_regression` Target 只能引用 packet `pr_eligible` 且 evidence 含 ownership 关系的符号。declaration-only 与无方向 neighbor 不得当 Target。
 - **Pre-existing support：** 只为 PR-owned 提供入口、输入或上下文的既有逻辑，不单开 Target，也不把其前置整包抄进本写点。
-- 无法由 packet + UO 闭合 → `untestable.kind: unverified`。
+- 无法由 packet 闭合 ownership → `untestable.kind: unverified`。
 
 ### Construct
 
@@ -65,7 +65,7 @@ Target  = path1 ∨ path2 ∨ ...
 - `A∧B` → 该 Target HIT
 - `A∧¬B` → 该 Target MISS，通常是 Guard 否定 / L3，不是同一 Target 的另一格
 - 若 PR-owned 行为本身包含「新 B 条件造成的抑制」，另建 suppression Target
-- 两侧都要检查能否成立；某侧根本 UNSAT → 写入 exclusion 或 `untestable`，不得静默省略
+- 两侧都保持为 candidate obligations。只有 packet 里已经接受的静态证明才能在规划期压掉某一侧；否则 Solve 判定 SAT / UNSAT。不得因「看起来 UNSAT」静默省略
 
 不要写「两侧 SAT 就都建 Target / partition」——那会把 HIT 与 MISS 混成同一面的两格。
 

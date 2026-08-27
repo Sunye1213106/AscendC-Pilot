@@ -37,6 +37,14 @@ def _llm_actions() -> list[tuple[str, dict]]:
 def test_runtime_context_identity_and_pollution() -> None:
     seen: list[dict] = []
     for wid, action in _llm_actions():
+        if action.get("id") == "bind_review":
+            prompt = Path(__file__).resolve().parents[2] / "prompts" / "tasks" / "tg" / "bind-review.md"
+            text = prompt.read_text(encoding="utf-8")
+            assert not str(action.get("skill_id") or "").strip()
+            assert not str(action.get("method_ref") or "").strip()
+            assert "intent=PASS" in text
+            assert "intent=REWORK" in text
+            continue
         sid = str(action.get("skill_id") or "").rsplit("/", 1)[-1]
         if not sid:
             continue
@@ -83,10 +91,6 @@ def test_runtime_context_identity_and_pollution() -> None:
             assert "script_meta" not in harness
             assert "modes.precision" not in columns
             assert "performance-testing" not in columns
-        if action.get("id") == "bind_review":
-            assert not str(action.get("method_ref") or "").strip()
-            assert "intent=PASS" in skill_text
-            assert "intent=REWORK" in skill_text
         if sid == "solve":
             assert "`references/search.md`" not in bodies
             assert "`references/closure-safety.md`" not in bodies
