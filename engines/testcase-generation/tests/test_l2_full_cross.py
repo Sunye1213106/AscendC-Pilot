@@ -162,6 +162,22 @@ def test_validator_rejects_full_cross_that_also_lists_tuples() -> None:
     assert any("must not also list tuples" in e for e in errors)
 
 
+def test_validator_rejects_l2_exclusion_across_targets() -> None:
+    dims = [
+        _dim("D-a", "Alpha", [0, 1], target="T-main"),
+        _dim("D-b", "Beta", [0, 1], target="T-other"),
+    ]
+    plan = _plan(
+        dims=dims,
+        exclusions=[{"partitions": {"D-a": "p-D-a-0", "D-b": "p-D-b-0"}, "reason": "no"}],
+    )
+    plan["targets"].append(
+        {"id": "T-other", "evidence": {"kind": "replay_field", "field": "replay.g", "expected": 1}}
+    )
+    errors = products.validate_plan_fence(plan, init_columns=COLUMNS)
+    assert any("different Targets" in e for e in errors)
+
+
 def test_validator_rejects_exclusion_naming_unknown_partition() -> None:
     plan = _plan(
         exclusions=[{"partitions": {"D-a": "p-D-a-0", "D-b": "p-nope"}, "reason": "r"}]

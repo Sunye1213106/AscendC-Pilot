@@ -33,7 +33,7 @@ PACKET_SCHEMA = "tg-plan-scope-packet/v3"
 METHOD_CONTRACT = {
     "schema": "tg-plan/v3",
     "guard_semantics": "activation/v1",
-    "l2_contract": "full_cross_exclusions/v1",
+    "l2_contract": "per_target_cross/v1",
     "target_policy": "pr-owned-observable/v1",
     "probe_policy": "changed_use_reaching_def/v1",
     "observation_policy": "packet_allowlist/v1",
@@ -48,6 +48,9 @@ PACKET_USAGE = {
         "发现用的词表。pr_regression Target 只能引用 "
         "change.ownership.pr_eligible 且 change.evidence 含 ownership 关系的符号"
     ),
+    "deleted_symbols": "本次 hunk 删除、HEAD UO 里可能已经没有的符号；不要靠现图恢复",
+    "modified_writes": "本次 hunk 新增赋值左侧；Owner 点名写点用这份，不要通读 diff",
+    "plan_route_card": "给 Primary 拆路的改动摘要；Owner 不要用它代替 observation_catalog",
 }
 
 # Kinds that can legitimately back a Target's observable assignment.
@@ -388,8 +391,191 @@ def controls_catalog(init_doc: dict[str, Any] | None) -> dict[str, Any]:
         "note": (
             "case.* / controls / construct_hint.columns 只能用 case_allowed。"
             "unresolved_active 里落在本次 Target 路径闭包上的列必须出现在 untestable。"
+            "身份缺口（空 uo.id + candidate）只要 confidence=confirmed 就不进 untestable。"
         ),
     }
+
+
+_IDENT_TOKEN = re.compile(r"\b([A-Za-z_]\w{2,})\b")
+_IDENT_SKIP = frozenset(
+    {
+        "int", "void", "bool", "char", "long", "short", "float", "double", "auto",
+        "const", "static", "inline", "return", "class", "struct", "enum", "namespace",
+        "template", "typename", "using", "public", "private", "protected", "virtual",
+        "override", "nullptr", "true", "false", "this", "if", "else", "for", "while",
+        "switch", "case", "break", "continue", "sizeof", "include", "define",
+        "std", "vector", "string", "size_t",
+    }
+)
+_ASSIGN_LHS = re.compile(r"([A-Za-z_]\w*)\s*=(?!=)")
+_DIR_ROLES = (
+    ("op_kernel/", "kernel"),
+    ("op_host/", "host"),
+    ("common/", "common"),
+)
+
+
+def _hunk_path(hunk: dict[str, Any] | None) -> str:
+    if not isinstance(hunk, dict):
+        return ""
+    return str(hunk.get("new_file") or hunk.get("old_file") or "").replace("\\", "/").lstrip("./")
+
+
+def _idents_in_lines(lines: Any) -> list[str]:
+    seen: list[str] = []
+    for line in lines or []:
+        for match in _IDENT_TOKEN.finditer(str(line)):
+            name = match.group(1)
+            if name in _IDENT_SKIP or name.startswith("_"):
+                continue
+            if name not in seen:
+                seen.append(name)
+    return seen
+
+
+def hunk_change_digest(
+    hunks: list[dict[str, Any]] | None,
+    *,
+    cap: int = 24,
+) -> dict[str, list[str]]:
+    """Deleted symbols and assignment writes from operator hunks — not HEAD UO."""
+    deleted: list[str] = []
+    writes: list[str] = []
+    for row in hunks or []:
+        if not isinstance(row, dict):
+            continue
+        gone = _idents_in_lines(row.get("deleted_lines"))
+        added = set(_idents_in_lines(row.get("added_lines")))
+        for name in gone:
+            if name not in added and name not in deleted:
+                deleted.append(name)
+            if len(deleted) >= cap:
+                break
+        for line in row.get("added_lines") or []:
+            match = _ASSIGN_LHS.search(str(line))
+            if not match:
+                continue
+            name = match.group(1)
+            if name in _IDENT_SKIP or name in writes:
+                continue
+            writes.append(name)
+            if len(writes) >= cap:
+                break
+        if len(deleted) >= cap and len(writes) >= cap:
+            break
+    return {"deleted_symbols": deleted[:cap], "modified_writes": writes[:cap]}
+
+
+def _dir_role(path: str) -> str:
+    n = str(path or "").replace("\\", "/")
+    for marker, role in _DIR_ROLES:
+        if n.startswith(marker) or f"/{marker}" in f"/{n}":
+            return role
+    return ""
+
+
+def build_plan_route_card(
+    changed_files: list[str] | None,
+    changed_hunks: list[dict[str, Any]] | None,
+    *,
+    relevant_hunks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Short git digest for Primary routing. Not a constructability table."""
+    rows = [h for h in (changed_hunks or []) if isinstance(h, dict)]
+    rows.extend(h for h in (relevant_hunks or []) if isinstance(h, dict))
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        path = _hunk_path(row)
+        if path:
+            by_file.setdefault(path, []).append(row)
+    for rel in changed_files or []:
+        path = str(rel or "").replace("\\", "/").lstrip("./")
+        if path and path not in by_file:
+            by_file[path] = []
+    clusters_map: dict[str, dict[str, Any]] = {}
+    file_rows: list[dict[str, Any]] = []
+    for path, hunk_rows in sorted(by_file.items()):
+        role = _dir_role(path)
+        if not role:
+            continue
+        digest = hunk_change_digest(hunk_rows)
+        file_rows.append(
+            {
+                "path": path,
+                "status": (hunk_rows[0].get("status") if hunk_rows else "modified"),
+                "hunks": len(hunk_rows),
+                "kind": role,
+            }
+        )
+        cluster = clusters_map.setdefault(
+            role,
+            {
+                "id": f"C-{role}",
+                "kind": role,
+                "files": [],
+                "deleted": [],
+                "writes": [],
+            },
+        )
+        cluster["files"].append(path)
+        for name in digest.get("deleted_symbols") or []:
+            if name not in cluster["deleted"]:
+                cluster["deleted"].append(name)
+        for name in digest.get("modified_writes") or []:
+            if name not in cluster["writes"]:
+                cluster["writes"].append(name)
+    clusters = list(clusters_map.values())
+    if not clusters:
+        listed = [str(x) for x in (changed_files or []) if str(x).strip()][:16]
+        clusters = [
+            {
+                "id": "C-main",
+                "kind": "host",
+                "files": listed,
+                "deleted": [],
+                "writes": [],
+            }
+        ]
+        file_rows = [{"path": p, "status": "modified", "hunks": 0, "kind": "host"} for p in listed]
+    n = len(clusters)
+    if n <= 1:
+        hint = "one_owner"
+        hint_zh = "一路且短：立刻 1 个 Plan Owner"
+    else:
+        n_frag = min(n, 5)
+        hint = "fragments"
+        hint_zh = f"{n_frag} 路 FOCUS fragment + 1 个 Owner（最多 5 路）"
+    overall = hunk_change_digest(rows)
+    return {
+        "files": file_rows[:24],
+        "clusters": clusters[:5],
+        "deleted_symbols": overall.get("deleted_symbols") or [],
+        "modified_writes": overall.get("modified_writes") or [],
+        "route_hint": hint,
+        "route_hint_zh": hint_zh,
+    }
+
+
+def format_plan_route_card(card: dict[str, Any] | None) -> str:
+    """One compact block Primary can split on without opening the packet."""
+    doc = card if isinstance(card, dict) else {}
+    clusters = [c for c in (doc.get("clusters") or []) if isinstance(c, dict)]
+    if not clusters:
+        return "改动摘要为空；按单簇处理，立刻 1 个 Plan Owner。"
+    bits: list[str] = []
+    for cluster in clusters:
+        files = ", ".join(str(p) for p in (cluster.get("files") or [])[:6])
+        extra: list[str] = []
+        deleted = [str(x) for x in (cluster.get("deleted") or [])[:6] if x]
+        writes = [str(x) for x in (cluster.get("writes") or [])[:6] if x]
+        if deleted:
+            extra.append("删 " + ",".join(deleted))
+        if writes:
+            extra.append("写 " + ",".join(writes))
+        suffix = f"（{'；'.join(extra)}）" if extra else ""
+        bits.append(f"{cluster.get('kind') or 'cluster'}[{files}]{suffix}")
+    hint = str(doc.get("route_hint_zh") or "").strip()
+    return "改动摘要：" + "；".join(bits) + ("。" + hint if hint else "。")
 
 
 def build_semantic_packet(
@@ -399,12 +585,14 @@ def build_semantic_packet(
     architecture: str = "",
     changed_files: list[str] | None = None,
     changed_hunks: list[dict[str, Any]] | None = None,
+    relevant_hunks: list[dict[str, Any]] | None = None,
     init_doc: dict[str, Any] | None = None,
     repo_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Assemble the UO-grounded half of the packet. Never raises on UO gaps."""
     files = [str(f) for f in (changed_files or []) if str(f).strip()]
     hunks = [row for row in (changed_hunks or []) if isinstance(row, dict)]
+    extra = [row for row in (relevant_hunks or []) if isinstance(row, dict)]
     catalog = observation_catalog(
         Path(project_root), op_name=op_name, architecture=architecture
     )
@@ -428,6 +616,7 @@ def build_semantic_packet(
     catalog["probe_candidates"] = [
         row["name"] for row in locals_rows if row.get("probeable")
     ]
+    digest = hunk_change_digest(hunks + extra)
     return {
         "method_contract": method_contract(repo_root),
         "observation_catalog": catalog,
@@ -435,6 +624,9 @@ def build_semantic_packet(
         "behavior_candidates": behavior.get("candidates") or [],
         "branch_locals": locals_rows,
         "identifiers": behavior.get("identifiers") or [],
+        "deleted_symbols": digest.get("deleted_symbols") or [],
+        "modified_writes": digest.get("modified_writes") or [],
+        "plan_route_card": build_plan_route_card(files, hunks, relevant_hunks=extra),
         "usage": dict(PACKET_USAGE),
         "packet_notes": [
             n

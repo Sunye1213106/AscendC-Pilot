@@ -2,7 +2,7 @@
 
 通读 `parts/harness.yaml` 与 `parts/bind.yaml`。不要写文件。本步只判过不过：放行后引擎才 `bind_promote` 合并正式 `init.yaml`。两份没到齐不能判。
 
-**禁止做 schema / YAML 审查。** 非法组合（`relation=candidate`、`confirmed` 却空 `uo.id`、非 active 却 `confirmed`）由引擎 validator 拒绝；`PASS` 时引擎会再跑同一 validator，失败是 `BIND_PART_INVALID`，不是「schema 看起来 OK 所以过」。本窗只抽查已 `confirmed` 行的 provenance：这条 `uo.id` 是否真是 CSV→API→Host→implementation state 闭合链上的实现状态。
+**禁止做 schema / YAML 审查。** 非法组合（`relation=candidate`、`confirmed` 却无 construct 证据、非 active 却 `confirmed`）由引擎 validator 拒绝；`PASS` 时引擎会再跑同一 validator，失败是 `BIND_PART_INVALID`，不是「schema 看起来 OK 所以过」。本窗只抽查已 `confirmed` 行的 provenance：有 `uo.id` 时这条 id 是否真是 CSV→API→Host→implementation state 闭合链上的实现状态；空 id + `candidate` 且有 `runtime.target` / `evidence` 是合法 construct，不要因此 REWORK。
 
 **`inspect yaml` 过了只说明能合并。** 多数 active kwargs 列 `partial` + 空 `uo.id` → `REWORK bind`。不要因为能 parse 就 PASS。
 
@@ -18,7 +18,7 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 
 对每条 `confidence: confirmed` 的列抽查，不要只看格子填了。任一项失败就 REWORK。
 
-1. **`uo.id` 指对了闭合链上的符号。** 标量 / layout / 位置实参列：`uo.id` 等于该 `call_args.name` 即闭合到 runtime API，不要因为 CodeMap 没有同名 Host 写点就 REWORK。纯尺寸列应是 tiling 字段短名。运行上下文开关绑无参 `dim_names` 里的那一维即闭合。只碰到相似符号应是 `uo.candidate` + `unresolved`。开关维 / `*TemplateNum` / 张量操作数不是 dtype / shape / layout 列的身份。尺寸列不要绑派生 kwargs。
+1. **身份与 construct 分开。** 标量 / layout / 位置实参列：`uo.id` 等于该 `call_args.name` 即闭合到 runtime API，不要因为 CodeMap 没有同名 Host 写点就 REWORK。纯尺寸列应是 tiling 字段短名。运行上下文开关有 harness 证据即可 `confirmed`；无参 `dim_names` 对得上再填 `uo.id`，对不上只留 `candidate`。只碰到相似符号应是 `uo.candidate`，**不要把 construct 改成 unresolved**。开关维 / `*TemplateNum` / 张量操作数不是 dtype / shape / layout 列的身份。尺寸列不要绑派生 kwargs。
 2. **`relation` 描述 CSV→runtime API。** `direct` = identity / 平凡转换；`derived` = 非 identity 脚本变换；张量用 `tensor_shape` / `tensor_dtype` / `presence`。分不清应空 relation + `unresolved`。layout 列到开关维的投影写在 `domains.projection`。
 3. **`call_args` 的 `sources[]` 对得上这条 confirmed 列。** 张量多源必须分条。两列不得共用一个 `uo.id`。
 4. **domains 拆开。** `applicability` / `value` / `projection` 分开写。`domains.profile` 引用 scan profile。`operator` 空却 `compare=match` → `REWORK bind`。
@@ -48,6 +48,7 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 | 现象 | 下一发 |
 | --- | --- |
 | confirmed 行的 `uo.id` 不是闭合链上的实现状态（尺寸列绑成邻居维 / 派生 kwargs，或 kwargs 列 id 与 `call_args.name` 对不上） | `REWORK bind` |
+| confirmed 却无 harness 证据（空 evidence 且无 runtime.target / sources） | `REWORK bind` |
 | 两列共 `uo.id` / 开关维或 TemplateNum 当 dtype/shape 身份 / 尺寸列绑操作数名 / kwargs 列大量空 `uo.id` | `REWORK bind` |
 | 确定性列标 metadata | `REWORK bind` |
 | 精度口径与 argparse 不符 / 编了阈值 / golden-only 当精度 | `REWORK harness` |

@@ -289,3 +289,42 @@ def test_ce_reviewer_agent_has_empty_write_scopes() -> None:
     root = Path(__file__).resolve().parents[2]
     scopes = agent_write_scopes("ce-reviewer", root)
     assert scopes == []
+
+
+def test_plan_ingest_prepare_routes_from_change_card(tmp_path: Path) -> None:
+    import yaml
+
+    from ascendc_pilot.actions.runtime import _complete_plan_ingest_prepare
+    from ascendc_pilot.runs import receipts_dir
+
+    op = tmp_path / "flash_op"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    state = start_workflow(op, "tg-plan", architecture="arch35", op_name="flash_op")
+    run_id = str(state.get("run_id") or "R1")
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    packet = {
+        "plan_route_card": {
+            "clusters": [
+                {
+                    "kind": "host",
+                    "files": ["op_host/tiling.cpp"],
+                    "deleted": ["OldFn"],
+                    "writes": ["selectedRound"],
+                }
+            ],
+            "route_hint": "one_owner",
+            "route_hint_zh": "一路且短：立刻 1 个 Plan Owner",
+        }
+    }
+    path = receipts_dir(op, run_id) / "plan_scope_packet.yaml"
+    path.write_text(yaml.safe_dump(packet, allow_unicode=True), encoding="utf-8")
+    out = _complete_plan_ingest_prepare(op, run_id=run_id, sdir=sdir, result={})
+    msg = str(out.get("message_zh") or "")
+    assert "禁止 Read" in msg
+    assert "改动摘要" in msg
+    assert "梳理独立行为簇" not in msg
+    assert "测试列" in msg
+    assert "OldFn" in msg or "selectedRound" in msg or "host[" in msg
+    assert out.get("dispatch_task") is False

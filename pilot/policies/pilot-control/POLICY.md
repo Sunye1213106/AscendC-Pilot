@@ -60,7 +60,7 @@ clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.ya
 
 用户只要求 Code Review：只跑 `ce-review`。
 
-用户只要生成用例、未要求完整审查：不要默认加入 `ce-review`。Engine 会把 `tg-solve` 闭包成 `uo-*` → `tg-init` → `tg-plan` → `tg-solve`；`plan_precheck` 后回到 Primary，原生 Task 派 Plan Owner，不要在中间再派自由查询。
+用户只要生成用例、未要求完整审查：不要默认加入 `ce-review`。Engine 会把 `tg-solve` 闭包成 `uo-*` → `tg-init` → `tg-plan` → `tg-solve`；`plan_precheck` 后回到 Primary，按改动摘要一路 Owner 或最多 5 路 fragment，不要在中间再派自由查询，不要通读 packet。
 
 用户只要求语义查询：先保证 `.uo`（无图 `uo-init`，过期 `uo-update`），再 `pilot_cli uo-query`，不进入 `tg-plan`。
 
@@ -86,10 +86,10 @@ clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.ya
 
 ## tg-plan 路由
 
-`plan_precheck` 之后 Host **回到 Primary**，不发 `dispatch_subagent` / `task_prompt_stub`。禁止单独 `plan_route` action，也不用文件数/LOC 脚本分类。拆路只看独立测试因果链。相关 ≠ 单域。每轮最多 5 路。
+`plan_precheck` 之后 Host **回到 Primary**，不发 `dispatch_subagent` / `task_prompt_stub`。禁止单独 `plan_route` action，也不用文件数/LOC 脚本分类。拆路只看 `plan_precheck` 回执里的改动摘要（文件簇 / 删除符号 / 写入点），像 `uo-query` 一样：一路且短直接派，多簇同一轮最多 5 路。禁止 Read `plan_scope_packet.yaml`。不要按测试列能不能构造来拆路。
 
-* 一条主行为：立刻原生 `Task(agent=tg-analyst)` 当 Plan Owner。Task 正文即全部（packet 路径 + FOCUS + 只交 `tg-plan/v3` YAML），不要让子代去找 session `prompt.md`。
-* 多条独立行为：同一轮最多 5 路 FOCUS fragment（`coverage-fragment/v1`），再一个 Owner 汇总。fragment 必须 `pilot_run` ingest 落盘；空 fragment → `PLAN_FRAGMENT_REQUIRED`。
+* 一个簇：立刻原生 `Task(agent=tg-analyst)` 当 Plan Owner。Task 正文即全部（packet 路径 + FOCUS + 只交 `tg-plan/v3` YAML），不要让子代去找 session `prompt.md`。
+* 多个簇：同一轮最多 5 路 FOCUS fragment（`coverage-fragment/v1`），再一个 Owner 汇总。fragment 必须 `pilot_run` ingest 落盘；空 fragment → `PLAN_FRAGMENT_REQUIRED`。
 * Owner / fragment **禁止再派 Task**。Primary **禁止 Write `tg/plan.md`**。下一发 `pilot_run(workflow=tg-plan)` intent=YAML。
 
 向用户说明将派 1 个 Owner 还是 N 路 FOCUS 后立刻派。

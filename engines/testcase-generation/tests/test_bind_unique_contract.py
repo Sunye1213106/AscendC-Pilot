@@ -178,7 +178,46 @@ def test_validate_bind_part_rejects_confirmed_empty_id_with_candidate() -> None:
             },
         }
     )
-    assert any("uo.id" in e or "confirmed" in e for e in errors)
+    assert any("construct evidence" in e or "confirmed" in e for e in errors)
+
+
+def test_validate_bind_part_accepts_construct_without_uo_identity() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "is_deter": {
+                    "control": {"status": "active"},
+                    "relation": "derived",
+                    "confidence": "confirmed",
+                    "runtime": {"target": "ctx.deterministic", "path": []},
+                    "uo": {"id": "", "candidate": "DeterType"},
+                    "evidence": "main.py sets ctx.deterministic from the column",
+                }
+            },
+        }
+    )
+    assert errors == []
+    row = {
+        "control": {"status": "active"},
+        "relation": "derived",
+        "confidence": "confirmed",
+        "runtime": {"target": "ctx.deterministic", "path": []},
+        "uo": {"id": "", "candidate": "DeterType"},
+        "evidence": "main.py sets ctx.deterministic from the column",
+    }
+    assert products.is_bound_control(row) is True
+    from testcase_agent import plan_packet
+
+    catalog = plan_packet.controls_catalog({"mapping": {"is_deter": row, "B": {
+        "control": {"status": "active"},
+        "relation": "direct",
+        "confidence": "confirmed",
+        "uo": {"id": "b", "candidate": ""},
+        "evidence": "kwarg",
+    }}})
+    assert "is_deter" in catalog["case_allowed"]
+    assert "is_deter" not in catalog["unresolved_active"]
 
 
 def test_validate_bind_part_rejects_confirmed_non_active() -> None:

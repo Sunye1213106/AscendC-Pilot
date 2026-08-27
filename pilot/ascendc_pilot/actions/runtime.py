@@ -1263,15 +1263,31 @@ def _complete_plan_ingest_prepare(
         return result
     _dump(prompted, {"schema": "tg-plan-ingest-prompted/v1"})
     packet = ""
+    card: dict[str, Any] = {}
     try:
         from ascendc_pilot.runs import receipts_dir
+        from testcase_agent.plan_packet import format_plan_route_card
 
         packet_path = receipts_dir(project_root, run_id) / "plan_scope_packet.yaml"
         if packet_path.is_file():
             packet = packet_path.as_posix()
+            try:
+                loaded = yaml.safe_load(packet_path.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                loaded = {}
+            if isinstance(loaded, dict) and isinstance(loaded.get("plan_route_card"), dict):
+                card = loaded["plan_route_card"]
+            digest = format_plan_route_card(card)
+        else:
+            digest = "改动摘要未写入 packet；按单簇处理。"
     except Exception:  # noqa: BLE001
         packet = ""
-    packet_line = f"改动包：`{packet}`。" if packet else "改动包在 `runs/<run>/receipts/plan_scope_packet.yaml`。"
+        digest = "改动摘要未写入 packet；按单簇处理。"
+    packet_line = (
+        f"Owner Task 只写改动包路径 `{packet}`，Primary 禁止 Read 该文件。"
+        if packet
+        else "改动包在 `runs/<run>/receipts/plan_scope_packet.yaml`；Primary 禁止 Read。"
+    )
     contract = ""
     for rel in (
         "refs/test-plan/coverage-planning.md",
@@ -1285,11 +1301,17 @@ def _complete_plan_ingest_prepare(
         f"权威合同：`{contract}`（唯一 SSOT）。" if contract else ""
     )
     result["ok"] = True
+    result["plan_route_card"] = card
     result["message_zh"] = (
-        "plan_precheck 已完成。" + packet_line + contract_line
-        + " 按 `pilot-control` 梳理独立行为簇，立刻原生 `Task(agent=tg-analyst)`："
-        "简单一个 Plan Owner（正文即全部：FOCUS + packet 路径 + 权威合同路径 + 只交 YAML）；"
-        "复杂同一轮最多 5 路 FOCUS fragment，再一个 Owner。"
+        "plan_precheck 已完成。"
+        + digest
+        + " 拆路只看这份改动摘要（AI 大体改了哪些文件簇/删除符号/写入点），"
+        "不要按测试列可构造性拆路，禁止 Read `plan_scope_packet.yaml`。"
+        + packet_line
+        + contract_line
+        + " 按 `pilot-control` 立刻原生 `Task(agent=tg-analyst)`："
+        "一路且短（一个簇）→ 1 个 Plan Owner；"
+        "多簇同一轮最多 5 路 FOCUS fragment，再一个 Owner。"
         "Task 正文必须写明：合同以上面这个路径为准，"
         "禁止自行搜索 ~/.config、~/.cursor、cognitive-skills 等其它方法论副本。"
         "禁止 `dispatch_subagent`。"

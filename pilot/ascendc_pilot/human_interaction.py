@@ -47,6 +47,21 @@ _IN_TREE_TEST_DIR_NAMES = frozenset({"tests", "test", "ut", "unittest", "unit_te
 _HARNESS_SKIP_MARKERS = frozenset({"have_repo", "stop", "custom"})
 
 
+def option_canonical_value(ask: dict[str, Any] | None, raw: str) -> str:
+    """Map an AskQuestion label or value to ``option.value``. Receipts store value only."""
+    answer = str(raw or "").strip()
+    if not answer or not isinstance(ask, dict):
+        return answer
+    for opt in ask.get("options") or []:
+        if not isinstance(opt, dict):
+            continue
+        label = str(opt.get("label") or "").strip()
+        value = str(opt.get("value") or "").strip()
+        if answer in {label, value} and (value or label):
+            return value or label
+    return answer
+
+
 def _dump(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -708,19 +723,13 @@ def record_answer(
             "got": request_id,
         }
     allowed = [str(v) for v in (pending.get("allowed_values") or [])]
-    answer = str(value or "").strip()
     ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
-    if allowed and answer not in allowed:
-        # Accept option labels mapped via ask_question.options
-        for opt in ask.get("options") or []:
-            if not isinstance(opt, dict):
-                continue
-            if answer in {
-                str(opt.get("label") or ""),
-                str(opt.get("value") or ""),
-            }:
-                answer = str(opt.get("value") or opt.get("label") or answer)
-                break
+    answer = option_canonical_value(ask, str(value or "").strip())
+    option_values = {
+        str(opt.get("value") or opt.get("label") or "").strip()
+        for opt in (ask.get("options") or [])
+        if isinstance(opt, dict) and (opt.get("value") or opt.get("label"))
+    }
     free_path = ""
     git_url = ""
     if pending_allows_free_path(pending):
@@ -731,16 +740,19 @@ def record_answer(
             git_url = extract_harness_git_url(answer) or extract_harness_git_url(str(value or ""))
             if git_url:
                 answer = git_url
-    try:
-        from ascendc_pilot.run_resume import normalize_decision
+    allowed_canon: set[str] = set()
+    if answer not in option_values:
+        try:
+            from ascendc_pilot.run_resume import normalize_decision
 
-        canon = normalize_decision(answer)
-        if canon:
-            answer = canon
-        allowed_canon = {normalize_decision(v) or v for v in allowed} if allowed else set()
-    except Exception:  # noqa: BLE001
-        canon = None
-        allowed_canon = set(allowed)
+            canon = normalize_decision(answer)
+            if canon:
+                answer = canon
+            allowed_canon = {normalize_decision(v) or v for v in allowed} if allowed else set()
+        except Exception:  # noqa: BLE001
+            allowed_canon = set(allowed)
+    else:
+        allowed_canon = set(option_values)
     path_ok = bool(free_path) or bool(git_url) or (
         pending_allows_free_path(pending)
         and answer.lower() not in _HARNESS_SKIP_MARKERS
@@ -863,28 +875,21 @@ def require_decision_receipt(
             "expected_kind": expected_kind,
             "got": receipt.get("kind"),
         }
-    value = str(receipt.get("value") or "")
-    if expected_values and value not in expected_values:
-        try:
-            from ascendc_pilot.run_resume import normalize_decision
-
-            got = normalize_decision(value) or value
-            allowed = {normalize_decision(v) or v for v in expected_values}
-            if got not in allowed:
-                return {
-                    "ok": False,
-                    "error": "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH",
-                    "expected_values": list(expected_values),
-                    "got": value,
-                    "message_zh": f"收据值 {value!r} 不是本次操作所需的肯定选择",
-                }
-        except Exception:  # noqa: BLE001
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
+    value = option_canonical_value(ask, str(receipt.get("value") or ""))
+    if expected_values:
+        expected = {
+            option_canonical_value(ask, str(v)) for v in expected_values if str(v).strip()
+        }
+        if value not in expected:
             return {
                 "ok": False,
                 "error": "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH",
                 "expected_values": list(expected_values),
-                "got": value,
-                "message_zh": f"收据值 {value!r} 不是本次操作所需的肯定选择",
+                "got": str(receipt.get("value") or ""),
+                "message_zh": (
+                    f"收据值 {receipt.get('value')!r} 不是本次操作所需的肯定选择"
+                ),
             }
     if consume:
         receipt["consumed"] = True

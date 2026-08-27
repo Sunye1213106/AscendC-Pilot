@@ -38,7 +38,7 @@
 - 改写另一列（dropout / keep_prob 一类开关）→ `active` + `derived`，不是 `unwired`
 - `Actual_` / 期望 / 实测写回 → `result`
 - Enable / 用例名 / 是否跑行 → `metadata` + 空 relation + `unresolved`，禁止 `uo.id`
-- 不进 kwargs、但驱动 host 运行上下文（确定性）→ `active`（`derived` / `presence`），要绑 UO
+- 不进 kwargs、但驱动 host 运行上下文（确定性）→ `active`（`derived` / `presence`）。`confidence` 按 harness 证据；对不上 UO 只填 `uo.candidate`，不要把 construct 降成 unresolved
 
 unwired / shadowed / fallback / result / metadata 停在分类，不要填 `uo.id`。
 
@@ -49,12 +49,12 @@ unwired / shadowed / fallback / result / metadata 停在分类，不要填 `uo.i
 **先看该列是否出现在标量 / layout kwargs 的 `sources[]`。是 → 走 1，不要走 2。**
 
 1. **标量 / layout / 位置实参列：** `uo.id` = 该 `call_args.name` → `confirmed`。多候选取 `sources[]` 长度为 1 的那个；只剩聚合 → 空 + `unresolved`。不要改用同维 tiling 字段候选。
-2. **仅 tensor_shape（无标量 kwargs source）：** `uo.id` = 列名查到的 `TILING_FIELD.name`。对不上 → 空 + `unresolved`。
-3. **tensor_dtype：** 不要绑 `*DType` / `Is*`。对不上 → 空 + `unresolved`。
+2. **仅 tensor_shape（无标量 kwargs source）：** `uo.id` = 列名查到的 `TILING_FIELD.name`。对不上 → 空 id + `candidate`，construct 仍按 harness 证据 `confirmed`。
+3. **tensor_dtype：** 不要绑 `*DType` / `Is*`。对不上 → 空 id + `candidate`，construct 仍按 harness 证据。
 4. **列本身就是开关**（无参 `dim_names` 且列控制的就是它）→ 抄那维。
-5. 对不上 → 空 + `unresolved` + findings `PARTIAL`。不借邻居。
+5. 对不上 → 空 id + `candidate`，**construct 仍按 harness 证据 confirmed**。不借邻居。
 
-CSV→API→具名 kwargs 闭合且 id 非空 → `confirmed`。只碰到相似符号 → `uo.candidate` + `unresolved`。不要用开关维给 dtype/shape 凑 `confirmed`。
+CSV→API→具名 kwargs 闭合且 id 非空 → `confirmed`。只碰到相似符号 → `uo.candidate`，construct 仍按 harness 证据；不要用开关维给 dtype/shape 凑身份。
 
 `operator` / `compare` 只对 active。`compare=match` 仅当 `operator` 非空。不要改引擎写入的 `domains.profile`。
 

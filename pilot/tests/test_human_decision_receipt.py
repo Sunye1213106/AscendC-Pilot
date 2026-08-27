@@ -134,6 +134,41 @@ def test_require_expected_values_retry_mismatch(tmp_path: Path) -> None:
     assert bad.get("error") == "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH"
 
 
+def test_plan_approve_chinese_label_canonicalizes_to_approve(tmp_path: Path) -> None:
+    """Fallback question returns the Chinese label; receipt and gate must store/accept value."""
+    start_workflow(tmp_path, "tg-plan", phase="approve", force_phase=True, architecture="arch35")
+    ask = {
+        "header": "规划已就绪，是否开始求解？",
+        "question": "是否批准规划并进入求解？",
+        "options": [
+            {"label": "批准并开始求解", "value": "approve"},
+            {"label": "返工规划", "value": "rework"},
+            {"label": "停止本次目标", "value": "stop"},
+        ],
+    }
+    env = issue_interaction_request(
+        tmp_path,
+        kind="primary_approve",
+        ask_question=ask,
+        action_id="plan_approve",
+        decision_kind="primary_approve",
+        allowed_values=["approve", "批准并开始求解", "rework", "返工规划", "stop", "停止本次目标"],
+    )
+    answered = record_answer(tmp_path, request_id=env["request_id"], value="批准并开始求解")
+    assert answered.get("ok") is True, answered
+    assert answered.get("value") == "approve"
+
+    required = require_decision_receipt(
+        tmp_path,
+        expected_values=["approve"],
+        expected_action_id="plan_approve",
+        expected_kind="primary_approve",
+        consume=True,
+    )
+    assert required.get("ok") is True, required
+    assert required.get("value") == "approve"
+
+
 def test_record_answer_without_pending_includes_path(tmp_path: Path) -> None:
     missed = record_answer(tmp_path, request_id="nope", value="confirm")
     assert missed.get("ok") is False

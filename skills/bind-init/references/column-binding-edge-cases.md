@@ -16,7 +16,7 @@
 
 Enable / 用例名 / 是否跑行 → `metadata` + 空 relation + `unresolved`，禁止 `uo.id`。
 
-确定性 / 设备等运行上下文：不进 kwargs 但 host 会读 → `active` + `derived`，绑无参查询里的那一维。不要标 metadata。
+确定性 / 设备等运行上下文：不进 kwargs 但 host 会读 → `active` + `derived`，construct 按 harness 证据 `confirmed`。identity 对不上就 `candidate`，不要把 construct 降成 unresolved。不要标 metadata。
 
 改写列（截短 / 过滤 / 重映射另一列）→ `active` + `derived`，绑被改写对象，不借邻居。
 
@@ -30,6 +30,6 @@ Enable / 用例名 / 是否跑行 → `metadata` + 空 relation + `unresolved`�
 
 仅 `active` 之后才 `uo-query`。必须先做一次无参查询。尺寸列用列名查，只取 `TILING_FIELD.name`。
 
-`uo.id` 填短名 / `canonical`。只碰到相似符号且该列没有标量 kwargs source → `uo.candidate` + `unresolved`。
+`uo.id` 填短名 / `canonical`。只碰到相似符号且该列没有标量 kwargs source → `uo.candidate`，construct 仍按 harness 证据。
 
 projection 写在 `domains.projection`。不要改引擎写入的 `domains.profile`。`compare=match` 仅当 `operator` 非空。

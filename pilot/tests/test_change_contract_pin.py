@@ -576,3 +576,118 @@ def test_pin_rejects_head_mismatch(tmp_path: Path) -> None:
     out = pin_facts(op)
     assert out.get("ok") is False
     assert out.get("error") == "PIN_HEAD_MISMATCH"
+
+
+def _prepare_noisy_pr_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    repo = tmp_path
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init")
+    op = _op(repo)
+    src = op / "op_host" / "arch35" / "tiling.cpp"
+    src.write_text("void OldFn() {}\nint foo = 0;\n", encoding="utf-8")
+    kernel = op / "op_kernel" / "kernel.h"
+    kernel.parent.mkdir(parents=True, exist_ok=True)
+    kernel.write_text("int k = 0;\n", encoding="utf-8")
+    other = repo / "other_op" / "op_host" / "foo.cpp"
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("int x = 0;\n", encoding="utf-8")
+    (repo / ".clang-format").write_text("BasedOnStyle: LLVM\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "-c",
+        "user.email=pin@example.invalid",
+        "-c",
+        "user.name=Pin Test",
+        "commit",
+        "-m",
+        "base",
+    )
+    base = _git(repo, "rev-parse", "HEAD")
+    src.write_text("int foo = 1;\nint selectedRound = 1;\n", encoding="utf-8")
+    kernel.write_text("int k = 1;\n", encoding="utf-8")
+    other.write_text("int x = 1;\n", encoding="utf-8")
+    (repo / ".clang-format").write_text("BasedOnStyle: Google\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(
+        repo,
+        "-c",
+        "user.email=pin@example.invalid",
+        "-c",
+        "user.name=Pin Test",
+        "commit",
+        "-m",
+        "head",
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    return op, base, head
+
+
+def test_scope_operator_hunks_drops_other_ops_and_repo_noise() -> None:
+    from ascendc_pilot.change_contract import hunk_path, scope_operator_hunks
+
+    hunks = [
+        {"new_file": "flash_op/op_host/arch35/tiling.cpp", "hunk_id": "H1"},
+        {"new_file": "flash_op/op_kernel/kernel.h", "hunk_id": "H2"},
+        {"new_file": "other_op/op_host/foo.cpp", "hunk_id": "H3"},
+        {"new_file": ".clang-format", "hunk_id": "H4"},
+        {"new_file": "CMakeLists.txt", "hunk_id": "H5"},
+    ]
+    scoped, relevant = scope_operator_hunks(
+        hunks,
+        changed_files=["flash_op/op_host/arch35/tiling.cpp"],
+        operator_name="flash_op",
+    )
+    assert [hunk_path(h) for h in scoped] == ["flash_op/op_host/arch35/tiling.cpp"]
+    assert [hunk_path(h) for h in relevant] == ["flash_op/op_kernel/kernel.h"]
+
+
+def test_pin_and_packet_keep_operator_hunks_only(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import _compact_plan_scope_packet
+    from ascendc_pilot.change_contract import hunk_path, load_change_contract, pin_facts
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    op, base, head = _prepare_noisy_pr_repo(tmp_path)
+    ensure_agent_layout(op, arch="arch35")
+    (op / ".ascendc-pilot" / "arch35" / "uo").mkdir(parents=True, exist_ok=True)
+    (op / ".ascendc-pilot" / "arch35" / "uo" / "manifest.yaml").write_text(
+        "op_name: flash_op\n", encoding="utf-8"
+    )
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=base,
+        head_sha=head,
+        worktree=str(tmp_path),
+    )
+    out = pin_facts(op)
+    assert out.get("ok") is True, out
+    contract = load_change_contract(op) or {}
+    paths = {hunk_path(h) for h in contract.get("changed_hunks") or []}
+    assert any("tiling.cpp" in p for p in paths)
+    assert not any(p == ".clang-format" or p.endswith("/.clang-format") for p in paths)
+    assert not any("other_op" in p for p in paths)
+    assert any("kernel.h" in p for p in paths)
+
+    packet = _compact_plan_scope_packet(op, {"architecture": "arch35", "run_id": "R1"})
+    packet_paths = {hunk_path(h) for h in packet.get("changed_hunks") or []}
+    assert any("tiling.cpp" in p for p in packet_paths)
+    assert not any("kernel.h" in p for p in packet_paths)
+    assert not any("other_op" in p for p in packet_paths)
+    assert not any("clang-format" in p for p in packet_paths)
+    relevant_paths = {hunk_path(h) for h in packet.get("relevant_hunks") or []}
+    assert any("kernel.h" in p for p in relevant_paths)
+    assert all("deleted_lines" not in (row or {}) for row in packet.get("relevant_hunks") or [])
+    meta = packet.get("change_contract") or {}
+    assert "changed_hunks" not in meta
+    dumped = yaml.safe_dump(packet, allow_unicode=True)
+    assert dumped.count("changed_hunks") <= 2
+    assert len(dumped) < 80_000
+    card = packet.get("plan_route_card") or {}
+    kinds = {c.get("kind") for c in card.get("clusters") or [] if isinstance(c, dict)}
+    assert "host" in kinds
+    assert "kernel" in kinds
+    assert card.get("route_hint") == "fragments"
+    assert "OldFn" in (packet.get("deleted_symbols") or []) or "OldFn" in (
+        card.get("deleted_symbols") or []
+    )

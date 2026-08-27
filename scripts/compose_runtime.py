@@ -20,9 +20,9 @@ _legacy.WORKFLOW_ENTRIES["ce-review"]["description"] = (
 )
 _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
     "白盒测试规划，只落 tg/plan.md。"
-    "`plan_precheck` 后 host_step 回 Primary：原生 Task(agent=tg-analyst) 当 Plan Owner，"
-    "同一窗完成测什么 + Coverage IR，只交 YAML。Host 不发 model 阶 ticket。"
-    "Engine 确定性 narrate 并 promote。禁止 Primary 自己 Write plan.md。"
+    "`plan_precheck` 后 host_step 回 Primary：按改动摘要拆路，原生 Task(agent=tg-analyst) "
+    "一路 Owner 或最多 5 路 fragment。禁止 Primary Read packet。只交 YAML。"
+    "Host 不发 model 阶 ticket。Engine 确定性 narrate 并 promote。禁止 Primary 自己 Write plan.md。"
     "`/tg-plan` 不审查 diff。全量 tilingkey 仅当用户点名时用 coverage.enumerate: legal_keys。"
     "缺脚本/列/生成器写 test_harness_gap 交 /ce-apply。缺 Owner YAML → PLAN_INGEST_REQUIRED。"
 )

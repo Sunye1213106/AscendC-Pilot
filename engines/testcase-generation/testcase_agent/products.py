@@ -131,6 +131,22 @@ def _runtime_path(row: Any) -> list[str]:
     return [text] if text else []
 
 
+def _runtime_target(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    runtime = row.get("runtime") if isinstance(row.get("runtime"), dict) else {}
+    return str(runtime.get("target") or "").strip()
+
+
+def _construct_evidence(row: Any) -> bool:
+    """Harness proof that solver can set this column — not UO identity."""
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("evidence") or "").strip():
+        return True
+    return bool(_runtime_target(row))
+
+
 def is_bound_control(row: Any) -> bool:
     if not isinstance(row, dict) or has_legacy_bind_fields(row):
         return False
@@ -138,9 +154,11 @@ def is_bound_control(row: Any) -> bool:
         return False
     if str(row.get("confidence") or "").strip() != "confirmed":
         return False
-    if not _uo_id(row) or _uo_candidate(row):
+    if str(row.get("relation") or "").strip() not in _SOLVE_RELATIONS:
         return False
-    return str(row.get("relation") or "").strip() in _SOLVE_RELATIONS
+    if _uo_id(row):
+        return True
+    return _construct_evidence(row)
 
 
 def is_confirmed_active(row: Any) -> bool:
@@ -367,8 +385,13 @@ def _validate_mapping_row(name: str, row: dict[str, Any]) -> list[str]:
                 f"mapping.{name} confirmed requires relation in "
                 "direct|derived|tensor_shape|tensor_dtype|presence"
             )
-        if not uo_id or candidate:
-            errors.append(f"mapping.{name} confirmed requires nonempty uo.id and empty uo.candidate")
+        if _uo_id(row) and candidate:
+            errors.append(f"mapping.{name} confirmed with uo.id requires empty uo.candidate")
+        if not _uo_id(row) and not _construct_evidence(row):
+            errors.append(
+                f"mapping.{name} confirmed without uo.id requires construct evidence "
+                "(runtime.target or evidence)"
+            )
     elif confidence == "partial":
         if uo_id:
             errors.append(f"mapping.{name} partial requires empty uo.id")
@@ -499,7 +522,9 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
         errors.append("script_repo mapping is empty; bind columns to script and UO identifiers")
     confirmed = any(is_bound_control(row) for row in mapping.values())
     if kind == "script_repo" and must_map and mapping and not confirmed:
-        errors.append("script_repo has no confirmed+active control with uo.id; old role+uo_id is not a bind")
+        errors.append(
+            "script_repo has no confirmed+active constructible control; old role+uo_id is not a bind"
+        )
     if kind == "script_repo":
         if not str(doc.get("entry") or "").strip():
             errors.append("entry required")
@@ -908,6 +933,20 @@ def validate_plan_fence(
                             errors.append(f"{owner}: {did_s} has no partition {pid_s}")
                     if not str(row.get("reason") or "").strip():
                         errors.append(f"{owner}: reason required")
+                    dim_targets: set[str] = set()
+                    for did_s in (parts or {}):
+                        for dim in fence.get("dimensions") or []:
+                            if not isinstance(dim, dict):
+                                continue
+                            if str(dim.get("id") or "").strip() != str(did_s).strip():
+                                continue
+                            tid = str(dim.get("target") or "").strip()
+                            if tid:
+                                dim_targets.add(tid)
+                    if len(dim_targets) > 1:
+                        errors.append(
+                            f"{owner}: L2 exclusion must not mix Dimensions from different Targets"
+                        )
             if l2_block.get("tuples") or l2_block.get("combinations"):
                 errors.append(
                     "coverage.L2 full_cross must not also list tuples/combinations"

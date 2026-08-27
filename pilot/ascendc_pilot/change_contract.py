@@ -225,6 +225,155 @@ def changed_hunks_of(contract: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+_REPO_NOISE_NAMES = frozenset(
+    {".clang-format", "CMakeLists.txt", ".gitignore", ".gitattributes"}
+)
+_OP_MARKERS = ("op_host/", "op_kernel/", "common/")
+_RELEVANT_FILE_CAP = 12
+_RELEVANT_PER_FILE = 3
+
+
+def _norm_rel(path: str) -> str:
+    return str(path or "").replace("\\", "/").lstrip("./")
+
+
+def hunk_path(hunk: dict[str, Any] | None) -> str:
+    if not isinstance(hunk, dict):
+        return ""
+    return _norm_rel(str(hunk.get("new_file") or hunk.get("old_file") or ""))
+
+
+def _split_operator_rel(path: str) -> tuple[str, str]:
+    n = _norm_rel(path)
+    for marker in ("op_host/", "op_kernel/", "common/", "tests/", "examples/"):
+        idx = n.find(marker)
+        if idx >= 0:
+            return n[:idx], n[idx:]
+    return "", n
+
+
+def _prefix_is_operator(prefix: str, operator_name: str) -> bool:
+    pref = _norm_rel(prefix).rstrip("/")
+    name = str(operator_name or "").strip()
+    if not pref:
+        return True
+    if not name:
+        return False
+    return pref == name or pref.endswith("/" + name)
+
+
+def _is_repo_noise(path: str) -> bool:
+    n = _norm_rel(path)
+    if n in _REPO_NOISE_NAMES:
+        return True
+    base = n.rsplit("/", 1)[-1]
+    return base in _REPO_NOISE_NAMES and n.count("/") == 0
+
+
+def _in_operator_tree(path: str, operator_name: str) -> bool:
+    if _is_repo_noise(path):
+        return False
+    pref, rel = _split_operator_rel(path)
+    if not any(rel.startswith(m) for m in _OP_MARKERS):
+        return False
+    return _prefix_is_operator(pref, operator_name)
+
+
+def file_matches_changed(
+    path: str,
+    changed_files: list[str],
+    operator_name: str = "",
+) -> bool:
+    n = _norm_rel(path)
+    h_pref, h_rel = _split_operator_rel(n)
+    for raw in changed_files or []:
+        f = _norm_rel(raw)
+        if not f:
+            continue
+        f_pref, f_rel = _split_operator_rel(f)
+        same_rel = bool(h_rel and f_rel and h_rel == f_rel)
+        same_path = n == f or n.endswith("/" + f) or f.endswith("/" + n)
+        if not same_rel and not same_path:
+            continue
+        if h_pref and f_pref and h_pref != f_pref:
+            continue
+        if h_pref and not _prefix_is_operator(h_pref, operator_name):
+            continue
+        if f_pref and not _prefix_is_operator(f_pref, operator_name):
+            continue
+        return True
+    return False
+
+
+def scope_operator_hunks(
+    hunks: list[dict[str, Any]] | None,
+    *,
+    changed_files: list[str],
+    operator_name: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep this-operator hunks. Drop other operators and repo-root noise."""
+    scoped: list[dict[str, Any]] = []
+    relevant: list[dict[str, Any]] = []
+    files = [str(x).strip() for x in (changed_files or []) if str(x).strip()]
+    for row in hunks or []:
+        if not isinstance(row, dict):
+            continue
+        path = hunk_path(row)
+        if not path:
+            continue
+        if file_matches_changed(path, files, operator_name):
+            scoped.append(row)
+        elif _in_operator_tree(path, operator_name):
+            relevant.append(row)
+    return scoped, relevant
+
+
+def compact_relevant_hunks(
+    hunks: list[dict[str, Any]] | None,
+    *,
+    file_cap: int = _RELEVANT_FILE_CAP,
+    per_file: int = _RELEVANT_PER_FILE,
+) -> list[dict[str, Any]]:
+    """Per-file cap; drop raw line text so packet stays a digest."""
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for row in hunks or []:
+        if not isinstance(row, dict):
+            continue
+        by_file.setdefault(hunk_path(row) or "_", []).append(row)
+    out: list[dict[str, Any]] = []
+    for idx, (_path, rows) in enumerate(sorted(by_file.items())):
+        if idx >= file_cap:
+            break
+        for row in rows[:per_file]:
+            out.append(
+                {
+                    "hunk_id": row.get("hunk_id"),
+                    "old_file": row.get("old_file"),
+                    "new_file": row.get("new_file"),
+                    "status": row.get("status"),
+                    "old_start": row.get("old_start"),
+                    "old_end": row.get("old_end"),
+                    "new_start": row.get("new_start"),
+                    "new_end": row.get("new_end"),
+                }
+            )
+    return out
+
+
+def contract_public_meta(contract: dict[str, Any] | None) -> dict[str, Any]:
+    """Packet-facing pin identity. Never embed hunk bodies."""
+    if not isinstance(contract, dict):
+        return {}
+    return {
+        "schema": contract.get("schema"),
+        "kind": contract.get("kind"),
+        "base_sha": contract.get("base_sha"),
+        "head_sha": contract.get("head_sha"),
+        "changed_files": changed_files_of(contract),
+        "enumerate": contract.get("enumerate") or "",
+    }
+
+
 def _as_files(raw: Any) -> list[str]:
     return [str(x).strip() for x in (raw or []) if str(x).strip()]
 
@@ -378,11 +527,25 @@ def pin_facts(
                 head_sha=head_sha,
                 worktree_head=str(worktree),
             )
+        scoped, relevant = scope_operator_hunks(
+            captured.get("hunks") or [],
+            changed_files=files,
+            operator_name=root.name,
+        )
+        if not scoped:
+            return {
+                "ok": False,
+                "error": PLAN_PR_HUNKS_REQUIRED,
+                "message_zh": (
+                    "git diff 有 hunk，但本算子 changed_files 对不上；"
+                    "仓根格式文件和其它算子不得当作本算子改动"
+                ),
+            }
         doc = {
             "schema": CHANGE_CONTRACT_SCHEMA,
             "kind": PR_REGRESSION,
             "changed_files": files,
-            "changed_hunks": captured.get("hunks") or [],
+            "changed_hunks": scoped + relevant,
             "base_sha": base_sha,
             "head_sha": head_sha,
             "enumerate": "",

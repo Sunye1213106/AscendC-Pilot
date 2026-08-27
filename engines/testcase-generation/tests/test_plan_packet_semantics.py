@@ -17,13 +17,21 @@ def test_controls_split_by_confidence_and_status() -> None:
         "mapping": {
             "B": {"control": {"status": "active"}, "confidence": "confirmed"},
             "sparse_mode": {"control": {"status": "active"}, "confidence": "confirmed"},
-            "is_deter": {"control": {"status": "active"}, "confidence": "unresolved"},
+            "is_deter": {
+                "control": {"status": "active"},
+                "confidence": "confirmed",
+                "relation": "derived",
+                "runtime": {"target": "ctx.deterministic"},
+                "uo": {"id": "", "candidate": "DeterType"},
+                "evidence": "harness reads the column",
+            },
+            "inner_drop": {"control": {"status": "active"}, "confidence": "unresolved"},
             "layout": {"control": {"status": "shadowed"}, "confidence": "confirmed"},
         }
     }
     out = plan_packet.controls_catalog(init)
-    assert out["case_allowed"] == ["B", "sparse_mode"]
-    assert out["unresolved_active"] == ["is_deter"]
+    assert out["case_allowed"] == ["B", "is_deter", "sparse_mode"]
+    assert out["unresolved_active"] == ["inner_drop"]
     assert out["inactive"] == ["layout"]
 
 
@@ -467,3 +475,50 @@ def test_multiple_reaching_defs_are_ambiguous(tmp_path: Path) -> None:
     }
     assert rows["mode"]["probeable"] is False
     assert "PROBE_AMBIGUOUS" in rows["mode"]["probe_blocked"]
+
+
+def test_hunk_digest_and_route_card_split_host_kernel() -> None:
+    hunks = [
+        {
+            "hunk_id": "H1",
+            "new_file": "op_host/tiling.cpp",
+            "status": "modified",
+            "deleted_lines": ["void OldFn() {"],
+            "added_lines": ["int selectedRound = 1;"],
+        }
+    ]
+    relevant = [
+        {
+            "hunk_id": "H2",
+            "new_file": "op_kernel/kernel.h",
+            "status": "modified",
+            "deleted_lines": [],
+            "added_lines": ["int bar = 2;"],
+        }
+    ]
+    digest = plan_packet.hunk_change_digest(hunks)
+    assert "OldFn" in digest["deleted_symbols"]
+    assert "selectedRound" in digest["modified_writes"]
+    card = plan_packet.build_plan_route_card(
+        ["op_host/tiling.cpp"], hunks, relevant_hunks=relevant
+    )
+    assert card["route_hint"] == "fragments"
+    kinds = {c["kind"] for c in card["clusters"]}
+    assert kinds == {"host", "kernel"}
+    text = plan_packet.format_plan_route_card(card)
+    assert "改动摘要" in text
+    assert "FOCUS fragment" in text
+
+
+def test_single_host_cluster_is_one_owner() -> None:
+    hunks = [
+        {
+            "new_file": "op_host/tiling.cpp",
+            "status": "modified",
+            "deleted_lines": [],
+            "added_lines": ["int foo = 1;"],
+        }
+    ]
+    card = plan_packet.build_plan_route_card(["op_host/tiling.cpp"], hunks)
+    assert card["route_hint"] == "one_owner"
+    assert "1 个 Plan Owner" in plan_packet.format_plan_route_card(card)

@@ -52,8 +52,8 @@
 | F6 | 同维两格谓词互斥且互不蕴含；`in` 的 values 不重叠 |
 | F7 | 多值字段：Target 用 `derived` + `in`，Dimension 每值 `eq` 一格。`replay_field` 的 `expected` 是标量 |
 | F8 | L1 每对的笛卡尔每格都能与 Target 同时成立 |
-| F9 | L2 用 `mode: full_cross`，exclusions 非空，每条 ≥2 维 partition 组合 + reason |
-| F10 | 落在本次 Target 路径闭包里的 unresolved + active 列名出现在 `untestable` |
+| F9 | L2 只交叉**同一 Target** 的维；`mode: full_cross` 时 exclusions 非空，每条 ≥2 维 partition 组合 + reason。禁止把互斥行为簇拼成一张全交叉表 |
+| F10 | 落在本次 Target 路径闭包里、**construct 失败**（unresolved + active）的列名出现在 `untestable`。身份缺口（空 uo.id + candidate）只要 confirmed 就不进 untestable |
 
 L0–L3 的义务条数由引擎从这份 IR 机械展开，plan 里不写数字，也不写 `obligations`。
 
@@ -148,6 +148,7 @@ untestable:
 | `constraints` 钉住了 Guard 或 Dimension 正在切的列 | 删这条 constraint |
 | L1 某格与 Target 不可同时成立 | 删这条 combination |
 | L2 exclusions 为空 | 做互斥分析；判不准的留给 Solve |
+| L2 把不同 Target 的维拼进同一条 exclusion / 全交叉 | 按 Target 拆开；互斥簇不要一张表 |
 | Target 指向未改动的兄弟 helper | 只点名 packet 里的新增/改动赋值 |
 | `replay` 字段有兄弟写点仍用它当 Target | 改观测本次 helper 的 `probe.{name}` |
 | 两格只改幅度、没有实现分岔 | 去切尚未覆盖的 `if` / min-max / helper |

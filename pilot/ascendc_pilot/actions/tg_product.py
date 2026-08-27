@@ -750,11 +750,15 @@ def _compact_plan_scope_packet(
         allow_legal_keys,
         changed_files_of,
         changed_hunks_of,
+        compact_relevant_hunks,
+        contract_public_meta,
         load_change_contract,
+        scope_operator_hunks,
         verify_pinned_head,
     )
 
     contract = load_change_contract(project_root) or {}
+    meta = contract_public_meta(contract)
     head_err = verify_pinned_head(project_root, contract)
     if head_err:
         packet = {
@@ -762,12 +766,18 @@ def _compact_plan_scope_packet(
             "has_diff": False,
             "note": head_err.get("message_zh") or "HEAD mismatch",
             "changed_files": [],
-            "change_contract": contract,
+            "change_contract": meta,
             "head_mismatch": head_err,
         }
         return packet
     files = changed_files_of(contract)
-    hunks = changed_hunks_of(contract)
+    scoped, extra = scope_operator_hunks(
+        changed_hunks_of(contract),
+        changed_files=files,
+        operator_name=Path(project_root).name,
+    )
+    hunks = scoped
+    relevant = compact_relevant_hunks(extra)
     has_diff = bool(files)
     note = ""
     if not has_diff:
@@ -779,7 +789,8 @@ def _compact_plan_scope_packet(
         "note": note,
         "changed_files": files,
         "changed_hunks": hunks,
-        "change_contract": contract,
+        "relevant_hunks": relevant,
+        "change_contract": meta,
         "allow_legal_keys": allow_legal_keys(project_root),
         "identifiers": [],
         "ident_cards": [],
@@ -796,11 +807,15 @@ def _compact_plan_scope_packet(
             architecture=str(tg_ctx.get("architecture") or arch),
             changed_files=files,
             changed_hunks=hunks,
+            relevant_hunks=extra,
             init_doc=init_doc,
             repo_root=_repo_root_for_contract(),
         )
     except Exception as exc:  # noqa: BLE001
         packet["semantic_packet_error"] = str(exc)[:300]
+        packet["plan_route_card"] = plan_packet.build_plan_route_card(
+            files, hunks, relevant_hunks=extra
+        )
         return packet
     packet["identifiers"] = semantic.pop("identifiers", [])
     packet.update(semantic)
