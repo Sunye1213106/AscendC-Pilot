@@ -1126,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
                     "ok": False,
                     "error": "not_human_required",
                     "status": st.get("status"),
-                    "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 inspect-failure 给出的 retry_command 重试",
+                    "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请 Host `pilot_run` 重试失败 Action，不要 bash / `pilot_cli` `run-action`",
                 }
             )
             return 1

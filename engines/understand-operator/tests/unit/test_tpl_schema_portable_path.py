@@ -27,8 +27,10 @@ def test_tpl_schema_source_refs_are_operator_relative(tmp_path: Path) -> None:
     assert cm.meta["tpl_schema"]["header"] == expected
     keys = cm.by_kind(EntityKind.TILING_KEY)
     assert keys and all(key.file == expected for key in keys)
-    assert ctx["tg_views"]["tiling/tpl_schema.yaml"]["header"] == expected
-    assert ctx["tg_views"]["tiling/exhaustive_key_space.yaml"]["header"] == expected
+    # DECL-only schemas do not stamp TPL views — those need ARGS_SEL.
+    views = ctx.get("tg_views") or {}
+    assert "tiling/tpl_schema.yaml" not in views
+    assert "tiling/exhaustive_key_space.yaml" not in views
     assert not Path(expected).is_absolute()
     assert str(tmp_path) not in repr(cm.to_dict())
-    assert str(tmp_path) not in repr(ctx["tg_views"])
+    assert str(tmp_path) not in repr(views)

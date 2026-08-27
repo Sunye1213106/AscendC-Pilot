@@ -48,6 +48,10 @@ _TYPEDEF_RE = re.compile(
 _MEMBER_RE = re.compile(
     r"(?P<type>(?:[\w:<>,\s*&!()]+?))\s+(?P<name>[A-Za-z_]\w*)\s*;"
 )
+#: A member declaration that has not closed after this many characters is not
+#: a field we can name; keep accumulating and `_MEMBER_RE` / `_conditional_field`
+#: re-scan the whole blob every line. Real fields close in tens of characters.
+_PENDING_TYPE_CAP = 2048
 # ``TPipe *pipe;`` — star sits between type and name, so _MEMBER_RE misses it.
 _PTR_MEMBER_RE = re.compile(
     r"(?P<type>(?:const\s+|volatile\s+)*[\w:]+(?:\s*<[^;{>]*>)?)\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*;"
@@ -161,9 +165,10 @@ def _base_type_name(type_text: str) -> str:
 def _conditional_field(text: str) -> tuple[str, str] | None:
     """Name + type of a ``std::conditional`` / ``conditional_t`` class field."""
     raw = str(text or "")
-    if "conditional" not in raw.lower():
-        # Collapsing whitespace over a long accumulated declaration is the
-        # expensive half; the match needs `conditional` either way.
+    # Avoid lowercasing a multi-kilobyte pending declaration: C++ spellings
+    # of std::conditional are ascii and the match cannot fire without this
+    # substring in some case.
+    if "conditional" not in raw and "Conditional" not in raw and "CONDITIONAL" not in raw:
         return None
     blob = _WS_RUN_RE.sub(" ", raw).strip().rstrip(";").strip()
     if "conditional" not in blob.lower():
@@ -437,6 +442,8 @@ def _advance_members(
     pending_line: int,
 ) -> tuple[str | None, int]:
     if pending_type is not None:
+        if len(pending_type) > _PENDING_TYPE_CAP:
+            return None, 0
         nm = _CONTINUATION_NAME_RE.match(line)
         combined = f"{pending_type} {line.strip()}"
         emit_name = ""
@@ -460,6 +467,8 @@ def _advance_members(
                         emit_name = m2.group("name")
         if emit_name:
             _emit_member(facts, current, emit_name, emit_type, path, root, i)
+            return None, 0
+        if len(combined) > _PENDING_TYPE_CAP:
             return None, 0
         return combined, pending_line
     if "(" in line and "std::conditional" not in line and "conditional_t" not in line:
@@ -609,6 +618,12 @@ class SourceIndexBuilder:
         return index
 
 
+def _scan_missing_item(item: tuple[Path, str, str]) -> tuple[Path, str, SourceFacts]:
+    """Module-level so ``map_files`` can pickle it into a process pool."""
+    path, resolved, root = item
+    return path, resolved, _scan_file(path, root=root, registry=_registry_names())
+
+
 def get_or_build(
     files: Iterable[Path | str],
     *,
@@ -618,8 +633,7 @@ def get_or_build(
     from uo_init.paths import resolved as _resolve
 
     index = SourceIndex(root=root)
-    registry = _registry_names()
-    missing: list[tuple[Path, str]] = []
+    missing: list[tuple[Path, str, str]] = []
     for raw in files:
         if deadline is not None and time.perf_counter() >= deadline:
             break
@@ -632,19 +646,15 @@ def get_or_build(
             continue
         if not path.is_file():
             continue
-        missing.append((path, resolved))
-
-    def _scan_missing(item: tuple[Path, str]) -> tuple[Path, str, SourceFacts]:
-        path, resolved = item
-        return path, resolved, _scan_file(path, root=root, registry=registry)
+        missing.append((path, resolved, root))
 
     scanned: list[tuple[Path, str, SourceFacts]]
     if len(missing) <= 1:
-        scanned = [_scan_missing(item) for item in missing]
+        scanned = [_scan_missing_item(item) for item in missing]
     else:
         from uo_init.parallel import map_files
 
-        scanned = map_files(missing, _scan_missing)
+        scanned = map_files(missing, _scan_missing_item)
 
     for path, resolved, facts in scanned:
         cache_put(resolved, facts)

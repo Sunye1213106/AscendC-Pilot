@@ -220,9 +220,10 @@ def _read_message() -> dict[str, Any] | None:
 
 
 def _write_message(msg: dict[str, Any]) -> None:
+    # Cursor MCP stdio is newline-delimited JSON (same as FastMCP / MCP SDK).
+    # Content-Length replies are ignored by that client, so discovery hangs.
     raw = json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8")
-    sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii"))
-    sys.stdout.buffer.write(raw)
+    sys.stdout.buffer.write(raw + b"\n")
     sys.stdout.buffer.flush()
 
 
@@ -310,14 +311,11 @@ def handle(msg: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _legacy_main() -> int:
-    sys.stderr.write("[ascendc-pilot mcp] ready (legacy)\n")
-    sys.stderr.flush()
     while True:
         try:
             msg = _read_message()
         except Exception as exc:  # noqa: BLE001
-            sys.stderr.write(f"[ascendc-pilot mcp] read error: {exc}\n")
-            sys.stderr.flush()
+            _debug({"read_error": str(exc)})
             continue
         if msg is None:
             return 0
@@ -331,47 +329,52 @@ def _legacy_main() -> int:
 
 
 def main() -> int:
-    try:
-        from mcp.server.fastmcp import FastMCP
-    except Exception as exc:  # noqa: BLE001
-        _debug({"fastmcp_import": str(exc)})
-        return _legacy_main()
+    # Default is the in-repo JSON-RPC loop. FastMCP logs INFO to stderr (Cursor
+    # treats that as MCP errors) and its NDJSON-only reader used to race with
+    # Content-Length probes. Force FastMCP with UO_MCP_FASTMCP=1 if needed.
+    if str(os.environ.get("UO_MCP_FASTMCP") or "").strip() in {"1", "true", "yes"}:
+        try:
+            from mcp.server.fastmcp import FastMCP
+        except Exception as exc:  # noqa: BLE001
+            _debug({"fastmcp_import": str(exc)})
+            return _legacy_main()
+        server = FastMCP("ascendc-pilot")
 
-    server = FastMCP("ascendc-pilot")
-
-    @server.tool(
-        name="uo_query",
-        title="uo_query",
-        description=(
-            "Read-only Operator CodeMap query. Four shapes only: "
-            "(1) no pattern = index, (2) identifier e.g. IsPse, "
-            "(3) Dim=Name or Name=Value e.g. IsPse=1, "
-            "(4) file + line copied from a previous card. "
-            "Do not pass natural-language sentences."
-        ),
-        structured_output=False,
-    )
-    def uo_query(
-        pattern: str = "",
-        file: str = "",
-        line: int = 0,
-        line_end: int = 0,
-        project: str = "",
-        architecture: str = "",
-    ) -> str:
-        payload = run_query(
-            project=project,
-            architecture=architecture,
-            pattern=pattern,
-            file=file,
-            line=line,
-            line_end=line_end,
+        @server.tool(
+            name="uo_query",
+            title="uo_query",
+            description=(
+                "Read-only Operator CodeMap query. Four shapes only: "
+                "(1) no pattern = index, (2) identifier e.g. IsPse, "
+                "(3) Dim=Name or Name=Value e.g. IsPse=1, "
+                "(4) file + line copied from a previous card. "
+                "Do not pass natural-language sentences."
+            ),
+            structured_output=False,
         )
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        def uo_query(
+            pattern: str = "",
+            file: str = "",
+            line: int = 0,
+            line_end: int = 0,
+            project: str = "",
+            architecture: str = "",
+        ) -> str:
+            payload = run_query(
+                project=project,
+                architecture=architecture,
+                pattern=pattern,
+                file=file,
+                line=line,
+                line_end=line_end,
+            )
+            return json.dumps(payload, ensure_ascii=False, default=str)
 
-    _debug({"boot": "fastmcp"})
-    server.run(transport="stdio")
-    return 0
+        _debug({"boot": "fastmcp"})
+        server.run(transport="stdio")
+        return 0
+    _debug({"boot": "legacy"})
+    return _legacy_main()
 
 
 if __name__ == "__main__":

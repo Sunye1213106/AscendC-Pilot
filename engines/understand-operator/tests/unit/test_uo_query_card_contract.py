@@ -256,6 +256,12 @@ def test_compile_var_card_lists_same_value_neighbors(tmp_path: Path) -> None:
                 status="confirmed",
             )
         )
+    cm.link(
+        RelationKind.ALIASES,
+        "CV_SYNC_DETER_FIX_FLAG",
+        "CV_SYNC_UB2L1_DS_FLAG",
+        status="confirmed",
+    )
     _product(cm, tmp_path)
     q = open_query(tmp_path, architecture="arch35")
     out = q.agent_query(pattern="SYNC_DETER_FIX_FLAG")
@@ -264,9 +270,80 @@ def test_compile_var_card_lists_same_value_neighbors(tmp_path: Path) -> None:
     )
     extras = card.get("extras") or {}
     names = {str(row.get("name") or "") for row in extras.get("same_value") or []}
-    assert "SYNC_V2_TO_C1_FLAG" in names
-    assert "SYNC_UB2L1_DS_FLAG" in names
+    assert "SYNC_V2_TO_C1_FLAG" not in names
     assert "UNRELATED_ZERO" not in names
+    assert "SYNC_UB2L1_DS_FLAG" in names
+
+
+def test_same_value_does_not_cross_enums(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="CV_sparse",
+            kind=EntityKind.COMPILE_VAR,
+            name="AttrIndex::SPARSE_MODE",
+            attrs={"value": 7, "enum": "AttrIndex", "provenance": "source_enum"},
+            file="op_host/common.h",
+            line_start=10,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="CV_mask",
+            kind=EntityKind.COMPILE_VAR,
+            name="InputIndex::ATTEN_MASK",
+            attrs={"value": 7, "enum": "InputIndex", "provenance": "source_enum"},
+            file="op_host/common.h",
+            line_start=40,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="SPARSE_MODE")
+    card = next(
+        row for row in (out.get("cards") or []) if str(row.get("kind") or "") == "COMPILE_VAR"
+    )
+    names = {str(row.get("name") or "") for row in (card.get("extras") or {}).get("same_value") or []}
+    assert "InputIndex::ATTEN_MASK" not in names
+    assert not (card.get("extras") or {}).get("definition", {}).get("snippet")
+    edges = card.get("edges") or {}
+    aliases = edges.get("ALIASES") if isinstance(edges.get("ALIASES"), dict) else {}
+    alias_names = {str(row.get("name") or "") for row in aliases.get("neighbors") or []}
+    assert "InputIndex::ATTEN_MASK" not in alias_names
+
+
+def test_input_outranks_enum_member_of_same_ident(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="IN_keep",
+            kind=EntityKind.INPUT,
+            name="keep_prob",
+            file="op_graph/proto.h",
+            line_start=122,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="CV_keep",
+            kind=EntityKind.COMPILE_VAR,
+            name="AttrIndex::KEEP_PROB",
+            attrs={"value": 1, "enum": "AttrIndex", "provenance": "source_enum"},
+            file="op_host/common.h",
+            line_start=191,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="keep_prob")
+    cards = list(out.get("cards") or [])
+    assert cards
+    assert str(cards[0].get("kind") or "") == "INPUT"
+    assert str(cards[0].get("name") or "") == "keep_prob"
 
 
 def test_index_orders_pipes_by_destroy_not_line(tmp_path: Path) -> None:
@@ -598,3 +675,236 @@ def test_cover_legal_key_count_not_confused_with_blocks(tmp_path: Path, monkeypa
     assert int(out.get("matching_block_count") or 0) == 1
     assert int(out.get("total_matched") or -1) == 1
     assert int(out.get("legal_key_count") or 0) == 32
+
+
+def test_prefix_rank_prefers_ident_boundary(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for name, line in (
+        ("INVOKE_FOO_BN2GS1S2", 4),
+        ("INVOKE_FOO_BN2_TAIL", 10),
+    ):
+        cm.add_entity(
+            Entity(
+                id=f"MAC_{name}",
+                kind=EntityKind.MACRO,
+                name=name,
+                file="op_kernel/arch35/invoke.h",
+                line_start=line,
+                status="confirmed",
+            )
+        )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="INVOKE_FOO_BN2")
+    names = [str(row.get("name") or "") for row in (out.get("cards") or [])]
+    assert names
+    assert names[0] == "INVOKE_FOO_BN2_TAIL"
+
+
+def test_around_source_line_without_entity_is_ok(tmp_path: Path) -> None:
+    rel = "op_kernel/arch35/entry.h"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["    /* pad */"] * 150
+    lines[139] = "    // continued macro body, no entity span"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="MAC_entry",
+            kind=EntityKind.MACRO,
+            name="ENTRY_HOOK",
+            file=rel,
+            line_start=2,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(file=rel, line=140)
+    assert out.get("ok") is True
+    assert "continued macro body" in str(out.get("snippet") or "")
+
+
+def test_macro_backslash_snippet_and_value_next(tmp_path: Path) -> None:
+    rel = "op_kernel/arch35/flags.h"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#define FLAG_PRELOAD ( \\\n"
+        "    GET_IS_L1_PRELOAD() && \\\n"
+        "    HEAD_DIM_ALIGN)\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="MAC_flag",
+            kind=EntityKind.MACRO,
+            name="FLAG_PRELOAD",
+            attrs={"value_expr": "(GET_IS_L1_PRELOAD() && HEAD_DIM_ALIGN)"},
+            file=rel,
+            line_start=1,
+            line_end=1,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="FLAG_PRELOAD")
+    card = next(row for row in (out.get("cards") or []) if row.get("kind") == "MACRO")
+    snippet = str(card.get("snippet") or "")
+    assert "GET_IS_L1_PRELOAD" in snippet
+    assert "HEAD_DIM_ALIGN" in snippet
+    nxt = [str(n) for n in (out.get("next") or [])]
+    assert "GET_IS_L1_PRELOAD" in nxt or "HEAD_DIM_ALIGN" in nxt
+    span = card.get("definition_span") or {}
+    assert int(span.get("line_end") or 0) >= 3
+
+
+def test_calls_neighbors_are_callees_only(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    process = cm.upsert(
+        EntityKind.METHOD,
+        "Process",
+        eid="MTH_process",
+        file="op_kernel/arch35/k.cpp",
+        line=4,
+        line_end=8,
+        status="confirmed",
+    )
+    cal = cm.upsert(
+        EntityKind.METHOD,
+        "CalIndex",
+        eid="MTH_cal",
+        file="op_kernel/arch35/k.cpp",
+        line=10,
+        line_end=20,
+        status="confirmed",
+    )
+    cm.link(
+        RelationKind.CALLS,
+        process.id,
+        cal.id,
+        attrs={"file": "op_kernel/arch35/k.cpp", "line": 5},
+        status="confirmed",
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    caller = q.agent_query(pattern="Process")
+    hit = next(row for row in (caller.get("cards") or []) if row.get("kind") == "METHOD")
+    callees = ((hit.get("edges") or {}).get("CALLS") or {}).get("neighbors") or []
+    assert any(str(row.get("name") or "") == "CalIndex" for row in callees)
+    callee = q.agent_query(pattern="CalIndex")
+    chit = next(row for row in (callee.get("cards") or []) if row.get("kind") == "METHOD")
+    incoming = ((chit.get("edges") or {}).get("CALLS") or {}).get("neighbors") or []
+    assert not any(str(row.get("name") or "") == "Process" for row in incoming)
+    extras = chit.get("extras") or {}
+    assert any(str(row.get("name") or "") == "Process" for row in extras.get("callers") or [])
+
+
+def test_long_function_reports_omitted_span(tmp_path: Path) -> None:
+    rel = "op_host/long.cpp"
+    lines = [f"    stmt_{i}();" for i in range(1, 130)]
+    lines[0] = "void LongPack() {"
+    lines[64] = "    params.mid = 1;"
+    lines[120] = "    params.tail = 2;"
+    lines[128] = "}"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_long",
+            kind=EntityKind.FUNCTION,
+            name="LongPack",
+            attrs={"source_definition": True},
+            file=rel,
+            line_start=1,
+            line_end=129,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="LongPack")
+    card = next(row for row in (out.get("cards") or []) if row.get("kind") == "FUNCTION")
+    snippet = str(card.get("snippet") or "")
+    assert "void LongPack" in snippet
+    assert "params.tail" in snippet
+    omitted = card.get("omitted") or []
+    assert omitted
+    assert int(omitted[0].get("line") or 0) > 8
+    assert int(omitted[0].get("line_end") or 0) >= int(omitted[0].get("line") or 0)
+    assert "params.mid" not in snippet
+
+
+def test_page_clipped_name_card_stays_answerable(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for idx in range(1, 14):
+        cm.add_entity(
+            Entity(
+                id=f"MTH_sync_{idx}",
+                kind=EntityKind.METHOD,
+                name="SyncAll",
+                attrs={"source_definition": True},
+                file=f"op_kernel/arch35/k{idx}.h",
+                line_start=10 + idx,
+                line_end=12 + idx,
+                status="confirmed",
+            )
+        )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="SyncAll")
+    cov = out.get("coverage") or {}
+    assert cov.get("completeness") == "page_clipped"
+    assert cov.get("answerable") is True
+    card = (out.get("cards") or [{}])[0]
+    assert card.get("file")
+    assert int(card.get("line") or 0) > 0
+
+
+def test_field_readers_prefer_branch_over_method_span(tmp_path: Path) -> None:
+    rel = "op_kernel/arch35/k.cpp"
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    field = cm.upsert(
+        EntityKind.TILING_FIELD,
+        "flagX",
+        eid="TDF_flag",
+        file="op_host/td.h",
+        line=3,
+        status="confirmed",
+    )
+    init = cm.upsert(
+        EntityKind.METHOD,
+        "InitPack",
+        eid="MTH_init",
+        file=rel,
+        line=10,
+        line_end=80,
+        status="confirmed",
+    )
+    branch = cm.upsert(
+        EntityKind.BRANCH,
+        "flagX",
+        eid="BR_flag",
+        file=rel,
+        line=50,
+        status="confirmed",
+    )
+    cm.link(RelationKind.READS, init.id, field.id, attrs={"file": rel, "line": 10}, status="confirmed")
+    cm.link(RelationKind.READS, branch.id, field.id, attrs={"file": rel, "line": 50}, status="confirmed")
+    _product(cm, tmp_path)
+    q = open_query(tmp_path, architecture="arch35")
+    out = q.agent_query(pattern="flagX")
+    card = next(
+        row
+        for row in (out.get("cards") or [])
+        if str(row.get("kind") or "") in {"TILING_FIELD", "FIELD"}
+    )
+    readers = (card.get("extras") or {}).get("readers") or []
+    assert any(int(row.get("line") or 0) == 50 for row in readers)
+    assert not any(str(row.get("name") or "") == "InitPack" for row in readers)
+

@@ -399,11 +399,16 @@ def acquire_pull_request(
             "error": "EMPTY_SHA",
             "message_zh": "PR head SHA 为空，无法建立隔离 workspace。",
         }
+    base_sha = _git.resolve_pr_base_sha(
+        mirror, exact_head, provider_base=base_sha, base_ref=base_ref
+    ) or base_sha
+    if base_sha == exact_head:
+        base_sha = _git.resolve_pr_base_sha(mirror, exact_head, base_ref=base_ref)
 
-    changed = _git.changed_files(mirror, base_sha, head_sha)
+    changed = _git.changed_files(mirror, base_sha, exact_head)
     diff_text = ""
-    if base_sha and head_sha:
-        diff = _git._run_git(["diff", f"{base_sha}...{head_sha}"], cwd=mirror)
+    if base_sha and exact_head:
+        diff = _git._run_git(["diff", f"{base_sha}...{exact_head}"], cwd=mirror)
         diff_text = diff.stdout or ""
     digest = _git._diff_digest(diff_text)
 

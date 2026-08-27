@@ -41,13 +41,13 @@ from uo_init.query.evidence import (
 )
 from uo_init.query.hints import (
     attach_query_hints,
+    identifier_tokens,
     looks_like_nl_or_multi_token,
     nl_or_multi_token_payload,
     search_needles,
 )
 from uo_init.paths import CANN_MARKER, cann_root
 from uo_init.query.legal_key_cache import _pattern_filters, normalize_cover_pattern
-from uo_init.semantics.const_expr import occupancy_overlap, worth_sharing
 from uo_init.source_locator import locations_from_attr_sites
 
 SNIPPET_LINES = 40
@@ -59,6 +59,9 @@ _UNSET: object = object()
 _CANN_ROOT: Any = _UNSET
 SNIPPET_BEFORE = 3
 FUNC_HEAD_LINES = 8
+#: FUNCTION/METHOD/KERNEL shorter than this render in full (no head+tail omit).
+FUNC_FULL_MAX = 96
+MACRO_CONT_MAX = 80
 STATEMENT_BEFORE = 8
 STATEMENT_AFTER = 8
 BRANCH_OUTER_BEFORE = 16
@@ -83,6 +86,7 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "other_kernels",
         "cards",
         "next",
+        "omitted",
         "dim_names",
         "tiling_data_names",
         "shape",
@@ -173,7 +177,20 @@ CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
     "LAUNCHES",
     "REFERENCES",
 )
+# Neighbor bodies on the card (codegraph trail / CBM 1-hop). Other CARD_EDGE_KINDS
+# stay as count-only so completeness is visible without dumping the hop list.
+CARD_NEIGHBOR_RELS = (
+    "WRITES",
+    "READS",
+    "CALLS",
+    "DERIVES",
+    "RETURNS",
+    "ROOTED_AT",
+    "BINDS",
+    "ALIASES",
+)
 EDGES_PER_KIND = 8
+NEXT_HOP_LIMIT = 6
 DERIVES_PER_TILING_KEY = 3
 CARD_SNIPPET_MAX_LINES = 8
 AROUND_SEED_LIMIT = 16
@@ -206,7 +223,6 @@ _AROUND_KIND_PRIORITY = {
     EntityKind.PIPE.value: 4,
     EntityKind.KERNEL.value: 5,
 }
-_LAUNCH_NAMES = frozenset({"tpipe", "pipein", "pipebase", "pipepost", "pipe"})
 _EXACT_KINDS = {EntityKind.TYPE.value}
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _HW_PIPE_RE = re.compile(r"^PIPE_[A-Z][A-Z0-9]*$")
@@ -386,7 +402,8 @@ def _is_recorded_definition(hit: dict[str, Any]) -> bool:
 
 def _card_snippet_for_hit(hit: dict[str, Any]) -> tuple[str, bool]:
     text = str(hit.get("snippet") or "")
-    if _is_recorded_definition(hit):
+    kind = str(hit.get("kind") or "").upper()
+    if _is_recorded_definition(hit) or kind == EntityKind.MACRO.value:
         return text, bool(hit.get("truncated"))
     return _clip_definition_snippet(text)
 
@@ -511,6 +528,13 @@ def _edge_evidence_rank(
     return 4
 
 
+def _prefix_continues_ident(name: str, needle: str) -> bool:
+    """True when ``name`` keeps the same ident token after ``needle`` (FooBar vs Foo_)."""
+    if not needle or not name.startswith(needle) or len(name) <= len(needle):
+        return False
+    return name[len(needle)].isalnum()
+
+
 def _name_rank(
     name: str,
     eid: str,
@@ -542,9 +566,12 @@ def _name_rank(
     if exact_kind:
         return None
     if low_name.startswith(needle) or ident.startswith(needle):
-        return 2
+        cont = _prefix_continues_ident(low_name, needle) if low_name.startswith(needle) else False
+        if not cont and ident.startswith(needle):
+            cont = _prefix_continues_ident(ident, needle)
+        return 3 if cont else 2
     if needle in low_name:
-        return 3
+        return 4
     return None
 
 
@@ -698,6 +725,64 @@ def _definition_sites_from_hits(
         sites.append({"file": file, "line": line, "kind": kind, "name": name})
     complete = len(sites) <= int(limit)
     return sites[: max(0, int(limit))], complete
+
+
+_STATEMENT_READER_KINDS = {
+    EntityKind.BRANCH.value,
+    EntityKind.PREDICATE.value,
+}
+
+
+def _prefer_statement_readers(
+    readers: list[dict[str, Any]],
+    definition_sites: Sequence[dict[str, Any]],
+    field_ident: str,
+) -> list[dict[str, Any]]:
+    ident = str(field_ident or "").lower()
+    if not ident:
+        return readers
+    preferred: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for site in definition_sites:
+        kind = str(site.get("kind") or "").upper()
+        if kind not in _STATEMENT_READER_KINDS:
+            continue
+        if _last_ident(str(site.get("name") or "")).lower() != ident:
+            continue
+        file = str(site.get("file") or "")
+        line = int(site.get("line") or 0)
+        if not file or line <= 0:
+            continue
+        key = (file, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        preferred.append(
+            {
+                "name": site.get("name"),
+                "kind": kind,
+                "file": file,
+                "line": line,
+            }
+        )
+    if not preferred:
+        return readers
+    skip_kinds = {
+        EntityKind.METHOD.value,
+        EntityKind.FUNCTION.value,
+        EntityKind.KERNEL.value,
+    }
+    out = list(preferred)
+    for row in readers:
+        kind = str(row.get("kind") or "").upper()
+        if kind in skip_kinds:
+            continue
+        key = (str(row.get("file") or ""), int(row.get("line") or 0))
+        if key in seen or key[1] <= 0:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out[:12]
 
 
 def _timeline_site(row: dict[str, Any], *, role: str) -> dict[str, Any] | None:
@@ -892,6 +977,9 @@ def _kind_priority(hit: dict[str, Any], needle: str) -> int:
     table = {
         EntityKind.TILING_KEY.value: 0,
         EntityKind.TILING_FIELD.value: 0,
+        EntityKind.TILING_DATA.value: 0,
+        EntityKind.INPUT.value: 0,
+        EntityKind.OUTPUT.value: 0,
         EntityKind.MACRO.value: 0,
         EntityKind.PIPE.value: 0,
         EntityKind.KERNEL.value: 0,
@@ -1450,10 +1538,16 @@ def _overlay_value_write(
     writes = dict(grouped.get("WRITES") or {"count": 0, "neighbors": []})
     rhs = str(focus.get("rhs") or "")
     idents = _focus_idents(rhs, needle)
-    name = str(focus.get("function") or (idents[0] if idents else needle) or "")
+    fn = str(focus.get("function") or "").strip()
+    if fn:
+        name, kind = fn, EntityKind.FUNCTION.value
+    elif idents:
+        name, kind = idents[0], EntityKind.VARIABLE.value
+    else:
+        name, kind = str(needle or ""), EntityKind.VARIABLE.value
     focus_row = {
         "name": name,
-        "kind": "FUNCTION",
+        "kind": kind,
         "file": str(focus.get("file") or ""),
         "line": int(focus.get("line") or 0),
     }
@@ -1470,20 +1564,31 @@ def _overlay_value_write(
     return grouped
 
 
+def _queryable_hop(name: str) -> bool:
+    """True when ``name`` can be fed back as a uo-query identifier."""
+    text = str(name or "").strip()
+    if not text or text.startswith("ARGS_SEL"):
+        return False
+    if any(ch in text for ch in (" ", "(", ")", "!", "<", ">", "=", ",", "[", "]")):
+        return False
+    parts = text.replace("::", ".").split(".")
+    return bool(parts) and all(_IDENT_NAME_RE.fullmatch(part) for part in parts if part)
+
+
 def _append_next_name(
     names: list[str],
     seen: set[str],
     self_names: set[str],
     candidate: str,
     *,
-    limit: int = 12,
+    limit: int = NEXT_HOP_LIMIT,
 ) -> bool:
     other = str(candidate or "").strip()
     if (
         not other
+        or not _queryable_hop(other)
         or other.lower() in self_names
         or other.lower() in seen
-        or other.startswith("ARGS_SEL")
     ):
         return False
     seen.add(other.lower())
@@ -1497,7 +1602,7 @@ def _extend_next_from_edges(
     self_names: set[str],
     grouped: dict[str, Any],
     *,
-    limit: int = 12,
+    limit: int = NEXT_HOP_LIMIT,
 ) -> None:
     queues: list[list[Any]] = []
 
@@ -1523,10 +1628,39 @@ def _extend_next_from_edges(
         if not bucket:
             continue
         row = bucket.pop(0)
+        if not str(row.get("file") or "").strip():
+            continue
+        if str(row.get("kind") or "").upper() == EntityKind.TYPE.value:
+            continue
         if _append_next_name(
             names, seen, self_names, str(row.get("name") or ""), limit=limit
         ):
             return
+
+
+def _extend_next_from_value_expr(
+    names: list[str],
+    seen: set[str],
+    self_names: set[str],
+    expr: str,
+    *,
+    limit: int = NEXT_HOP_LIMIT,
+) -> None:
+    for tok in identifier_tokens(expr):
+        if tok.lower() in _FOCUS_SKIP_IDENTS:
+            continue
+        if _append_next_name(names, seen, self_names, tok, limit=limit):
+            return
+
+
+def _backslash_continued_end(path: Path, start: int, *, cap: int = MACRO_CONT_MAX) -> int:
+    rows = _read_line_range(path, start, start + max(1, int(cap)) - 1)
+    end = int(start)
+    for i, ln in enumerate(rows):
+        end = int(start) + i
+        if not str(ln).rstrip().endswith("\\"):
+            break
+    return end
 
 
 def _disk_window(
@@ -1536,15 +1670,25 @@ def _disk_window(
     *,
     kind: str = "",
     line_end: int = 0,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, list[dict[str, Any]]]:
+    empty: list[dict[str, Any]] = []
     if not file or int(line or 0) <= 0:
-        return "", False
+        return "", False, empty
     path = _resolve_source_path(op_root, file)
     if path is None:
-        return "", False
+        return "", False, empty
     centre = int(line)
     kind_u = str(kind or "").upper()
     span_end = int(line_end or 0)
+    if kind_u == EntityKind.MACRO.value:
+        end = _backslash_continued_end(path, centre)
+        chosen = _read_line_range(path, centre, end)
+        if not chosen:
+            return "", False, empty
+        truncated = (end - centre + 1) >= MACRO_CONT_MAX and str(chosen[-1]).rstrip().endswith(
+            "\\"
+        )
+        return "\n".join(_numbered_lines(centre, chosen)), truncated, empty
     if kind_u in {
         EntityKind.METHOD.value,
         EntityKind.FUNCTION.value,
@@ -1562,6 +1706,7 @@ def _disk_window(
         start = max(1, centre - SNIPPET_BEFORE)
     truncated = False
     recorded_span = span_end > centre
+    span_len = (span_end - start + 1) if recorded_span else 0
     if (
         kind_u
         in {
@@ -1570,7 +1715,7 @@ def _disk_window(
             EntityKind.KERNEL.value,
         }
         and recorded_span
-        and (span_end - start + 1) > SNIPPET_LINES
+        and span_len > FUNC_FULL_MAX
     ):
         head_end = min(span_end, start + FUNC_HEAD_LINES - 1)
         tail_budget = max(1, SNIPPET_LINES - FUNC_HEAD_LINES)
@@ -1578,18 +1723,25 @@ def _disk_window(
         head = _read_line_range(path, start, head_end)
         tail = _read_line_range(path, tail_start, span_end)
         if not head and not tail:
-            return "", False
+            return "", False, empty
         parts = _numbered_lines(start, head)
+        omitted: list[dict[str, Any]] = []
         if tail_start > head_end + 1:
             parts.append("# ... omitted ...")
+            omitted.append(
+                {
+                    "file": str(file).replace("\\", "/"),
+                    "line": head_end + 1,
+                    "line_end": tail_start - 1,
+                }
+            )
         parts.extend(_numbered_lines(tail_start, tail))
-        return "\n".join(parts), True
+        return "\n".join(parts), True, omitted
     if recorded_span:
-        if span_end - start + 1 > SNIPPET_LINES:
+        end = span_end
+        if span_len > FUNC_FULL_MAX:
             end = start + SNIPPET_LINES - 1
             truncated = span_end > end
-        else:
-            end = span_end
     else:
         end = start + SNIPPET_LINES - 1
     if end < centre:
@@ -1597,8 +1749,9 @@ def _disk_window(
         truncated = recorded_span and span_end > end
     chosen = _read_line_range(path, start, end)
     if not chosen:
-        return "", False
-    return "\n".join(_numbered_lines(start, chosen)), truncated
+        return "", False, empty
+    truncated = truncated or (recorded_span and span_end > end)
+    return "\n".join(_numbered_lines(start, chosen)), truncated, empty
 
 
 def _disk_snippet(
@@ -1609,7 +1762,9 @@ def _disk_snippet(
     kind: str = "",
     line_end: int = 0,
 ) -> str:
-    text, _truncated = _disk_window(op_root, file, line, kind=kind, line_end=line_end)
+    text, _truncated, _omitted = _disk_window(
+        op_root, file, line, kind=kind, line_end=line_end
+    )
     return text
 
 
@@ -1827,6 +1982,27 @@ def _clip_definition_snippet(text: str, *, max_lines: int = CARD_SNIPPET_MAX_LIN
     if len(lines) <= max_lines:
         return str(text or ""), False
     return "\n".join(lines[:max_lines]), True
+
+
+def _compact_kind_card(hit: dict[str, Any]) -> dict[str, Any]:
+    """Search-row pointer: kind + location, no second copy of extras/snippet."""
+    return {
+        "kind": str(hit.get("kind") or ""),
+        "name": str(hit.get("name") or ""),
+        "id": str(hit.get("id") or ""),
+        "file": str(hit.get("file") or ""),
+        "line": int(hit.get("line_start") or hit.get("line") or 0),
+    }
+
+
+def _name_card_coverage(coverage: dict[str, Any]) -> dict[str, Any]:
+    keep = (
+        "completeness",
+        "answerable",
+        "definition_sites_count",
+        "definition_sites_complete",
+    )
+    return {key: coverage[key] for key in keep if key in coverage}
 
 
 def _compact_around_hit(hit: dict[str, Any], *, snippet: bool = False) -> dict[str, Any]:
@@ -2126,6 +2302,7 @@ class UoSqlQuery:
         self._op_root = _op_root_from_product(self.product)
         self._engine = None
         self._accel: bool | None = None
+        self._launch_cache: dict[tuple[str, int], dict[str, Any]] = {}
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -2158,6 +2335,7 @@ class UoSqlQuery:
         _resolve_source_path.cache_clear()
         self._engine = None
         self._accel = None
+        self._launch_cache = {}
 
     def __enter__(self):
         return self
@@ -2230,11 +2408,11 @@ class UoSqlQuery:
             )
             if line > 0 and (thin or not _snippet_covers_line(snippet, line)):
                 line_end = int(hit.get("line_end") or 0)
-                window, truncated = _disk_window(
+                window, truncated, omitted = _disk_window(
                     self._op_root, orig, line, kind=kind, line_end=line_end
                 )
                 if not window:
-                    window, truncated = _disk_window(
+                    window, truncated, omitted = _disk_window(
                         self._op_root, file, line, kind=kind, line_end=line_end
                     )
                 if window:
@@ -2242,6 +2420,17 @@ class UoSqlQuery:
                     numbered = True
                     if truncated:
                         hit["truncated"] = True
+                    if omitted:
+                        hit["omitted"] = omitted
+            if str(kind or "").upper() == EntityKind.MACRO.value and line > 0:
+                src = _resolve_source_path(self._op_root, orig) or _resolve_source_path(
+                    self._op_root, file
+                )
+                if src is not None:
+                    hit["line_end"] = max(
+                        int(hit.get("line_end") or 0),
+                        _backslash_continued_end(src, line),
+                    )
             hit["snippet"] = snippet if numbered else _cap_snippet(snippet, line)
             if int(hit.get("line_end") or 0) > 0 and not _snippet_covers_line(
                 str(hit.get("snippet") or ""), int(hit.get("line_end") or 0)
@@ -3942,6 +4131,16 @@ class UoSqlQuery:
                     dim_coverage.setdefault(str(dim), [])
                     if str(value) not in dim_coverage[str(dim)]:
                         dim_coverage[str(dim)].append(str(value))
+            # Same pin the YAML path applies: a queried dim is not a coverage
+            # product. ``IsRope=1`` matching a block that also lists 0 would
+            # otherwise report ``["0","1"]`` for the dim the caller already fixed.
+            if structured and match_ids:
+                for dim, value in structured.items():
+                    aliases = {str(value)}
+                    aliases.update(bool_value_aliases(value))
+                    present = [v for v in dim_coverage.get(dim, []) if v in aliases]
+                    canon = [v for v in present if v in {"0", "1"}]
+                    dim_coverage[str(dim)] = (canon or present or [str(value)])[:1]
             nearby: list[dict[str, Any]] = []
             if structured and not match_ids:
                 for drop in structured:
@@ -4539,6 +4738,10 @@ class UoSqlQuery:
 
     def aggregate_kernel_launch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         """TPipe instances on the selected kernel entry, ordered by Destroy chain."""
+        cache_key = (str(pattern or ""), max(int(limit), 1))
+        cached = self._launch_cache.get(cache_key)
+        if cached is not None:
+            return cached
         with self._connect() as conn:
             pipe_rows = conn.execute(
                 """
@@ -4558,7 +4761,7 @@ class UoSqlQuery:
                 """
             ).fetchall()
             hits = self._hits_from_rows(
-                conn, pipe_rows, why="kernel_launch_pipe", with_snippet=True, with_rels=True
+                conn, pipe_rows, why="kernel_launch_pipe", with_snippet=False, with_rels=False
             )
         selected, other_files = _select_launch_phases(
             hits, architecture=self._architecture, limit=max(int(limit), 1)
@@ -4642,7 +4845,9 @@ class UoSqlQuery:
             kinds=("PIPE",),
             mode="kernel_launch",
         )
-        return _fit_payload(payload)
+        fitted = _fit_payload(payload)
+        self._launch_cache[cache_key] = fitted
+        return fitted
 
     def aggregate_gaps(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip().lower()
@@ -4748,12 +4953,15 @@ class UoSqlQuery:
                     by_kind.pop(weaker, None)
         # Occupancy ranking already prefers located identities. Keep fileless
         # FUNCTION/METHOD API symbols when they carry CALLS / ROOTED_AT.
-        cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
+        ranked_kinds = list(by_kind.values())
+        cards_src = ranked_kinds[:MAX_NAME_CARDS]
+        primary_hits = cards_src[:1]
+        extra_hits = cards_src[1:]
         cards: list[dict[str, Any]] = []
         next_names: list[str] = []
         seen_next: set[str] = set()
         self_names = {needle.lower()}
-        for hit in cards_src:
+        for hit in primary_hits:
             kind = str(hit.get("kind") or "")
             eid = str(hit.get("id") or "")
             name = str(hit.get("name") or needle)
@@ -4765,10 +4973,13 @@ class UoSqlQuery:
                     neigh = list(derives.get("neighbors") or [])
                     if len(neigh) > DERIVES_PER_TILING_KEY:
                         for row in neigh[DERIVES_PER_TILING_KEY:]:
-                            other = str(row.get("name") or "").strip()
-                            if other and other.lower() not in seen_next:
-                                seen_next.add(other.lower())
-                                next_names.append(other)
+                            _append_next_name(
+                                next_names,
+                                seen_next,
+                                self_names,
+                                str(row.get("name") or ""),
+                                limit=NEXT_HOP_LIMIT,
+                            )
                         derives["neighbors"] = neigh[:DERIVES_PER_TILING_KEY]
                         derives["truncated"] = True
                 keep = {"WRITES", "READS", "DERIVES"}
@@ -4793,18 +5004,21 @@ class UoSqlQuery:
             }
             if snip_cut:
                 card["truncated"] = True
+            omitted = hit.get("omitted")
+            if omitted:
+                card["omitted"] = omitted
             extras = self._card_extras(hit)
             if kind == EntityKind.TILING_KEY.value:
-                sel_sites = self._sel_sites_for_dim(name)
-                if sel_sites:
-                    extras["sel_sites"] = sel_sites
-                    extras["sel_sites_complete"] = bool(
-                        sel_sites and sel_sites[0].get("complete")
-                    )
-                    extras["cover_followup"] = f"Dim={_last_ident(name)}"
-            if definition_sites:
+                extras["cover_followup"] = f"Dim={_last_ident(name)}"
+            if len(definition_sites) > 1:
                 extras["definition_sites"] = definition_sites
                 extras["definition_sites_complete"] = sites_complete
+            if extras.get("readers") and definition_sites:
+                extras["readers"] = _prefer_statement_readers(
+                    list(extras["readers"]),
+                    definition_sites,
+                    _last_ident(name),
+                )
             line_end = int(hit.get("line_end") or hit.get("line_start") or 0)
             card["definition_span"] = {
                 "file": hit.get("file") or "",
@@ -4848,7 +5062,7 @@ class UoSqlQuery:
                 grouped["WRITES"]["neighbors"] = [
                     {
                         "name": str(row.get("name") or ""),
-                        "kind": str(row.get("kind") or "FUNCTION"),
+                        "kind": str(row.get("kind") or EntityKind.FUNCTION.value),
                         "file": str(row.get("file") or ""),
                         "line": int(row.get("line") or 0),
                     }
@@ -4889,10 +5103,30 @@ class UoSqlQuery:
                 card["extras"] = extras
             card["canonical"] = extras.get("canonical") or name
             cards.append(card)
-            if len(next_names) < 12:
-                _extend_next_from_edges(
-                    next_names, seen_next, self_names, grouped, limit=12
+            if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
+                facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+                expr = str(
+                    facts.get("value_expr")
+                    or facts.get("value")
+                    or facts.get("definition")
+                    or extras.get("value_expr")
+                    or extras.get("value")
+                    or extras.get("definition")
+                    or ""
                 )
+                _extend_next_from_value_expr(
+                    next_names, seen_next, self_names, expr, limit=NEXT_HOP_LIMIT
+                )
+            _extend_next_from_edges(
+                next_names, seen_next, self_names, grouped, limit=NEXT_HOP_LIMIT
+            )
+        for hit in extra_hits:
+            extra_kind = str(hit.get("kind") or "")
+            extra_grouped = self._grouped_edges(str(hit.get("id") or ""), entity_kind=extra_kind)
+            _extend_next_from_edges(
+                next_names, seen_next, self_names, extra_grouped, limit=NEXT_HOP_LIMIT
+            )
+            cards.append(_compact_kind_card(hit))
         coverage = _hits_coverage(cards_src, total=len(hits), needle=needle)
         if definition_sites:
             coverage["definition_sites_count"] = max(
@@ -4902,7 +5136,11 @@ class UoSqlQuery:
             coverage["definition_sites_complete"] = sites_complete
             if not sites_complete:
                 coverage["completeness"] = "page_clipped"
-                coverage["answerable"] = False
+                primary = cards[0] if cards else {}
+                coverage["answerable"] = bool(
+                    str(primary.get("file") or "").strip()
+                    and int(primary.get("line") or 0) > 0
+                )
             elif len(definition_sites) > 1:
                 coverage["completeness"] = "siblings_checked"
                 coverage["answerable"] = True
@@ -4913,8 +5151,7 @@ class UoSqlQuery:
             "cards": cards,
             "next": next_names,
             "count": len(cards),
-            "coverage": coverage,
-            "files": _group_by_file(cards_src),
+            "coverage": _name_card_coverage(coverage),
         }
         if recall_total:
             payload["match"] = "recall_scan"
@@ -5020,13 +5257,7 @@ class UoSqlQuery:
                 # through the rowid join. A quoted trigram MATCH asks the same
                 # substring question as the LIKE branch below, from an index.
                 try:
-                    total = int(
-                        conn.execute(
-                            "SELECT COUNT(*) FROM source_fts WHERE source_fts MATCH ?",
-                            (fts_q,),
-                        ).fetchone()[0]
-                        or 0
-                    )
+                    cap = max(int(limit), 8)
                     sample_rows = conn.execute(
                         """
                         SELECT sl.path, sl.line, sl.text
@@ -5034,8 +5265,11 @@ class UoSqlQuery:
                         WHERE f.source_fts MATCH ?
                         ORDER BY sl.path, sl.line LIMIT ?
                         """,
-                        (fts_q, max(int(limit), 8)),
+                        (fts_q, cap),
                     ).fetchall()
+                    total = len(sample_rows)
+                    if total == cap:
+                        total = cap + 1
                 except sqlite3.OperationalError:
                     # A rejected MATCH expression or a half-built index must not
                     # read as "no such text" -- fall through to the scan, which
@@ -5103,6 +5337,7 @@ class UoSqlQuery:
         if not entity_id:
             return {}
         placeholders = ",".join("?" for _ in CARD_EDGE_KINDS)
+        neighbor_placeholders = ",".join("?" for _ in CARD_NEIGHBOR_RELS)
         skip_tpl = str(entity_kind or "").upper() == EntityKind.TILING_KEY.value
         grouped: dict[str, dict[str, Any]] = {}
         seed_file = ""
@@ -5138,15 +5373,15 @@ class UoSqlQuery:
                                ) AS rn
                         FROM relation r
                         JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
-                        WHERE (r.src = ? OR r.dst = ?) AND r.kind IN ({placeholders})
+                        WHERE (r.src = ? OR r.dst = ?) AND r.kind IN ({neighbor_placeholders})
                     ) ranked
                     WHERE rn <= ?
                     """,
-                    (entity_id, entity_id, entity_id, *CARD_EDGE_KINDS, EDGES_PER_KIND * 8),
+                    (entity_id, entity_id, entity_id, *CARD_NEIGHBOR_RELS, EDGES_PER_KIND * 8),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
-                for kind in CARD_EDGE_KINDS:
+                for kind in CARD_NEIGHBOR_RELS:
                     rows.extend(
                         conn.execute(
                             f"""
@@ -5170,6 +5405,9 @@ class UoSqlQuery:
             if _is_advisory_data(_row_get(row, "rel_data")):
                 continue
             rel_kind = str(_row_get(row, "rel_kind") or "")
+            rel_data = _parse_data(_row_get(row, "rel_data"))
+            if rel_kind == "ALIASES" and str(rel_data.get("provenance") or "") == "source_compile_occupancy":
+                continue
             other_kind = str(_row_get(row, "other_kind") or "")
             other_name = str(_row_get(row, "other_name") or "")
             other_file = _norm_file(str(_row_get(row, "other_file") or ""))
@@ -5217,6 +5455,13 @@ class UoSqlQuery:
                     break
             bucket = grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
             bucket["neighbors"] = neighbors
+        if entity_id:
+            callees = self._call_direction_neighbors(entity_id, outgoing=True)
+            if callees or "CALLS" in grouped:
+                grouped["CALLS"] = {
+                    "count": len(callees),
+                    "neighbors": callees,
+                }
         return grouped
 
     def _call_direction_neighbors(self, entity_id: str, *, outgoing: bool) -> list[dict[str, Any]]:
@@ -5310,20 +5555,21 @@ class UoSqlQuery:
         packing_rows.sort(key=lambda row: (str(row.get("file") or ""), int(row.get("line") or 0)))
         if not value_rows and not packing_rows:
             return {}
-        return {
-            "value_writes": value_rows[:MAX_WRITE_TIMELINE],
-            "packing_writes": packing_rows[:MAX_WRITE_TIMELINE],
+        out: dict[str, Any] = {
             "write_sites_complete": len(value_rows) <= MAX_WRITE_TIMELINE
             and len(packing_rows) <= MAX_WRITE_TIMELINE,
         }
+        if value_rows:
+            out["value_writes"] = value_rows[:MAX_WRITE_TIMELINE]
+        if packing_rows:
+            out["packing_writes"] = packing_rows[:MAX_WRITE_TIMELINE]
+        return out
 
     def _same_value_neighbors(self, hit: dict[str, Any]) -> list[dict[str, Any]]:
         facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
         expr = str(facts.get("value_expr") or facts.get("value") or "").strip()
         if not expr:
             return []
-        file = str(hit.get("file") or "").replace("\\", "/")
-        leaf = file.rsplit("/", 1)[-1] if file else ""
         self_id = str(hit.get("id") or "")
         self_name = str(hit.get("name") or "")
         grouped = self._grouped_edges(self_id, entity_kind=str(hit.get("kind") or ""))
@@ -5342,51 +5588,7 @@ class UoSqlQuery:
             )
             if len(from_graph) >= MAX_SAME_VALUE:
                 return from_graph
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
-                       IFNULL(s.snippet, '') AS snippet
-                FROM entity e
-                LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE e.kind IN ('COMPILE_VAR', 'MACRO')
-                  AND IFNULL(e.file, '') != ''
-                  AND (? = '' OR lower(IFNULL(e.file, '')) LIKE '%' || ?)
-                LIMIT 80
-                """,
-                (leaf.lower(), leaf.lower()),
-            ).fetchall()
-            others = self._hits_from_rows(conn, rows, why="same_value", with_snippet=False)
-        out = list(from_graph)
-        seen = {str(row.get("name") or "").lower() for row in out}
-        seen.add(self_name.lower())
-        for other in others:
-            if str(other.get("id") or "") == self_id:
-                continue
-            name = str(other.get("name") or "")
-            if name.lower() in seen:
-                continue
-            other_file = str(other.get("file") or "").replace("\\", "/")
-            if leaf and other_file.rsplit("/", 1)[-1] != leaf:
-                continue
-            ofacts = other.get("facts") if isinstance(other.get("facts"), dict) else {}
-            other_expr = str(ofacts.get("value_expr") or ofacts.get("value") or "").strip()
-            overlap = occupancy_overlap(expr, other_expr)
-            if not worth_sharing(overlap, expr, other_expr):
-                continue
-            seen.add(name.lower())
-            out.append(
-                {
-                    "name": name,
-                    "file": other_file,
-                    "line": int(other.get("line_start") or 0),
-                    "value_expr": other_expr,
-                    "overlap": sorted(overlap)[:8],
-                }
-            )
-            if len(out) >= MAX_SAME_VALUE:
-                break
-        return out
+        return from_graph
 
     def _card_extras(self, hit: dict[str, Any]) -> dict[str, Any]:
         kind = str(hit.get("kind") or "")
@@ -5398,27 +5600,22 @@ class UoSqlQuery:
             extras["callers"] = self._call_direction_neighbors(eid, outgoing=False)
             extras["callees"] = self._call_direction_neighbors(eid, outgoing=True)
         write_sites = facts.get("write_sites")
-        if isinstance(write_sites, list) and write_sites:
-            extras["write_sites"] = write_sites[:12]
-            snippet = str(hit.get("snippet") or "")
-            uncovered = [
-                site
-                for site in write_sites
-                if isinstance(site, dict)
-                and int(site.get("line") or 0) > 0
-                and not _snippet_covers_line(snippet, int(site.get("line") or 0))
-            ]
-            if uncovered:
-                extras["truncated"] = True
-                extras["uncovered_writes"] = uncovered[:8]
+        field_kinds = {
+            EntityKind.TILING_FIELD.value,
+            EntityKind.FIELD.value,
+            EntityKind.TILING_KEY.value,
+        }
+        if kind not in field_kinds and isinstance(write_sites, list) and write_sites:
+            extras["write_sites"] = write_sites[:4]
         if hit.get("truncated"):
             extras["truncated"] = True
-        if kind in {EntityKind.TILING_FIELD.value, EntityKind.FIELD.value, EntityKind.TILING_KEY.value}:
+        if kind in field_kinds:
             field = self.field_impact(eid or name)
             if field.get("ok"):
                 extras["writers"] = [
                     {
                         "name": row.get("name"),
+                        "kind": row.get("kind"),
                         "file": row.get("file"),
                         "line": row.get("line_start"),
                     }
@@ -5427,6 +5624,7 @@ class UoSqlQuery:
                 extras["readers"] = [
                     {
                         "name": row.get("name"),
+                        "kind": row.get("kind"),
                         "file": row.get("file"),
                         "line": row.get("line_start"),
                     }
@@ -5444,6 +5642,7 @@ class UoSqlQuery:
                     extras["readers"] = [
                         {
                             "name": row.get("name"),
+                            "kind": row.get("kind"),
                             "file": row.get("file"),
                             "line": row.get("line"),
                         }
@@ -5451,8 +5650,8 @@ class UoSqlQuery:
                     ]
             timeline = self._write_timeline(name, primary=hit)
             extras.update(timeline)
-        if kind in {EntityKind.PIPE.value, EntityKind.KERNEL.value} or name.lower() in _LAUNCH_NAMES:
-            launch = self.aggregate_kernel_launch(name if kind == EntityKind.KERNEL.value else "", limit=8)
+        if kind == EntityKind.KERNEL.value:
+            launch = self.aggregate_kernel_launch(name, limit=8)
             extras["phases"] = [
                 {
                     "pipe": row.get("pipe") or row.get("name"),
@@ -5479,12 +5678,7 @@ class UoSqlQuery:
         ):
             extras["packing_value_sites"] = packing[:3]
         if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
-            extras["definition"] = {
-                "file": hit.get("file") or "",
-                "line": int(hit.get("line_start") or 0),
-                "snippet": hit.get("snippet") or "",
-            }
-            for key in ("value", "value_expr", "origin"):
+            for key in ("value", "value_expr", "origin", "definition"):
                 if facts.get(key) not in (None, "", []):
                     extras[key] = facts[key]
             same = self._same_value_neighbors(hit)
@@ -5749,7 +5943,6 @@ class UoSqlQuery:
                 ).fetchall()
                 if row[0]
             ]
-        gaps = self.aggregate_gaps(limit=1)
         phases = [
             {
                 "pipe": row.get("pipe") or row.get("name"),
@@ -5776,27 +5969,16 @@ class UoSqlQuery:
             "phases": phases,
             "dim_names": dim_names,
             "tiling_data_names": tiling_data,
-            "gaps_count": int(gaps.get("total") or gaps.get("count") or 0),
-            "coverage": launch.get("coverage") or {},
             "count": len(phases),
-            "files": launch.get("files") or {},
         }
-        if launch.get("other_kernels"):
-            payload["other_kernels"] = launch.get("other_kernels")
-        attach_query_hints(payload, "", count=len(phases), mode="index")
         if dim_names:
             dim_example = dim_names[0]
             domain = self._declared_dim_values(dim_example)
             sample = f"{dim_example}={domain[0]}" if domain else dim_example
-            payload["hint"] = (
-                f"Coverage list: Dim={dim_example}. Combo filter: {sample} (Name=Value). "
-                "One identifier for a name card. --file --line only after copying file:line from a card."
-            )
+            payload["hint"] = f"Dim={dim_example} lists that dim. {sample} is Name=Value."
         else:
-            payload["hint"] = (
-                "No source-declared TPL identifier dims. Coverage list: Dim=<name>. "
-                "One identifier for a name card. --file --line only after copying file:line from a card."
-            )
+            payload["hint"] = "Dim=<name> lists a dim. One identifier for a name card."
+        attach_query_hints(payload, "", count=len(phases), mode="index")
         return _fit_payload(payload)
 
     def legal_key_query(

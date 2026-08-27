@@ -6,7 +6,28 @@ from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
 from uo_init.source_resolver import SourceResolver
 from uo_init.cpp_expr import parse_expr
 from uo_init.expr_ir import Call, Ref
-from uo_init.source_resolver import dotted_path, _call_name
+from uo_init.source_resolver import (
+    REASON_TILING_DATA_NO_WRITER,
+    dotted_path,
+    _call_name,
+)
+
+
+def _writes(*fields: str) -> list[WriteEvent]:
+    """Two distinct constant writes so the field is host state, not a literal.
+
+    A single ``rhs="1"`` collapses to CONSTANT. Two different constants is how
+    the resolver classifies an enum-valued tiling field (see ``_chase_writes``).
+    """
+    out: list[WriteEvent] = []
+    for name in fields:
+        out.append(
+            WriteEvent(path=f"tileParams.{name}", line=1, rhs="0", file="f.cpp", function="f")
+        )
+        out.append(
+            WriteEvent(path=f"tileParams.{name}", line=2, rhs="1", file="f.cpp", function="f")
+        )
+    return out
 
 
 def test_field_accessor_on_call_base_inherits_root():
@@ -23,6 +44,7 @@ def test_field_accessor_on_call_base_inherits_root():
             )
         },
         class_fields={"tileParams"},
+        writes=_writes("s1"),
     )
     # parser shape: field:first(helper())
     res = SourceResolver(host_ir=ir).resolve("helper().first")
@@ -62,6 +84,7 @@ def test_scratch_local_cycle_closes_via_params_derived_def():
     """`p = CeilDiv(params.x); p = p + q` must use the params-derived def."""
     ir = HostIR(
         class_fields={"tileParams"},
+        writes=_writes("s1", "s2"),
         summaries={
             "f": FuncSummary(
                 name="f",
@@ -89,17 +112,23 @@ def test_scratch_local_cycle_closes_via_params_derived_def():
 
 
 def test_params_leaf_without_writer_is_tiling_data():
-    """`tileParams.s1` is tiling state even when no write was recorded in-TU."""
+    """`tileParams.s1` is tiling state even when no write was recorded in-TU.
+
+    Closure still requires the deciding write: without it the atom stays
+    partial so a dead end is not counted as an answer.
+    """
     ir = HostIR(class_fields={"tileParams"})
     res = SourceResolver(host_ir=ir).resolve("tileParams.s1 > 0")
-    assert res.closed
+    assert not res.closed
     assert res.roots == ["TILING_DATA"]
+    assert any(a.reason == REASON_TILING_DATA_NO_WRITER and a.partial for a in res.atoms)
 
 
 def test_zero_arg_method_body_chase_via_params():
     """0-arg helper returning locals derived from a params aggregate."""
     ir = HostIR(
         class_fields={"tileParams"},
+        writes=_writes("s1", "s2"),
         summaries={
             "BestSplit": FuncSummary(
                 name="BestSplit",
@@ -157,6 +186,7 @@ def test_tie_unpack_assigns_tuple_elements():
             ),
         },
         class_fields={"tileParams"},
+        writes=_writes("s1", "s2"),
     )
     r = SourceResolver(host_ir=ir).scoped(
         bindings=ir.locals_by_function()["worker"],
@@ -179,6 +209,7 @@ def test_get_index_from_make_tuple_actual():
             "worker": FuncSummary(name="worker", params=["coord"]),
         },
         class_fields={"tileParams"},
+        writes=_writes("s1", "s2"),
     )
     r = SourceResolver(host_ir=ir).scoped(
         parameters={"coord"},

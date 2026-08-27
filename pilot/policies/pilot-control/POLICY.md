@@ -9,9 +9,9 @@ Pilot 独占状态、合法边、门禁与完成态。自然语言先规划再�
 1. 只能执行 `pilot_run` / `dispatch-result` 返回的 Action。`pilot_cli next` 是诊断只读，不推进工作流。
 2. Skill、Prompt、Agent、Capability、Action Method **不得**推进工作流状态。
 3. 终态只认 Host `complete`；禁止自行宣布 `done` / `passed`。
-4. Gate fail ≠ 立即 `blocked`；保持 phase，进入 `rework_required` / `human_required`。进入 `human_required` 后必须弹出可点选框。`host_owned_ask` / pending / `ask_human` JSON **不等于**确认框已弹出。`ask_ui_shown=false` 或屏幕上没有可点选框时：用户已经给过仓外路径或 git URL 就用该值 answer；否则立刻用 `question` 并原样传递 `ask_question.options`。禁止用文字告诉用户「框应该已经弹出」。屏幕上已有可点选框时，不要再开同一个 `question`。用户打断确认框并在对话里另作回复时，取消该 pending（`interpret-user-turn`），不要重问上一题。
+4. Gate fail ≠ 立即 `blocked`；保持 phase，进入 `rework_required` / `human_required`。`rework_required` 由 Host `pilot_run` 重试失败 Action，禁止 bash / `pilot_cli` `run-action`。进入 `human_required` 后必须弹出可点选框。`host_owned_ask` / pending / `ask_human` JSON **不等于**确认框已弹出。`ask_ui_shown=false` 或屏幕上没有可点选框时：用户已经给过仓外路径或 git URL 就用该值 answer；否则立刻用 `question` 并原样传递 `ask_question.options`。禁止用文字告诉用户「框应该已经弹出」。屏幕上已有可点选框时，不要再开同一个 `question`。用户打断确认框并在对话里另作回复时，取消该 pending（`interpret-user-turn`），不要重问上一题。
 5. 禁止直调领域 CLI；须经 `pilot_run` / `pilot_cli`。正式产物须 Pilot 签发收据。
-6. 禁止跳步：必须执行 `recommended_next_action`。OpenCode 上确定性段由 Host `pilot_run` 驱动。Host 给出的 `task_prompt_stub` 原样派发；`host_step.tasks`≥2 时同一轮派完。
+6. 禁止跳步：必须执行 `recommended_next_action`。OpenCode 上确定性段由 Host `pilot_run` 驱动。`host_step.tasks`≥2 时主控同一条回复里并行原生 Task 子代理；禁止 `session.create` 开新对话；禁止等一个完成再派下一个。`task_prompt_stub` 原样，不要改写。
 7. Lease：Action `allowed_write_paths` **必须**可读。写入落在 `write_scopes` ∩ lease ∩ `write_roots`。
 8. **`uo-query` 不是 Host Session Driver 工作流**：禁止 `pilot_run workflow=uo-query`。简单查询主控直接调用 `pilot_cli` `uo-query`（stdout）；复杂查询同一轮分别派 Task，主控综合。禁止 Write `answer.yaml`。
 9. `uo-init` / `uo-update` 必须同时有 `--project` 与 `--architecture`。禁止静默默认 architecture，禁止在仓库根目录搜索以猜测 arch。
@@ -46,7 +46,7 @@ CodeMap（按缺口二选一，不要当固定串）：
 * 禁止把 `uo-update` 紧挨着排在刚完成的 `uo-init` 后面。
 * 不要为理解 PR diff 去跑 `uo-update`。
 
-clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.yaml`。后续 workflow 还要用这次改动时，`pilot_cli pin-facts --project <算子绝对路径>`，从 clone_receipt promote 成 `change_contract.yaml`。`tg-plan` 只读这份 pin。禁止 `git diff HEAD` 当 PR 信号。禁止手传 `--changed-files` 或空默认写盘。已有 PR clone_receipt 时禁止 `kind=implementation_coverage` / `enumerate: legal_keys`。PR 源且 change_contract 非法或 `changed_files` 为空 → `plan_precheck` FAIL `PLAN_PR_CHANGE_REQUIRED`。`user_goal.kind` 是交付物标签，不是 `pr_regression`；PR 针对性看 `source.kind=pull_request`。
+clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.yaml`。后续 workflow 还要用这次改动时，引擎从 clone_receipt promote 成 `change_contract.yaml`（`plan_precheck` 自动 pin；诊断仍可用 `pilot_cli pin-facts --project <算子绝对路径>`）。`tg-plan` 只读这份 pin。禁止 `git diff HEAD` 当 PR 信号。禁止手改 clone_receipt 的 SHA。禁止手传 `--changed-files` 或空默认写盘。已有 PR clone_receipt 时禁止 `kind=implementation_coverage` / `enumerate: legal_keys`。PR 源且没有 clone_receipt → `plan_precheck` FAIL `PLAN_PR_CHANGE_REQUIRED`。base 与 head 相同或两 SHA 对不出 hunk → 问人一次（重新 clone 或中止），不要 git 考古循环。`user_goal.kind` 是交付物标签，不是 `pr_regression`；PR 针对性看 `source.kind=pull_request`。
 
 需要测试契约时再 `tg-init`。
 
@@ -70,11 +70,11 @@ clone 成功后候选事实只在算子 `.ascendc-pilot/control/clone_receipt.ya
 
 ## Todo 与并行
 
-`todowrite` 保存完整任务列表。默认同时只有一个 `in_progress`。`host_step.done` 后先完成当前项。需要 Primary 分别派 Task 的步骤默认串行；同一步中独立任务可以并行以隔离上下文。
+`todowrite` 保存完整任务列表。默认同时只有一个 `in_progress`。`host_step.done` 后先完成当前项。不同格之间默认串行。同一格 `host_step.tasks`≥2 必须同一条回复里并行原生 Task（切片 FOCUS 隔离，共享父对话），禁止逐个补派，禁止开新对话。
 
 ## 语义调查
 
-调查只取下一步真正需要的事实。`tg-init` 完成后直接 `tg-plan`。`plan_precheck` 写出改动包后 host_step 回到 Primary，不要在 init 与 plan 之间再派自由 `uo-query`。bind 列由引擎按每路 ≤20 切开；Primary 原样派 Host 给出的 1 路 harness + N 路 bind。
+调查只取下一步真正需要的事实。`tg-init` 完成后直接 `tg-plan`。`plan_precheck` 写出改动包后 host_step 回到 Primary，不要在 init 与 plan 之间再派自由 `uo-query`。bind 列由引擎按每路 ≤20 切开；主控同一条回复里并行原生 Task 拉起 1 路 harness + N 路 bind，不要改路数，不要开新对话。
 
 从用户原话提取可查询的起始点。两个问题能各自独立查完就分开。Host 函数、Kernel 宏、TilingKey 家族通常分开。同一符号的多个子问或家族别名可以合并。不要仅因为同一业务就合并。相关 ≠ 单域。是否分开只看查询之间有没有信息依赖。
 

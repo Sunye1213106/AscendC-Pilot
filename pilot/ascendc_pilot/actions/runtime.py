@@ -2965,7 +2965,8 @@ def prepare_action(
             result["message_zh"] = (
                 f"已准备 {len(fanout_tasks)} 个 Task（{n_harness} 路 harness + {n_bind} 路 bind，"
                 "每路 bind ≤20 列）。"
-                "同一轮并行最好；每条 prompt 必须原样为 `dispatch_tasks[i].task_prompt_stub`。"
+                "主控同一条回复里并行原生 Task 子代理；禁止 session.create 开新对话；禁止等一个完成再派下一个。"
+                "每条 prompt 必须原样为 `dispatch_tasks[i].task_prompt_stub`。"
                 "禁止用父 `task_prompt_stub` 再开一个。"
                 "列数由引擎按表头切开，不要自己改路数。"
                 "子代理写完后引擎合并 harness.yaml 与全部 bindN.yaml → bind.yaml。"
@@ -2976,8 +2977,8 @@ def prepare_action(
         else:
             result["message_zh"] = (
                 f"已准备 {len(fanout_tasks)} 个并行 Task（agent=`{actor_id}`，同一 Action `{action_id}` / 一张 ticket）。"
-                "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
-                "`dispatch_tasks[i].task_prompt_stub`。"
+                "同一轮用 OpenCode 原生 Task 子代理全部派发；禁止 session.create 开新对话。"
+                "每条 prompt 必须原样为 `dispatch_tasks[i].task_prompt_stub`。"
                 "禁止用父 `task_prompt_stub` 再开一个。"
                 "插件用各 Task 原文 ACK 并推进 task_plan 下一格。"
                 "Primary 只把两段原文用人话合并给用户（审查完成 / 做什么 / 改了什么 / 问题 / 要测变量）。"

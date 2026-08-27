@@ -276,6 +276,108 @@ def _resolve_sha(mirror: Path, ref: str) -> str:
     return ""
 
 
+def _merge_base(cwd: Path, a: str, b: str) -> str:
+    got = _run_git(["merge-base", a, b], cwd=cwd)
+    if got.returncode == 0:
+        return (got.stdout or "").strip()
+    return ""
+
+
+def resolve_pr_base_sha(
+    cwd: Path,
+    head_sha: str,
+    *,
+    provider_base: str = "",
+    base_ref: str = "",
+) -> str:
+    """Merge-base of PR head vs base branch. Never store HEAD as both sides."""
+    head = str(head_sha or "").strip()
+    if not head:
+        return ""
+    ordered: list[str] = []
+    pb = str(provider_base or "").strip()
+    if pb and pb != head:
+        ordered.append(pb)
+    refs: list[str] = []
+    ref = str(base_ref or "").strip()
+    if ref:
+        refs.append(f"origin/{ref}")
+        refs.append(ref)
+    refs.extend(["origin/HEAD", "origin/master", "origin/main", "master", "main"])
+    for name in refs:
+        sha = _resolve_sha(cwd, name)
+        if sha and sha != head:
+            ordered.append(sha)
+    seen: set[str] = set()
+    for cand in ordered:
+        if not cand or cand == head or cand in seen:
+            continue
+        seen.add(cand)
+        mb = _merge_base(cwd, cand, head)
+        if mb and mb != head:
+            return mb
+        if mb == cand:
+            return cand
+        diff = _run_git(["diff", "--name-only", cand, head], cwd=cwd)
+        if (diff.stdout or "").strip():
+            return cand
+    parent = _resolve_sha(cwd, f"{head}^") or _resolve_sha(cwd, f"{head}~1")
+    if parent and parent != head:
+        return parent
+    return ""
+
+
+def _merge_base(cwd: Path, a: str, b: str) -> str:
+    got = _run_git(["merge-base", a, b], cwd=cwd)
+    if got.returncode == 0:
+        return (got.stdout or "").strip()
+    return ""
+
+
+def resolve_pr_base_sha(
+    cwd: Path,
+    head_sha: str,
+    *,
+    provider_base: str = "",
+    base_ref: str = "",
+) -> str:
+    """Merge-base of PR head vs base branch. Never store head as base."""
+    head = str(head_sha or "").strip()
+    if not head:
+        return ""
+    ordered: list[str] = []
+    pb = str(provider_base or "").strip()
+    if pb and pb != head:
+        ordered.append(pb)
+    refs: list[str] = []
+    br = str(base_ref or "").strip()
+    if br:
+        refs.append(f"origin/{br}")
+        refs.append(br)
+    refs.extend(["origin/HEAD", "origin/master", "origin/main", "master", "main"])
+    for ref in refs:
+        sha = _resolve_sha(cwd, ref)
+        if sha and sha != head:
+            ordered.append(sha)
+    seen: set[str] = set()
+    for cand in ordered:
+        if not cand or cand == head or cand in seen:
+            continue
+        seen.add(cand)
+        mb = _merge_base(cwd, cand, head)
+        if mb and mb != head:
+            return mb
+        if mb == cand:
+            return cand
+        names = _run_git(["diff", "--name-only", cand, head], cwd=cwd)
+        if (names.stdout or "").strip():
+            return cand
+    parent = _resolve_sha(cwd, f"{head}^") or _resolve_sha(cwd, f"{head}~1")
+    if parent and parent != head:
+        return parent
+    return ""
+
+
 def _auth_headers(host: str) -> dict[str, str]:
     headers = {"User-Agent": "ascendc-pilot", "Accept": "application/json"}
     if "github" in host:
@@ -351,13 +453,16 @@ def fetch_pr_refs(mirror: Path, number: int) -> dict[str, str]:
         f"refs/pull/{number}/head",
     ):
         _run_git(["fetch", "origin", f"{spec}:refs/pull/{number}/head"], cwd=mirror)
-    head = _resolve_sha(mirror, f"refs/pull/{number}/head") or _resolve_sha(mirror, "HEAD")
-    base = (
-        _resolve_sha(mirror, "origin/HEAD")
-        or _resolve_sha(mirror, "origin/master")
-        or _resolve_sha(mirror, "origin/main")
-        or _resolve_sha(mirror, "HEAD")
-    )
+    head = _resolve_sha(mirror, f"refs/pull/{number}/head")
+    if not head:
+        return {
+            "head_sha": "",
+            "base_sha": "",
+            "base_ref": "",
+            "base_source": "default_branch_fallback",
+            "error": "PR_HEAD_REF_MISSING",
+        }
+    base = resolve_pr_base_sha(mirror, head)
     return {
         "head_sha": head,
         "base_sha": base,
@@ -1019,8 +1124,19 @@ def acquire_pull_request(
             if not head_sha:
                 return meta
     sha = head_sha or _resolve_sha(mirror, "HEAD")
-    files = changed_files(mirror, base_sha, head_sha)
-    diff = _run_git(["diff", f"{base_sha}...{head_sha}"], cwd=mirror)
+    if not sha:
+        return {
+            "ok": False,
+            "error": "EMPTY_SHA",
+            "message_zh": "PR head SHA 为空，无法建立 workspace。",
+        }
+    base_sha = resolve_pr_base_sha(
+        mirror, sha, provider_base=base_sha, base_ref=base_ref
+    ) or base_sha
+    if base_sha == sha:
+        base_sha = resolve_pr_base_sha(mirror, sha, base_ref=base_ref)
+    files = changed_files(mirror, base_sha, sha)
+    diff = _run_git(["diff", f"{base_sha}...{sha}"], cwd=mirror)
     digest = _diff_digest(diff.stdout or "")
     skipped_checkout = False
     if ws_arg:
@@ -1044,7 +1160,7 @@ def acquire_pull_request(
             owner=str(parsed["owner"]),
             repo=str(parsed["repo"]),
             number=int(parsed["number"]),
-            head_sha=head_sha or "unknown",
+            head_sha=sha or "unknown",
             run_id=instance,
         )
         head_dir = ws_home / "head"
@@ -1052,7 +1168,7 @@ def acquire_pull_request(
         head_wt = create_worktree(mirror, head_dir, sha, run_id=instance)
         if not head_wt.get("ok"):
             return head_wt
-        if base_sha and base_sha != head_sha:
+        if base_sha and base_sha != sha:
             create_worktree(mirror, base_dir, base_sha, run_id=instance)
         head_path = Path(head_wt["path"])
         base_path = str(base_dir) if base_dir.is_dir() else ""
@@ -1063,11 +1179,11 @@ def acquire_pull_request(
         if not roots:
             roots = list_operator_roots(head_path)
     return {
-        "ok": True if files or head_sha else False,
-        "error": "" if (files or head_sha) else "EMPTY_DIFF",
+        "ok": True if files or sha else False,
+        "error": "" if (files or sha) else "EMPTY_DIFF",
         "source": parsed,
         "base_sha": base_sha,
-        "head_sha": head_sha,
+        "head_sha": sha,
         "base_ref": base_ref,
         "base_source": base_source,
         "diff_digest": digest,
@@ -1082,7 +1198,7 @@ def acquire_pull_request(
         "changeset": {
             "schema": "pilot-changeset/v1",
             "base_sha": base_sha,
-            "head_sha": head_sha,
+            "head_sha": sha,
             "base_ref": base_ref,
             "base_source": base_source,
             "diff_digest": digest,

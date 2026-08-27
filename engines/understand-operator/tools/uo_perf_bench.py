@@ -132,9 +132,19 @@ def _stats(values: list[float]) -> dict[str, float]:
     }
 
 
-def collect(op: Path, arch: str, stages: tuple[str, ...], runs: int) -> dict[str, Any]:
+def collect(
+    op: Path,
+    arch: str,
+    stages: tuple[str, ...],
+    runs: int,
+    *,
+    wipe_compile_cache: bool = False,
+) -> dict[str, Any]:
     samples: list[dict[str, float]] = []
+    cache_pkl = op / ".ascendc-pilot" / arch / "uo" / "ir" / "_codemap_compile_cache.pkl"
     for i in range(runs):
+        if wipe_compile_cache:
+            cache_pkl.unlink(missing_ok=True)
         print(f"  run {i + 1}/{runs} …", flush=True)
         t0 = time.perf_counter()
         payload = run_once(op, arch, stages, quiet=False)
@@ -227,6 +237,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--label", default=None, help="write .perf/<label>.json")
     ap.add_argument("--top", type=int, default=25, help="0 = all")
     ap.add_argument("--compare", nargs=2, type=Path, default=None, metavar=("A", "B"))
+    ap.add_argument(
+        "--wipe-compile-cache",
+        action="store_true",
+        help="delete _codemap_compile_cache.pkl before each run (full analyze, not reuse)",
+    )
     args = ap.parse_args(argv)
 
     if args.compare:
@@ -252,7 +267,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"op={op.name} arch={arch} stages={','.join(stages)} runs={args.runs}")
-    report = collect(op, arch, stages, args.runs)
+    report = collect(
+        op, arch, stages, args.runs, wipe_compile_cache=args.wipe_compile_cache
+    )
     print("\n" + _table(report, args.top))
 
     if args.label:

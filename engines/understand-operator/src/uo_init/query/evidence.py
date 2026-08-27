@@ -172,7 +172,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
     EntityKind.FUNCTION.value: ("definition_sites", "write_sites"),
     EntityKind.METHOD.value: ("definition_sites", "write_sites"),
     EntityKind.VARIABLE.value: ("layer", "rhs", "write_sites"),
-    EntityKind.MACRO.value: ("value", "definition", "layer"),
+    EntityKind.MACRO.value: ("value", "value_expr", "definition", "layer"),
     EntityKind.COMPILE_VAR.value: ("value", "value_expr", "origin", "layer"),
     EntityKind.PREDICATE.value: (
         "predicate_role",
@@ -237,7 +237,7 @@ def _as_mapping(value: Any) -> dict[str, Any]:
     }
 
 
-_LONG_EXPR_KEYS = frozenset({"rhs", "expression", "guard", "predicate", "condition"})
+_LONG_EXPR_KEYS = frozenset({"rhs", "expression", "guard", "predicate", "condition", "value_expr", "definition"})
 _FULL_FACT_KEYS = frozenset(
     {
         "packing_value_sites",

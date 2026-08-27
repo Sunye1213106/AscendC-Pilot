@@ -4,25 +4,27 @@
 
 草稿里 `call` 与 `call_args[].name` 已按 `repo_scan.canonical_call` 填好。本路只给 `chunk.columns` 写格子，并只给这些列补 `call_args.sources[]`。合并后的 union 才覆盖完整 API。
 
-## 硬规则
+## 硬规则（遇冲突只认这一节）
 
 - **status 只看调用点，不看 CodeMap。** 禁止用 `dim_names` / AttrIndex 有无改 `control.status`。
 - **查图只用 `pilot_cli uo-query`。** 无参一次只看 `dim_names`。标识符：`uo-query --project <算子路径> <ident>`。禁止 `Dim=`、禁止 Grep / 通读 `op_host`、禁止拿 `dim_names` 当尺寸/dtype 查询词。
-- **尺寸列 identifier = 列名。** 只取 `kind: TILING_FIELD` 的 `.name`（禁止 `TDF::`、操作数、`*TemplateNum`）。
-- **标量 / layout / 位置实参的 source 列 `uo.id` = 该 `call_args.name`。** 看 arg 名（`num_heads` / `keep_prob` / `input_layout` 一类），不看 relation。该列即使同时还是张量维，也抄这个名字。禁止空 id、禁止只放 `candidate`。inspect 前按 `call_args` 回扫。
+- **禁止追加、删除、改名 `call_args`。** 窗口里多出来的实参记 findings，不要改草稿 API 面。
+- **尺寸列不是标量实参。** 禁止把纯 `tensor_shape` 列写进标量 / layout / 派生 kwargs（`scale` / `keep_prob` 一类）的 `sources[]`。尺寸列 identifier = 列名，只取 `kind: TILING_FIELD` 的 `.name`（禁止 `TDF::`、操作数、`*TemplateNum`）。
+- **标量 / layout / 位置实参的 `uo.id` = 该 `call_args.name`。** 只对已经出现在该 arg `sources[]` 里、且 `sources[]` 长度为 1 的那一列抄名。看 arg 名，不看 relation。禁止空 id、禁止只放 `candidate`。
 - **入边数压过抄名。** 一列进多个标量 arg 时，只抄 `sources[]` 长度为 1 的那个。两列以上共喂的聚合 arg（长度求和、元素总数、workspace）谁都不抄。**两列不许共 `uo.id`**：抄名会撞就换成 1:1 的；只剩聚合 → 空 + `unresolved`。
 - **开关维不是 dtype / shape / layout 的身份。** `Is*`、`*DType`、`*TemplateNum` 只有「列本身就是该开关」才能当 `uo.id`。投影写 `domains.projection`。
 - **metadata 只有 Enable / 用例名 / 是否跑这行。** 确定性等 host 会读的运行上下文 → `active`。
 - **`call_args.sources[].column` 必须 `active`。** 全空 ≠ `unwired`。`unwired` 仅当草稿 `call_args` 里没有对应实参。`call_args.sources[].column` 必须是本路 mapping key。
+- **只 Edit 一次。** 读窗口 + 一次无参 `uo-query` + 写 YAML 是同一轮；写完做核对再 `inspect`。禁止写完再通读改一版、禁止第二轮 uo-query 翻盘。
 
 ## 路径（一次做完就停）
 
 1. **并行：** 无参 `uo-query`（只要 `dim_names`）+ 读 `repo_scan.yaml` 表头。不要通读 CSV，不要读对轴产物。
-2. **打开草稿 `call.site` 那一个窗口**（同一文件内即可）。对本路每一列名搜赋值：它进了哪个局部变量、该变量进了调用的哪个关键字或第几个位置。位置实参的 `call_args.name` 用 API 签名名，`runtime_expr` 用局部变量。窗口里出现、草稿还没有的实参先追加再接线。给本路列补 `call_args.sources[]`，再写列 `control`。
+2. **打开草稿 `call.site` 那一个窗口**（同一文件内即可）。对本路每一列名搜赋值：它进了哪个局部变量、该变量进了调用的哪个**已有**关键字或第几个位置。位置实参的 `call_args.name` 用草稿已有签名名，`runtime_expr` 用局部变量。给本路列补 `call_args.sources[]`，再写列 `control`。
 3. **本路每列**写 `control.status` + `relation`。先看 `domains.<col>.profile.empty_rate`：全空且窗口里的局部是从另一列重算 → 空列 `shadowed`；kwargs 的 source 写有数的那一列。
-4. **仅 active 查 identifier。** 标量 / layout / 位置实参查 **签名名**；没有 `TILING_FIELD` 也立刻把 `uo.id` 写成该 `call_args.name`。只作为张量维、且没有标量 source 的列才查列名。dtype 不要查 `*DType` / `Is*`。命中后 snippet 里同 struct 邻维可分给本路其它尺寸列。够闭合就停。
-5. **立刻 Edit 一次**本路语义格。
-6. **写后核对（这一步没做完不许 inspect）：** 打开刚写的 YAML，只扫 `call_args`。每个标量 / layout / 位置实参：若 `sources[]` 长度为 1，那一列的 `uo.id` **必须等于** 该 `name`，`confidence: confirmed`。`candidate` 不能代替 id。encoding / runtime_expr 已出现该 arg 名而 id 仍空 → 同样改。每个 `sources[].column` 必须 `active`。本路 `uo.id` 重复按入边数改。然后 `inspect yaml --rel <本路 bindN.yaml>` ok → summary。
+4. **仅 active 查 identifier。** 已作为标量 / layout / 位置实参 source 的列：立刻把 `uo.id` 写成该 `call_args.name`，不要改去查 tiling 维。只作为张量维、且没有标量 source 的列才查列名。dtype 不要查 `*DType` / `Is*`。命中后 snippet 里同 struct 邻维可分给本路其它尺寸列。够闭合就停。
+5. **立刻 Edit 一次**本路语义格（含下面核对要改的格子）。
+6. **写后核对（这一步没做完不许 inspect）：** 只扫 `call_args` 里的标量 / layout / 位置实参。`sources[]` 长度为 1 时，那一列的 `uo.id` **必须等于** 该 `name`，`confidence: confirmed`。`tensor_shape` 列不走这条。`candidate` 不能代替 id。每个 `sources[].column` 必须 `active`。本路 `uo.id` 重复按入边数改。然后 `inspect yaml --rel <本路 bindN.yaml>` ok → summary。
 
 ## 分类
 
@@ -60,7 +62,7 @@ CSV→API→具名 kwargs 闭合且 id 非空 → `confirmed`。只碰到相似�
 
 - 每个 mapping key 都有 `control.status` + `relation` + `confidence`
 - 标量 kwargs source 的 `uo.id` 是 1:1 的 `call_args.name`；纯尺寸列是 `TILING_FIELD` 短名；本路 id 互不重复
-- `confirmed` 有 `evidence`；做过 call_args 回扫与一次无参 `uo-query`
+- `confirmed` 有 `evidence`；做过一次无参 `uo-query` 与一次 Edit
 - inspect ok 后立刻停
 
 ## 输出形状
@@ -109,9 +111,9 @@ findings: []
 ## 反模式
 
 - 用 `dim_names`（`*TemplateNum` / `*DType` / `Is*`）当尺寸或 dtype 的查询词或 `uo.id`
-- `Dim=`；Grep `op_host`
+- `Dim=`；Grep `op_host`；追加或改写 `call_args`
 - 尺寸列绑操作数名 / `TILING_KEY` / 派生 kwargs（scale 一类）
 - 标量 kwargs source 空 id，或两列共一个聚合 arg 名
 - `confirmed` 空 `evidence`；sources 列因表全空标成 `unwired`
 - 确定性列标 metadata
-- inspect 没 ok 就停；读对轴产物
+- inspect 没 ok 就停；读对轴产物；写完再开第二轮查询翻盘

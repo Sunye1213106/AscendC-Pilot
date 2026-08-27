@@ -3,8 +3,8 @@
   "arch": "arch35",
   "source": {
     "available": true,
-    "file_count": 48,
-    "digest": "ddca6b3d709e6ecb"
+    "file_count": 47,
+    "digest": "3e45163c4a70ea0d"
   },
   "answers": {
     "Q1_index": {
@@ -21,7 +21,7 @@
       "readers": [],
       "canonical": "",
       "matching_block_count": 0,
-      "completeness": "siblings_checked",
+      "completeness": "",
       "dim_coverage": {},
       "nearby": [],
       "has_hint": true,
@@ -98,7 +98,7 @@
       "writers": [],
       "readers": [],
       "canonical": "",
-      "matching_block_count": 38,
+      "matching_block_count": 48,
       "completeness": "coverage_checked",
       "dim_coverage": {
         "DTemplateNum": [
@@ -125,8 +125,7 @@
           "1"
         ],
         "IsBn2MultiBlk": [
-          "0",
-          "1"
+          "0"
         ],
         "IsDNoEqual": [
           "0",
@@ -205,7 +204,7 @@
       "nearby": [
         {
           "dropped": "S2TemplateNum",
-          "matching_block_count": 38,
+          "matching_block_count": 48,
           "values": [
             "128"
           ]
@@ -232,7 +231,7 @@
       "nearby": [
         {
           "dropped": "IsTnd",
-          "matching_block_count": 65,
+          "matching_block_count": 89,
           "values": [
             "0",
             "1"
@@ -254,7 +253,7 @@
       "writers": [],
       "readers": [],
       "canonical": "",
-      "matching_block_count": 38,
+      "matching_block_count": 48,
       "completeness": "coverage_checked",
       "dim_coverage": {
         "DTemplateNum": [
@@ -281,8 +280,7 @@
           "1"
         ],
         "IsBn2MultiBlk": [
-          "0",
-          "1"
+          "0"
         ],
         "IsDNoEqual": [
           "0",
@@ -349,7 +347,7 @@
       "primary": {
         "kind": "TILING_KEY",
         "name": "InputDType",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1659"
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1729"
       },
       "has_snippet": true,
       "writers": [
@@ -393,7 +391,7 @@
       "primary": {
         "kind": "TILING_FIELD",
         "name": "s1Inner",
-        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:197"
+        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:225"
       },
       "has_snippet": true,
       "writers": [
@@ -414,7 +412,7 @@
       "primary": {
         "kind": "FIELD",
         "name": "tilingData",
-        "span": "arch35/flash_attention_score_grad_block_cube.h:158"
+        "span": "arch35/flash_attention_score_grad_block_vec.h:159"
       },
       "has_snippet": true,
       "writers": [],
@@ -431,14 +429,14 @@
       "ok": true,
       "card_count": 2,
       "primary": {
-        "kind": "COMPILE_VAR",
-        "name": "AttrIndex::KEEP_PROB",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+        "kind": "INPUT",
+        "name": "keep_prob",
+        "span": "op_graph/flash_attention_score_grad_proto.h:122"
       },
       "has_snippet": true,
       "writers": [],
       "readers": [],
-      "canonical": "AttrIndex::KEEP_PROB",
+      "canonical": "keep_prob",
       "matching_block_count": 0,
       "completeness": "siblings_checked",
       "dim_coverage": {},
@@ -585,7 +583,7 @@
       "primary": {
         "kind": "MACRO",
         "name": "GET_TPL_TILING_KEY",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1460"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1753"
       },
       "has_snippet": true,
       "writers": [],
@@ -604,7 +602,7 @@
       "primary": {
         "kind": "TYPE",
         "name": "GRAPH_FAILED",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1200"
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1265"
       },
       "has_snippet": false,
       "writers": [
@@ -625,7 +623,7 @@
       "primary": {
         "kind": "FUNCTION",
         "name": "CheckShapeValid",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:194"
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:203"
       },
       "has_snippet": true,
       "writers": [],
@@ -669,15 +667,11 @@
       "writers": [],
       "readers": [],
       "canonical": "",
-      "matching_block_count": 7,
+      "matching_block_count": 8,
       "completeness": "coverage_checked",
       "dim_coverage": {
         "DTemplateNum": [
-          "128",
-          "192",
-          "256",
-          "64",
-          "768"
+          "128"
         ],
         "DeterType": [
           "0"
@@ -719,8 +713,7 @@
           "1"
         ],
         "IsRope": [
-          "0",
-          "1"
+          "0"
         ],
         "IsTnd": [
           "0",
@@ -767,7 +760,7 @@
       "nearby": [
         {
           "dropped": "DTemplateNum",
-          "matching_block_count": 65,
+          "matching_block_count": 89,
           "values": [
             "0",
             "128",
@@ -799,7 +792,7 @@
       "nearby": [
         {
           "dropped": "DTemplateNum",
-          "matching_block_count": 65,
+          "matching_block_count": 89,
           "values": [
             "0",
             "128",
@@ -819,7 +812,7 @@
       "primary": {
         "kind": "VARIABLE",
         "name": "fusedOuter",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:523"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:802"
       },
       "has_snippet": true,
       "writers": [],
@@ -849,10 +842,7 @@
       "dim_coverage": {
         "DTemplateNum": [
           "128",
-          "192",
-          "256",
-          "64",
-          "768"
+          "64"
         ],
         "DeterType": [
           "0"
@@ -866,8 +856,7 @@
           "1"
         ],
         "IsBn2MultiBlk": [
-          "0",
-          "1"
+          "0"
         ],
         "IsDNoEqual": [
           "0",
@@ -894,8 +883,7 @@
           "1"
         ],
         "IsRope": [
-          "0",
-          "1"
+          "0"
         ],
         "IsTnd": [
           "1"
@@ -927,7 +915,7 @@
       "primary": {
         "kind": "TILING_KEY",
         "name": "IsPse",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1439"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1732"
       },
       "has_snippet": true,
       "writers": [
@@ -955,7 +943,7 @@
       "writers": [],
       "readers": [],
       "canonical": "",
-      "matching_block_count": 64,
+      "matching_block_count": 88,
       "completeness": "coverage_checked",
       "dim_coverage": {
         "DTemplateNum": [
@@ -1005,7 +993,6 @@
           "1"
         ],
         "IsPse": [
-          "0",
           "1"
         ],
         "IsRegbase": [
@@ -1051,7 +1038,7 @@
       "primary": {
         "kind": "FUNCTION",
         "name": "CalcleTNDDeterParam",
-        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:42"
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:396"
       },
       "has_snippet": true,
       "writers": [],
@@ -1089,7 +1076,7 @@
       "primary": {
         "kind": "PREDICATE",
         "name": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
-        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1415"
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1854"
       },
       "has_snippet": true,
       "writers": [],
@@ -1108,7 +1095,7 @@
       "primary": {
         "kind": "OPERATION",
         "name": "SetScheduleMode",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1504"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1797"
       },
       "has_snippet": true,
       "writers": [],
@@ -1184,7 +1171,7 @@
       "primary": {
         "kind": "METHOD",
         "name": "ProcessMulsAndCast",
-        "span": "arch35/flash_attention_score_grad_block_vec.h:654"
+        "span": "arch35/flash_attention_score_grad_block_vec.h:650"
       },
       "has_snippet": true,
       "writers": [],
@@ -1222,7 +1209,7 @@
       "primary": {
         "kind": "MACRO",
         "name": "ASCENDC_TPL_SEL",
-        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:127"
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:126"
       },
       "has_snippet": true,
       "writers": [],
@@ -1260,7 +1247,7 @@
       "primary": {
         "kind": "TILING_KEY",
         "name": "IsDNoEqual",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1438"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1731"
       },
       "has_snippet": true,
       "writers": [
@@ -1282,7 +1269,7 @@
       "primary": {
         "kind": "TILING_KEY",
         "name": "IsNzOut",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:444"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:703"
       },
       "has_snippet": true,
       "writers": [
@@ -1326,16 +1313,14 @@
       "primary": {
         "kind": "TILING_FIELD",
         "name": "scaleValue",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1011"
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1074"
       },
       "has_snippet": true,
       "writers": [
         "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase::scaleValue <- fBaseParams.scaleValue"
       ],
       "readers": [
-        "Init",
-        "ProcessDqkv",
-        "SetConstInfo"
+        "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase::scaleValue <- fBaseParams.scaleValue"
       ],
       "canonical": "scaleValue",
       "matching_block_count": 0,
@@ -1351,16 +1336,14 @@
       "primary": {
         "kind": "TILING_FIELD",
         "name": "enablePreSfmg",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1141"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1435"
       },
       "has_snippet": true,
       "writers": [
         "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase::enablePreSfmg <- fBaseParams.enablePreSfmg"
       ],
       "readers": [
-        "InitGlobalBuffer",
-        "InitUbBuffer",
-        "SetConstInfo"
+        "enablePreSfmg"
       ],
       "canonical": "enablePreSfmg",
       "matching_block_count": 0,
@@ -1376,7 +1359,7 @@
       "primary": {
         "kind": "COMPILE_VAR",
         "name": "IS_SMALL_D_PRELOAD",
-        "span": "arch35/flash_attention_score_grad_block_cube.h:142"
+        "span": "arch35/flash_attention_score_grad_block_cube.h:149"
       },
       "has_snippet": true,
       "writers": [],
@@ -1394,13 +1377,13 @@
       "card_count": 1,
       "primary": {
         "kind": "BRANCH",
-        "name": "OP_CHECK_IF((aShape == nullptr)||(bShape == nullptr), OP_LOGW(\"flash_attention_score_grad_tiling_normal_regbase\", \"aShap",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:28"
+        "name": "OP_CHECK_IF((dim0 != b || dim1 != n1 || dim2 != s1 || dim3 != validDim3), OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(\"FlashA",
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:44"
       },
       "has_snippet": true,
       "writers": [],
       "readers": [],
-      "canonical": "OP_CHECK_IF((aShape == nullptr)||(bShape == nullptr), OP_LOGW(\"flash_attention_score_grad_tiling_normal_regbase\", \"aShap",
+      "canonical": "OP_CHECK_IF((dim0 != b || dim1 != n1 || dim2 != s1 || dim3 != validDim3), OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(\"FlashA",
       "matching_block_count": 0,
       "completeness": "siblings_checked",
       "dim_coverage": {},
@@ -1414,7 +1397,7 @@
       "primary": {
         "kind": "FUNCTION",
         "name": "CheckVarLenSparseModeValue",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:574"
+        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.cpp:625"
       },
       "has_snippet": true,
       "writers": [],
@@ -1452,7 +1435,7 @@
       "primary": {
         "kind": "FUNCTION",
         "name": "InitTilingData",
-        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1752"
+        "span": "arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:2045"
       },
       "has_snippet": true,
       "writers": [],
@@ -1471,7 +1454,7 @@
       "primary": {
         "kind": "TILING_DATA",
         "name": "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase",
-        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:610"
+        "span": "arch35/flash_attention_score_grad_tiling_data_regbase.h:643"
       },
       "has_snippet": true,
       "writers": [],
@@ -1528,14 +1511,14 @@
       "primary": {
         "kind": "MACRO",
         "name": "ASCENDC_TPL_3_BW",
-        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:25"
+        "span": "arch35/flash_attention_score_grad_template_tiling_key.h:26"
       },
       "has_snippet": true,
       "writers": [],
       "readers": [],
       "canonical": "ASCENDC_TPL_3_BW",
       "matching_block_count": 0,
-      "completeness": "siblings_checked",
+      "completeness": "first_hit",
       "dim_coverage": {},
       "nearby": [],
       "has_hint": false
@@ -1547,7 +1530,7 @@
       "primary": {
         "kind": "PREDICATE",
         "name": "REGISTER_TILING_TEMPLATE_FlashAttentionScoreGradTilingVarlenRegbase",
-        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1415"
+        "span": "arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp:1854"
       },
       "has_snippet": true,
       "writers": [],
@@ -1564,14 +1547,14 @@
       "ok": true,
       "card_count": 2,
       "primary": {
-        "kind": "COMPILE_VAR",
-        "name": "AttrIndex::SCALE_VALUE",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+        "kind": "INPUT",
+        "name": "scale_value",
+        "span": "op_graph/flash_attention_score_grad_proto.h:121"
       },
       "has_snippet": true,
       "writers": [],
       "readers": [],
-      "canonical": "AttrIndex::SCALE_VALUE",
+      "canonical": "scale_value",
       "matching_block_count": 0,
       "completeness": "siblings_checked",
       "dim_coverage": {},
@@ -1621,9 +1604,9 @@
       "ok": true,
       "card_count": 1,
       "primary": {
-        "kind": "TYPE",
-        "name": "AttrIndex",
-        "span": "arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+        "kind": "INPUT",
+        "name": "keep_prob",
+        "span": "op_graph/flash_attention_score_grad_proto.h:122"
       },
       "has_snippet": false,
       "writers": [],
@@ -1638,70 +1621,70 @@
   },
   "latency_ms": {
     "n": 59,
-    "p50": 8.2,
-    "p95": 42.7,
-    "max": 67.4,
-    "mean": 14.7,
+    "p50": 5.4,
+    "p95": 44.3,
+    "max": 138.8,
+    "mean": 14.6,
     "per_case": {
-      "Q1_index": 41.1,
-      "Q2_dim_istnd": 4.2,
-      "Q3_istnd_1": 12.8,
-      "Q4_istnd_s2": 25.4,
-      "Q5_istnd_9_empty": 6.3,
-      "Q6_istnd_true_alias": 9.4,
-      "Q7_inputdtype": 27.6,
-      "Q8_s1templatenum": 32.5,
-      "Q9_s1inner": 19.5,
-      "Q10_tilingdata": 23.7,
-      "Q11_keep_prob": 10.9,
-      "Q12_init": 36.5,
-      "Q13_process": 10.1,
-      "Q14_pipebase": 50.4,
-      "Q15_pipepost": 67.4,
-      "Q16_localtensor_catalog": 1.5,
-      "Q17_tque_catalog": 1.0,
-      "Q18_tpl_args_decl": 3.2,
+      "Q1_index": 1.4,
+      "Q2_dim_istnd": 5.3,
+      "Q3_istnd_1": 15.6,
+      "Q4_istnd_s2": 34.9,
+      "Q5_istnd_9_empty": 14.9,
+      "Q6_istnd_true_alias": 12.3,
+      "Q7_inputdtype": 44.3,
+      "Q8_s1templatenum": 32.8,
+      "Q9_s1inner": 26.2,
+      "Q10_tilingdata": 22.5,
+      "Q11_keep_prob": 3.3,
+      "Q12_init": 32.8,
+      "Q13_process": 8.2,
+      "Q14_pipebase": 2.4,
+      "Q15_pipepost": 2.3,
+      "Q16_localtensor_catalog": 0.9,
+      "Q17_tque_catalog": 0.8,
+      "Q18_tpl_args_decl": 4.2,
       "Q19_get_tpl_key": 3.2,
-      "Q20_graph_failed": 9.8,
-      "Q21_checkshapevalid": 3.7,
-      "Q22_refuse_nl": 0.0,
-      "E1_dtpl128_combo": 10.3,
-      "E2_dtpl320_empty": 8.2,
-      "E3_dtpl1_empty": 9.8,
-      "E4_fusedouter_alias": 3.7,
-      "E5_splitaxis_istnd": 13.1,
-      "E6_ispse": 37.5,
-      "E7_ispse_1": 14.3,
-      "E8_calcle_tnd_deter": 6.1,
-      "E9_reg_tiling_default": 2.5,
-      "E10_reg_tiling_template": 4.6,
-      "E11_setschedulemode": 3.6,
-      "E12_syncallcores": 5.1,
-      "E13_mutexbuffer": 6.1,
-      "E14_processdqkv": 3.7,
-      "E15_processmulscast": 3.6,
-      "E16_cast": 42.7,
-      "E17_tpl_sel": 3.0,
-      "E18_orig_dtype_query": 19.0,
-      "E19_isdnoequal": 32.6,
-      "E20_isnzout": 30.3,
-      "E21_splitaxis": 30.3,
-      "E22_scalevalue": 14.3,
-      "E23_enablepresfmg": 20.0,
-      "E24_small_d_preload": 4.1,
-      "E25_opcheckif": 29.9,
-      "E26_checkvarlensparse": 3.7,
-      "E27_graphstatus": 58.9,
-      "E28_inittilingdata": 4.9,
-      "E29_fag_tilingdata": 5.1,
-      "E30_regtensor": 1.5,
-      "E31_vregsrc": 18.1,
-      "E32_tpl_3_bw": 6.0,
-      "E33_reg_tpl_varlen": 1.5,
-      "E34_scale_value_attr": 2.3,
-      "E35_pse_type": 1.3,
-      "Q23_around_launch": 1.3,
-      "Q24_around_keep_prob": 2.5
+      "Q20_graph_failed": 14.1,
+      "Q21_checkshapevalid": 6.9,
+      "Q22_refuse_nl": 0.1,
+      "E1_dtpl128_combo": 16.1,
+      "E2_dtpl320_empty": 15.1,
+      "E3_dtpl1_empty": 12.0,
+      "E4_fusedouter_alias": 2.7,
+      "E5_splitaxis_istnd": 8.0,
+      "E6_ispse": 39.3,
+      "E7_ispse_1": 16.0,
+      "E8_calcle_tnd_deter": 4.6,
+      "E9_reg_tiling_default": 2.1,
+      "E10_reg_tiling_template": 2.9,
+      "E11_setschedulemode": 3.0,
+      "E12_syncallcores": 5.4,
+      "E13_mutexbuffer": 4.0,
+      "E14_processdqkv": 3.4,
+      "E15_processmulscast": 3.4,
+      "E16_cast": 32.6,
+      "E17_tpl_sel": 3.9,
+      "E18_orig_dtype_query": 11.1,
+      "E19_isdnoequal": 32.1,
+      "E20_isnzout": 44.4,
+      "E21_splitaxis": 45.1,
+      "E22_scalevalue": 20.0,
+      "E23_enablepresfmg": 31.9,
+      "E24_small_d_preload": 3.1,
+      "E25_opcheckif": 24.7,
+      "E26_checkvarlensparse": 4.2,
+      "E27_graphstatus": 138.8,
+      "E28_inittilingdata": 5.6,
+      "E29_fag_tilingdata": 5.4,
+      "E30_regtensor": 0.8,
+      "E31_vregsrc": 17.1,
+      "E32_tpl_3_bw": 2.8,
+      "E33_reg_tpl_varlen": 1.7,
+      "E34_scale_value_attr": 2.9,
+      "E35_pse_type": 1.5,
+      "Q23_around_launch": 1.1,
+      "Q24_around_keep_prob": 0.8
     }
   }
 }

@@ -134,6 +134,18 @@ def main() -> int:
     for pin_key in ('"project"', '"architecture"', '"selected_by"', '"changed_files_preview"'):
         if pin_key not in keys_chunk:
             errors.append(f"HOST_STEP_MODEL_KEYS missing {pin_key}")
+    if "hostSpawnFanout" in core_src:
+        errors.append("pilot-driver-core.ts must not Host-spawn fanout via session.create")
+    if "client.session.create" in core_src or "client?.session?.create" in core_src:
+        errors.append("pilot-driver-core.ts must not open sibling sessions for subagents")
+    if "nativeTaskHandoff" not in core_src:
+        errors.append("pilot-driver-core.ts must hand subagent dispatch to OpenCode native Task")
+    if "FANOUT_INCOMPLETE" in core_src:
+        errors.append("pilot-driver-core.ts must not fail leftover fanout as Host-already-spawned")
+    if "禁止开顶层新对话" not in core_src:
+        errors.append("pilot-driver-core.ts native Task handoff must forbid opening a new session")
+    if "不要求同一轮并行" in driver_src:
+        errors.append("pilot-driver.ts must not allow serial remainder dispatch")
     if "args.step.message_zh" not in core_src:
         errors.append("driveContinueGoalAfterAck must keep args.step.message_zh")
     if "Host 已弹出确认框时不要再开第二个 question" in core_src:
@@ -234,6 +246,8 @@ def main() -> int:
         "Do not assign plugin.tool.skill",
         "Never default unlabeled sessions to ascendc-pilot",
         '"chat.params"',
+        'String(next.kind || "") === "primary_review"',
+        "禁止 session.create / 禁止开新对话",
     ):
         if marker not in plugin_src:
             errors.append(f"ascendc-pilot.ts missing {marker}")

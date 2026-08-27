@@ -317,8 +317,8 @@ def test_session_shape_pr_receipt_without_pin_fails_precheck(tmp_path: Path, mon
         },
     )
     assert out.get("ok") is False, out
-    assert out.get("error") == "PLAN_PR_CHANGE_REQUIRED"
-    assert out.get("retryable") is True
+    assert out.get("error") == "PIN_HEAD_MISMATCH"
+    assert out.get("ask") in {"human", "primary"}
     assert not list(op.rglob("plan_scope_packet.yaml"))
 
     live = tmp_path / "live"
@@ -478,6 +478,28 @@ def test_pin_facts_cli_promotes_project_only(tmp_path: Path, capsys) -> None:
     loaded = load_change_contract(op) or {}
     assert loaded.get("kind") == "pr_regression"
     assert loaded.get("changed_hunks")
+
+
+def test_pin_facts_equal_sha_resolves_parent(tmp_path: Path) -> None:
+    from ascendc_pilot.change_contract import load_change_contract, load_clone_receipt, pin_facts
+
+    op, base, head = _prepare_pr_repo(tmp_path)
+    _write_clone_receipt_yaml(
+        op,
+        files=["flash_op/op_host/arch35/tiling.cpp"],
+        base_sha=head,
+        head_sha=head,
+        worktree=str(tmp_path),
+    )
+    out = pin_facts(op)
+    assert out.get("ok") is True, out
+    doc = load_change_contract(op)
+    assert doc["changed_hunks"]
+    assert doc["base_sha"] == base
+    assert doc["head_sha"] == head
+    receipt = load_clone_receipt(op)
+    assert receipt["base_sha"] == base
+    assert receipt["head_sha"] == head
 
 
 def test_pin_facts_cli_rejects_changed_files_flag(tmp_path: Path) -> None:

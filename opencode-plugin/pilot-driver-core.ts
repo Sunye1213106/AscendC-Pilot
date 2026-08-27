@@ -945,72 +945,6 @@ export async function driveContinueGoalAfterAck(args: {
   }
 }
 
-function authIpcDir(): string {
-  return resolve(openCodeHome(), "ascendc-auth-ipc")
-}
-
-/** Best-effort register-session via authorize daemon IPC (same dir as plugin). */
-function registerSessionIpc(args: {
-  project: string
-  sessionId: string
-  actorId: string
-  actionId: string
-  leaseId?: string
-  runId?: string
-}): void {
-  try {
-    const dir = authIpcDir()
-    mkdirSync(dir, { recursive: true })
-    const id = `reg_${Date.now().toString(36)}`
-    writeFileSync(
-      resolve(dir, `${id}.req.json`),
-      JSON.stringify({
-        id,
-        method: "register-session",
-        project: args.project,
-        session_id: args.sessionId,
-        actor_id: args.actorId,
-        action_id: args.actionId,
-        lease_id: args.leaseId || "",
-        run_id: args.runId || "",
-      }),
-      "utf-8",
-    )
-  } catch {
-    /* ignore */
-  }
-}
-
-function registerSessionDisk(args: {
-  project: string
-  sessionId: string
-  actorId: string
-  actionId: string
-  leaseId?: string
-  runId?: string
-}): void {
-  try {
-    const dir = resolve(openCodeHome(), "ascendc-sessions")
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(
-      resolve(dir, `${args.sessionId.replace(/[^\w.-]/g, "_")}.json`),
-      JSON.stringify({
-        project: args.project,
-        session_id: args.sessionId,
-        actor_id: args.actorId,
-        action_id: args.actionId,
-        lease_id: args.leaseId || "",
-        run_id: args.runId || "",
-        ts: Date.now(),
-      }),
-      "utf-8",
-    )
-  } catch {
-    /* ignore */
-  }
-  registerSessionIpc(args)
-}
-
 type HostStep = {
   kind?: string
   action_id?: string
@@ -1374,110 +1308,6 @@ async function handleAskHumanStep(args: {
   }
 }
 
-async function dispatchSubagentOnce(args: {
-  client: any
-  project: string
-  workflow: string
-  step: HostStep
-  log: Array<Record<string, unknown>>
-  reporter?: ProgressReporter
-  abort?: AbortSignal
-}): Promise<{
-  ok: boolean
-  finished?: Record<string, unknown>
-  error?: string
-  host_step?: HostStep
-}> {
-  const { client, project, workflow, step, log, reporter, abort } = args
-  const actor = String(step.actor_id || "").trim()
-  const stub = String(step.task_prompt_stub || "").trim()
-  const ticket = String(step.dispatch_ticket || "").trim()
-  if (!actor || !stub || !ticket) {
-    return {
-      ok: false,
-      error: "DISPATCH_INCOMPLETE",
-      host_step: step,
-    }
-  }
-
-  if (!client?.session?.create || !client?.session?.prompt) {
-    return {
-      ok: false,
-      error: "SESSION_API_MISSING",
-      host_step: step,
-    }
-  }
-
-  const child = await client.session.create({
-    body: {
-      title: `pilot:${workflow}:${step.action_id}:${actor}`,
-      agent: actor,
-      location: { directory: project },
-    },
-  })
-  const childId = String(child?.data?.id || child?.id || "").trim()
-  if (!childId) {
-    return { ok: false, error: "SESSION_CREATE_FAILED", host_step: step }
-  }
-  registerSessionDisk({
-    project,
-    sessionId: childId,
-    actorId: actor,
-    actionId: String(step.action_id || ""),
-    leaseId: String(step.lease_id || ""),
-    runId: String(step.run_id || ""),
-  })
-
-  const prompted = await client.session.prompt({
-    path: { id: childId },
-    body: {
-      agent: actor,
-      parts: [{ type: "text", text: stub }],
-    },
-  })
-
-  let finalText = ""
-  const data = prompted?.data || prompted
-  if (typeof data === "string") finalText = data
-  else if (data?.parts) {
-    for (const p of data.parts) {
-      if (p?.type === "text" && p.text) finalText += String(p.text) + "\n"
-    }
-  } else if (data?.info?.content) {
-    finalText = String(data.info.content)
-  } else {
-    finalText = JSON.stringify(data || {}).slice(0, NATIVE_TASK_RESULT_CAP)
-  }
-  const resultText = extractKbAnswer(finalText)
-
-  reporter?.note(`dispatch ${actor}`, String(step.action_id || ""))
-  const finished = await runAcpJson(
-    [
-      "dispatch-result",
-      "--project",
-      project,
-      "--ticket",
-      ticket,
-      "--result-text",
-      resultText.slice(0, 200_000),
-    ],
-    project,
-    {
-      timeoutMs: 300_000,
-      abort,
-      onStderrLine: (line) => reporter?.applyStderrLine(line),
-      env: acpControlEnv({ workflow }),
-    },
-  )
-  log.push({
-    event: "dispatch-result",
-    ticket,
-    ok: finished.ok,
-    next_kind: (finished.host_step as HostStep | undefined)?.kind,
-  })
-  return { ok: Boolean(finished.ok), finished, host_step: step }
-}
-
 function hostStepTasks(step: HostStep): Array<Record<string, unknown>> {
   return compactDispatchTasks(step.tasks) || []
 }
@@ -1491,9 +1321,25 @@ function nativeTaskHandoff(args: {
   workflow?: string
 }): Record<string, unknown> {
   const actor = String(args.step.actor_id || "").trim()
-  const stub = String(args.step.task_prompt_stub || "").trim()
-  const ticket = String(args.step.dispatch_ticket || "").trim()
   const tasks = hostStepTasks(args.step)
+  const sliceStub =
+    tasks.length === 1 ? String(tasks[0]?.task_prompt_stub || "").trim() : ""
+  const stub = String(args.step.task_prompt_stub || "").trim() || sliceStub
+  const ticket = String(args.step.dispatch_ticket || "").trim()
+  const waiting = (args.step as Record<string, unknown>).waiting_slices === true
+  if (waiting && !stub && tasks.length === 0) {
+    const messageZh =
+      "切片未齐，另一轴仍在运行。禁止现在 finalize，禁止再开一轮逐个补派，禁止 session.create 开新对话。"
+    return {
+      ok: true,
+      native_task: true,
+      waiting_slices: true,
+      host_step: { ...args.step, message_zh: messageZh },
+      log: args.log,
+      todo: args.todo,
+      message_zh: messageZh,
+    }
+  }
   if (!actor || !ticket || (!stub && tasks.length < 2)) {
     return {
       ok: false,
@@ -1523,10 +1369,10 @@ function nativeTaskHandoff(args: {
         ? "全部返回后 Host 从 parts 收齐并进入 bind_review；若已分两轮写完 harness.yaml/bind.yaml，下一轮 pilot_run 收齐即可，不要重派、不要套审查完成模板。"
         : "全部返回后 Primary 只把两段原文用人话合并给用户：审查完成；这个 PR 做什么；改了哪些文件；问题 1/2/3…；要测的变量（字段与取值）。"
     const messageZh =
-      `请在同一轮并行派发 ${tasks.length} 个 OpenCode 原生 Task：agent=\`${actor}\`。` +
+      `必须在这一条回复里并行发出全部 ${tasks.length} 个 OpenCode 原生 Task 子代理：agent=\`${actor}\`。` +
       `每个 Task 的 prompt 必须原样为 host_step.tasks[i].task_prompt_stub（禁止改写）。` +
-      `不要再用 host_step.task_prompt_stub 开第 ${tasks.length + 1} 个子代理。` +
-      `点各 Task 卡片可跳进子会话看思考。插件用各 Task 原文 ACK 并推进 task_plan 下一格` +
+      `禁止 session.create / 禁止开顶层新对话。禁止等第一个完成再派下一个。不要再用 host_step.task_prompt_stub 开第 ${tasks.length + 1} 个子代理。` +
+      `点各 Task 卡片可跳进子会话看思考（子代理共享本对话上下文）。插件用各 Task 原文 ACK 并推进 task_plan 下一格` +
       `（有测例目标时是 tg-init）。${afterBoth}` +
       `禁止综合成 kb-answer-v1。禁止发明子代理没写的事实。不要再调 workflow=auto 做 intake。` +
       (ids ? `切片：${ids}。` : "")
@@ -1541,8 +1387,8 @@ function nativeTaskHandoff(args: {
     }
   }
   const messageZh =
-    `请用 OpenCode 原生 Task：agent=\`${actor}\`，prompt 必须原样为 host_step.task_prompt_stub（禁止改写）。` +
-    `点 Task 卡片可跳进子会话看思考过程。子代理答完后把答案说给人听。`
+    `请用 OpenCode 原生 Task 子代理：agent=\`${actor}\`，prompt 必须原样为 host_step.task_prompt_stub（禁止改写）。` +
+    `禁止 session.create / 禁止开顶层新对话。点 Task 卡片可跳进子会话看思考过程。子代理答完后把答案说给人听。`
   return {
     ok: true,
     native_task: true,
@@ -1844,13 +1690,10 @@ export async function runPilotDriver(
     let step: HostStep
     let todoPayload: unknown = pendingTodo
 
-    if (pendingStep && pendingStep.kind === "dispatch_subagent") {
+    if (pendingStep) {
       step = pendingStep
       pendingStep = null
       log.push({ event: "reuse_host_step", host_step_kind: step.kind })
-    } else if (pendingStep && pendingStep.kind === "continue_goal") {
-      step = pendingStep
-      pendingStep = null
     } else {
       const autoArgv = ["run-action", "auto", "--project", project]
       if (intent) autoArgv.push("--intent", intent)
@@ -2033,6 +1876,53 @@ export async function runPilotDriver(
       }
     }
 
+    if (step.kind === "done") {
+      reporter?.setStatus("done")
+      await syncTodos(client, parentSessionId, todoPayload)
+      return { ok: true, host_step: step, log, todo: todoPayload }
+    }
+    if (step.kind === "failed") {
+      reporter?.setStatus("fail")
+      const failMsg = String(step.message_zh || "deterministic_action_failed")
+      return {
+        ok: false,
+        host_step: { ...step, kind: "failed", message_zh: failMsg },
+        message_zh: failMsg,
+        log,
+        todo: todoPayload,
+      }
+    }
+    if (step.kind === "primary_review") {
+      reporter?.setStatus("ok")
+      return {
+        ok: true,
+        host_step: step,
+        message_zh: String(
+          step.message_zh ||
+            "请通读两路 yaml。不要改口径。YAML 解析失败可 Edit 只修缩进。下一发 intent=PASS 或 REWORK bind。REWORK 后现稿留盘，子代理 patch，不要从零重写。",
+        ),
+        log,
+        todo: todoPayload,
+      }
+    }
+    if (step.kind === "ask_human") {
+      reporter?.setStatus("ask")
+      const ask = (step.ask_question as Record<string, unknown>) || {}
+      const asked = await handleAskHumanStep({
+        client,
+        toolCtx,
+        parentSessionId,
+        project,
+        requestId: String(ask.request_id || (step as Record<string, unknown>).request_id || ""),
+        step,
+        ask,
+        log,
+        todo: todoPayload,
+      })
+      if (!asked.answered) return asked
+      continue
+    }
+
     if (step.kind === "continue_goal") {
       const nextWf = String(step.next_workflow_id || "").trim()
       const nextArch = String(step.architecture || architecture || "").trim()
@@ -2094,7 +1984,8 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "运行 AscendC-Pilot 当前 Todo 格。workflow=uo-init（无前导 /），或仅「获取 PR 代码」用 auto。禁止 uo-query。" +
-        "返回 dispatch_subagent 时，Task 正文用 task_prompt_stub 原文。",
+        "返回 dispatch_subagent 时用 OpenCode 原生 Task 子代理（禁止开新对话），Task 正文用 task_prompt_stub 原文。" +
+        "host_step.tasks≥2 时同一条回复里并行全部 Task。",
       args: {
         workflow: {
           type: "string",

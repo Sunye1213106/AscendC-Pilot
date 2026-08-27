@@ -187,42 +187,47 @@ def strip_cpp_comments(src: str) -> str:
     and canonical TPL rebuild cannot match ARGS_SEL fields to TILING_KEY
     entities.
     """
+    text = src or ""
+    if "//" not in text and "/*" not in text:
+        return text
+    n = len(text)
     out: list[str] = []
     i = 0
-    n = len(src or "")
-    text = src or ""
+    start = 0
     while i < n:
         ch = text[i]
         if ch in {'"', "'"}:
-            quote = ch
-            out.append(ch)
             i += 1
             while i < n:
                 cur = text[i]
-                out.append(cur)
                 if cur == "\\" and i + 1 < n:
-                    out.append(text[i + 1])
                     i += 2
                     continue
-                if cur == quote:
-                    i += 1
+                i += 1
+                if cur == ch:
                     break
-                i += 1
             continue
-        if text.startswith("//", i):
-            i += 2
-            while i < n and text[i] != "\n":
-                i += 1
-            continue
-        if text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            if end < 0:
-                break
-            i = end + 2
-            out.append(" ")
-            continue
-        out.append(ch)
+        if ch == "/" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == "/":
+                out.append(text[start:i])
+                i += 2
+                while i < n and text[i] != "\n":
+                    i += 1
+                start = i
+                continue
+            if nxt == "*":
+                out.append(text[start:i])
+                end = text.find("*/", i + 2)
+                if end < 0:
+                    out.append(" ")
+                    return "".join(out)
+                out.append(" ")
+                i = end + 2
+                start = i
+                continue
         i += 1
+    out.append(text[start:])
     return "".join(out)
 
 

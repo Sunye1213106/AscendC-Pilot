@@ -192,6 +192,19 @@ def test_strip_cpp_comments_keeps_code():
     assert "NAME" in strip_cpp_comments("ASCENDC_TPL_UINT_DECL( // x\n        NAME, 1)")
 
 
+def test_strip_cpp_comments_skips_comment_marker_inside_string():
+    src = 'const char *s = "http://example"; /* gone */ int x;'
+    out = strip_cpp_comments(src)
+    assert "http://example" in out
+    assert "gone" not in out
+    assert "int x" in out
+
+
+def test_strip_cpp_comments_leaves_comment_free_text_unchanged():
+    src = "ASCENDC_TPL_BOOL_DECL(IsFoo, 0, 1)"
+    assert strip_cpp_comments(src) is src or strip_cpp_comments(src) == src
+
+
 def test_expand_tpl_source_inlines_get_tpl_placeholder_macros():
     header = (
         "#define SET_NOT_USE_QUANT_MM_TILING 0UL, 0UL, 0\n"

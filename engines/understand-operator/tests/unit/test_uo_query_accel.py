@@ -125,7 +125,8 @@ def test_upgrade_adds_template_block_and_sel_lines(tmp_path: Path) -> None:
     assert sites and int(sites[0]["line"]) == 10
     name = q.agent_query(pattern="IsTnd")
     extras = (name.get("cards") or [{}])[0].get("extras") or {}
-    assert extras.get("sel_sites")
+    assert extras.get("cover_followup")
+    assert "sel_sites" not in extras
 
 
 def test_branch_expression_is_not_a_name_leaf() -> None:

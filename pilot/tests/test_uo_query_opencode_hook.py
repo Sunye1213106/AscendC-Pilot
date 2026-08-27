@@ -84,6 +84,10 @@ def test_task_hook_uses_session_safe_pending_dispatch() -> None:
     assert '"tasks"' in driver
     assert "native_tasks" in driver
     assert "host_step.tasks" in driver
+    assert "hostSpawnFanout" not in driver_core
+    assert "client.session.create" not in driver_core
+    assert "nativeTaskHandoff" in driver_core
+    assert "FANOUT_INCOMPLETE" not in driver_core
     assert "Do not strip to the yaml fence" in driver
     assert "NATIVE_TASK_RESULT_CAP" in driver
     assert "200_000" in driver

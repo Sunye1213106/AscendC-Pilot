@@ -126,6 +126,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--callers", default=None, help="rank callers of functions matching this name")
     ap.add_argument("--prof", type=Path, default=DEFAULT_PROF)
     ap.add_argument("--reuse", action="store_true", help="read --prof instead of re-profiling")
+    ap.add_argument(
+        "--wipe-compile-cache",
+        action="store_true",
+        help="delete the analyze pickle so this run compiles instead of reusing it",
+    )
     args = ap.parse_args(argv)
 
     op = args.op or Path(os.environ.get("UO_OP_DIR") or "")
@@ -142,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         if not arch:
             print("architecture missing: pass --arch or set UO_ARCH")
             return 2
+        if args.wipe_compile_cache:
+            from uo_init.build import clear_compile_cache
+
+            clear_compile_cache(op, arch)
         elapsed = run_analyze(op, arch, args.prof)
 
     stats = pstats.Stats(str(args.prof))

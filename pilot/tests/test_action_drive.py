@@ -639,3 +639,95 @@ def test_drive_surfaces_nested_cann_env_error(monkeypatch, tmp_path: Path):
     assert "UO_CANN_ROOT" in str(step.get("message_zh") or "")
     assert "UO_CANN_ROOT" in str(step.get("error_detail") or result.get("error") or "")
 
+
+def test_drive_retries_deterministic_rework(monkeypatch, tmp_path: Path) -> None:
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {
+        "workflow_id": "tg-plan",
+        "phase": "precheck",
+        "status": "rework_required",
+        "phase_label_zh": "precheck",
+        "last_failure": {"action_id": "plan_precheck"},
+    }
+    prepared: list[str] = []
+
+    def describe_next(_root: Path):
+        if "plan_precheck" in prepared:
+            return {
+                "ok": True,
+                "recommended_next_action": {"id": None, "reason": "pipeline_complete"},
+            }
+        return {"ok": True, "recommended_next_action": {"id": None, "reason": "rework"}}
+
+    def prepare(_root: Path, action_id: str):
+        prepared.append(action_id)
+        state["status"] = "running"
+        return {"ok": True, "auto_finalize": True}
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(state_mod, "describe_next", describe_next)
+    monkeypatch.setattr(state_mod, "complete_workflow", lambda _root: {"ok": True, "state": {**state, "status": "passed"}})
+    monkeypatch.setattr(
+        workflows_mod,
+        "action_by_id",
+        lambda *_a, **_k: {
+            "id": "plan_precheck",
+            "execution_mode": "deterministic",
+            "agent_id": "deterministic-tg-engine",
+            "role_id": "deterministic_engine",
+        },
+    )
+    monkeypatch.setattr(
+        workflows_mod,
+        "get_workflow",
+        lambda *_a, **_k: {"transitions": [], "terminal_ready_states": ["precheck"]},
+    )
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert prepared == ["plan_precheck"]
+    assert result.get("ok") is True
+    assert result.get("stop_reason") == "workflow_complete"
+
+
+def test_drive_rework_llm_asks_pilot_run_not_cli(monkeypatch, tmp_path: Path) -> None:
+    import ascendc_pilot.state as state_mod
+    import ascendc_pilot.workflows as workflows_mod
+    from ascendc_pilot.actions.drive import drive_until_interaction
+
+    state = {
+        "workflow_id": "tg-init",
+        "phase": "bind",
+        "status": "rework_required",
+        "phase_label_zh": "bind",
+        "last_failure": {"action_id": "bind_init"},
+    }
+
+    monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
+    monkeypatch.setattr(
+        workflows_mod,
+        "action_by_id",
+        lambda *_a, **_k: {
+            "id": "bind_init",
+            "execution_mode": "subagent",
+            "agent_id": "tg-analyst",
+            "role_id": "producer",
+        },
+    )
+    called = False
+
+    def prepare(_root: Path, _action_id: str):
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    result = drive_until_interaction(tmp_path, prepare=prepare)
+    assert called is False
+    assert result.get("recommended_command") == "pilot_run"
+    msg = str(result.get("message_zh") or "")
+    assert "pilot_run" in msg
+    assert "禁止" in msg and "run-action" in msg
+
+

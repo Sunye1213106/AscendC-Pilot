@@ -193,7 +193,7 @@ function remainingSlices(step: Record<string, unknown>): string[] {
 function failedRedispatchPayload(entry: PendingDispatchRecord): Record<string, unknown> {
   const message =
     `同一 dispatch ticket 已有 Task 返回但 ACK 失败（ticket=${entry.ticket}）。` +
-    "禁止重新派发已经进票的切片。未齐的切片仍可补派；数量到齐即可，不要求同一轮并行。"
+    "禁止重新派发已经进票的切片。未齐的切片必须在同一条回复里一次性并行补派，禁止逐个等待。"
   return {
     ok: false,
     error: "HOST_ACK_STALLED",

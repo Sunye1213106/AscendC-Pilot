@@ -776,6 +776,10 @@ def _link_shared_compile_values(codemap: CodeMap) -> int:
                     break
                 if left.id == right.id or not rtext:
                     continue
+                left_enum = str((left.attrs or {}).get("enum") or "")
+                right_enum = str((right.attrs or {}).get("enum") or "")
+                if left_enum != right_enum:
+                    continue
                 overlap = occupancy_overlap(ltext, rtext)
                 if not worth_sharing(overlap, ltext, rtext):
                     continue

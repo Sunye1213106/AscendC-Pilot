@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Callable, Iterable, Sequence, TypeVar
 
 T = TypeVar("T")
@@ -30,6 +30,19 @@ def _requested_workers() -> int | None:
         return None
 
 
+def _map_backend() -> str:
+    """``thread`` (default) or ``process``.
+
+    Process pools escape the GIL for pure-Python regex scans, but Windows
+    spawn costs ~0.5s per worker and the callback must pickle. Nested
+    closures (most current call sites) fall back to threads automatically.
+    """
+    raw = str(os.environ.get("UO_MAP_BACKEND") or "thread").strip().lower()
+    if raw in {"process", "proc", "spawn"}:
+        return "process"
+    return "thread"
+
+
 def map_files(
     items: Sequence[T] | Iterable[T], fn: Callable[[T], R], *, workers: int | None = None
 ) -> list[R]:
@@ -47,5 +60,13 @@ def map_files(
     if n <= 1:
         return [fn(row) for row in rows]
     n = max(2, n)
+    if _map_backend() == "process":
+        try:
+            with ProcessPoolExecutor(max_workers=n) as pool:
+                return list(pool.map(fn, rows))
+        except Exception:
+            # Nested closures, pickle failures, and Windows spawn errors must
+            # not drop the work; the thread pool still returns the same list.
+            pass
     with ThreadPoolExecutor(max_workers=n) as pool:
         return list(pool.map(fn, rows))

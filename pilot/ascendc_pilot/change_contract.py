@@ -97,6 +97,85 @@ def _git_diff_unified(cwd: Path, base_sha: str, head_sha: str) -> str:
     return str(proc.stdout or "")
 
 
+def _git_merge_base(cwd: Path, a: str, b: str) -> str:
+    try:
+        import subprocess
+
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), "merge-base", str(a), str(b)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return str(proc.stdout or "").strip()
+
+
+def resolve_pin_base_sha(cwd: Path, head_sha: str, claimed_base: str = "") -> str:
+    """Pick a two-dot base that yields hunks. Never three-dot; never invent HEAD==HEAD."""
+    git_cwd = _git_workdir(cwd)
+    head = str(head_sha or "").strip()
+    if not head:
+        return ""
+    claimed = str(claimed_base or "").strip()
+    tried: list[str] = []
+    if claimed and claimed != head:
+        tried.append(claimed)
+        mb = _git_merge_base(git_cwd, claimed, head)
+        if mb and mb != head and mb not in tried:
+            tried.append(mb)
+    for spec in (
+        "origin/HEAD",
+        "origin/master",
+        "origin/main",
+        "master",
+        "main",
+        f"{head}~1",
+        f"{head}^",
+    ):
+        cand = _git_rev_parse(git_cwd, spec)
+        if cand and cand != head and cand not in tried:
+            tried.append(cand)
+        mb = _git_merge_base(git_cwd, cand, head) if cand else ""
+        if mb and mb != head and mb not in tried:
+            tried.append(mb)
+    for base in tried:
+        if base and base != head and _git_diff_unified(git_cwd, base, head).strip():
+            return base
+    return ""
+
+
+def _hunks_required(*, message_zh: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": PLAN_PR_HUNKS_REQUIRED,
+        "reason_code": PLAN_PR_HUNKS_REQUIRED,
+        "retryable": False,
+        "failure_class": "format_transport",
+        "ask": "human",
+        "needs_human_decision": True,
+        "ask_question": {
+            "header": "PR 改动无法 pin",
+            "question": (
+                "clone 记录的 SHA 对不上可取出的 PR hunk。"
+                "禁止手改 clone_receipt，禁止 git diff HEAD 当 PR 信号。"
+                "请选择："
+            ),
+            "options": [
+                {"id": "reclone", "label": "重新 clone 该 PR（pilot_run auto，force_new）"},
+                {"id": "abort", "label": "中止本轮"},
+            ],
+        },
+        "message_zh": message_zh,
+    }
+
+
 def capture_changed_hunks(
     *,
     worktree: Path,
@@ -106,7 +185,8 @@ def capture_changed_hunks(
     """Two-sided hunks from an exact SHA pair. Never ``git diff HEAD`` / three-dot."""
     git_cwd = _git_workdir(worktree)
     actual = _git_rev_parse(git_cwd, "HEAD")
-    if not head_sha or actual != str(head_sha).strip():
+    head = str(head_sha or "").strip()
+    if not head or actual != head:
         return {
             "ok": False,
             "error": PIN_HEAD_MISMATCH,
@@ -114,23 +194,26 @@ def capture_changed_hunks(
                 f"worktree HEAD={actual or '(missing)'} 与 pin head_sha={head_sha} 不一致"
             ),
         }
-    if not base_sha:
-        return {
-            "ok": False,
-            "error": PLAN_PR_HUNKS_REQUIRED,
-            "message_zh": "缺少 base_sha，不能构造 changed_hunks",
-        }
-    diff = _git_diff_unified(git_cwd, base_sha, head_sha)
+    base = str(base_sha or "").strip()
+    if not base or base == head:
+        base = resolve_pin_base_sha(git_cwd, head, base)
+    if not base:
+        return _hunks_required(message_zh="缺少可用的 base_sha，不能构造 changed_hunks")
+    diff = _git_diff_unified(git_cwd, base, head)
     from code_engineering.change.capture import parse_unified_hunks
 
     hunks = parse_unified_hunks(diff)
     if not hunks:
-        return {
-            "ok": False,
-            "error": PLAN_PR_HUNKS_REQUIRED,
-            "message_zh": "git diff <base> <head> 没有 hunk，不能 pin pr_regression",
-        }
-    return {"ok": True, "hunks": hunks}
+        resolved = resolve_pin_base_sha(git_cwd, head, base)
+        if resolved and resolved != base:
+            base = resolved
+            diff = _git_diff_unified(git_cwd, base, head)
+            hunks = parse_unified_hunks(diff)
+    if not hunks:
+        return _hunks_required(
+            message_zh="git diff <base> <head> 没有 hunk，不能 pin pr_regression"
+        )
+    return {"ok": True, "hunks": hunks, "base_sha": base, "head_sha": head}
 
 
 def changed_hunks_of(contract: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -180,9 +263,12 @@ def write_clone_receipt(
     root = Path(project_root).expanduser().resolve()
     src = dict(source or {})
     files = _as_files(changed_files)
-    head = str(head_sha or "").strip() or _git_rev_parse(root, "HEAD")
-    base = str(base_sha or "").strip() or _git_rev_parse(root, "HEAD")
     worktree = str(worktree_head or root).strip()
+    git_cwd = _git_workdir(Path(worktree) if worktree else root)
+    head = str(head_sha or "").strip() or _git_rev_parse(git_cwd, "HEAD")
+    base = str(base_sha or "").strip()
+    if head and (not base or base == head):
+        base = resolve_pin_base_sha(git_cwd, head, base)
     doc = {
         "schema": CLONE_RECEIPT_SCHEMA,
         "source": {
@@ -262,11 +348,36 @@ def pin_facts(
             worktree=worktree, base_sha=base_sha, head_sha=head_sha
         )
         if not captured.get("ok"):
-            return {
+            fail = {
                 "ok": False,
                 "error": str(captured.get("error") or PLAN_PR_HUNKS_REQUIRED),
                 "message_zh": str(captured.get("message_zh") or "无法构造 changed_hunks"),
             }
+            for key in (
+                "reason_code",
+                "retryable",
+                "failure_class",
+                "ask",
+                "needs_human_decision",
+                "ask_question",
+            ):
+                if key in captured:
+                    fail[key] = captured[key]
+            return fail
+        base_sha = str(captured.get("base_sha") or base_sha).strip()
+        head_sha = str(captured.get("head_sha") or head_sha).strip()
+        if (
+            base_sha != str((receipt or {}).get("base_sha") or "").strip()
+            or head_sha != str((receipt or {}).get("head_sha") or "").strip()
+        ):
+            write_clone_receipt(
+                root,
+                source=(receipt or {}).get("source") if isinstance((receipt or {}).get("source"), dict) else {},
+                changed_files=files,
+                base_sha=base_sha,
+                head_sha=head_sha,
+                worktree_head=str(worktree),
+            )
         doc = {
             "schema": CHANGE_CONTRACT_SCHEMA,
             "kind": PR_REGRESSION,
@@ -391,29 +502,41 @@ def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
     if not ident.get("is_pr"):
         return None
     contract = load_change_contract(project_root)
-    if not contract or not changed_files_of(contract):
-        return {
+    if contract and changed_files_of(contract) and changed_hunks_of(contract):
+        return None
+    receipt = load_clone_receipt(project_root)
+    if receipt and _is_pr_kind(_source_kind_of((receipt or {}).get("source"))):
+        pinned = pin_facts(project_root)
+        if pinned.get("ok"):
+            return None
+        fail = {
             "ok": False,
             "engine": "plan_precheck",
-            "error": PLAN_PR_CHANGE_REQUIRED,
-            "reason_code": PLAN_PR_CHANGE_REQUIRED,
-            "retryable": True,
-            "failure_class": "format_transport",
-            "ask": "primary",
-            "message_zh": (
-                "PR 针对性 plan 需要先 pin-facts --project <算子>，从 clone_receipt promote。"
-                "缺 pin 不得进入 plan_ingest。"
+            "error": str(pinned.get("error") or PLAN_PR_HUNKS_REQUIRED),
+            "reason_code": str(pinned.get("reason_code") or pinned.get("error") or PLAN_PR_HUNKS_REQUIRED),
+            "retryable": bool(pinned.get("retryable")),
+            "failure_class": str(pinned.get("failure_class") or "format_transport"),
+            "ask": str(pinned.get("ask") or "human"),
+            "message_zh": str(
+                pinned.get("message_zh")
+                or "PR 针对性 plan 无法从 clone_receipt promote change_contract。"
             ),
         }
-    if not changed_hunks_of(contract):
-        return {
-            "ok": False,
-            "engine": "plan_precheck",
-            "error": PLAN_PR_HUNKS_REQUIRED,
-            "reason_code": PLAN_PR_HUNKS_REQUIRED,
-            "retryable": True,
-            "failure_class": "format_transport",
-            "ask": "primary",
-            "message_zh": "PR 针对性 plan 需要 changed_hunks；仅 changed_files 不够。",
-        }
-    return None
+        if pinned.get("needs_human_decision"):
+            fail["needs_human_decision"] = True
+        if isinstance(pinned.get("ask_question"), dict):
+            fail["ask_question"] = pinned["ask_question"]
+        return fail
+    return {
+        "ok": False,
+        "engine": "plan_precheck",
+        "error": PLAN_PR_CHANGE_REQUIRED,
+        "reason_code": PLAN_PR_CHANGE_REQUIRED,
+        "retryable": True,
+        "failure_class": "format_transport",
+        "ask": "primary",
+        "message_zh": (
+            "PR 针对性 plan 需要 clone_receipt（含 changed_files）。"
+            "缺 clone 不得进入 plan_ingest；不要 git diff HEAD 冒充 PR。"
+        ),
+    }

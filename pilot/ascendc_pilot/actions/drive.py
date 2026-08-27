@@ -186,6 +186,130 @@ def drive_until_interaction(
         phase = str(state.get("phase") or "")
         status = str(state.get("status") or "")
         phase_label = str(state.get("phase_label_zh") or phase)
+        if status == "rework_required":
+            lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
+            failed = str(lf.get("action_id") or "").strip()
+            if not failed:
+                return _done(
+                    {
+                        "ok": False,
+                        "stopped": True,
+                        "stop_reason": "rework_without_action",
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "status": status,
+                        "executed": executed,
+                        "recommended_command": "pilot_run",
+                        "message_zh": (
+                            "rework_required 但没有 failed action。"
+                            "请 inspect-failure 后 `pilot_run`，禁止 bash / `pilot_cli` `run-action`。"
+                        ),
+                    }
+                )
+            action = action_by_id(workflow_id, failed, project_root=root)
+            if not action:
+                return _done(
+                    {
+                        "ok": False,
+                        "error": "rework_action_missing",
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "action_id": failed,
+                        "executed": executed,
+                        "recommended_command": "pilot_run",
+                    }
+                )
+            descriptor = _execution_descriptor(action)
+            exec_kind = str(descriptor["execution_kind"] or "")
+            if exec_kind != "deterministic":
+                return _done(
+                    {
+                        "ok": True,
+                        "stopped": True,
+                        "stop_reason": "interaction_required",
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "status": status,
+                        "next": descriptor,
+                        "recommended_command": "pilot_run",
+                        "executed": executed,
+                        "message_zh": (
+                            f"rework_required：请 `pilot_run` 重试 `{failed}`。"
+                            "禁止 `pilot_cli` / bash `run-action`。"
+                        ),
+                    }
+                )
+            _progress(f"rework {failed} (phase={phase} {phase_label})")
+            result = prepare(root, failed)
+            executed.append(
+                {
+                    "action_id": failed,
+                    "actor_id": descriptor["actor_id"],
+                    "execution_kind": "deterministic",
+                    "ok": bool(result.get("ok")),
+                    "auto_finalize": bool(result.get("auto_finalize")),
+                    "error": str(result.get("error") or ""),
+                    "rework": True,
+                }
+            )
+            eng = result.get("engine") if isinstance(result.get("engine"), dict) else {}
+            ask = result.get("ask_question")
+            if not isinstance(ask, dict):
+                ask = eng.get("ask_question") if isinstance(eng.get("ask_question"), dict) else None
+            if result.get("needs_human_decision") or eng.get("needs_human_decision") or ask:
+                return _done(
+                    {
+                        "ok": True,
+                        "stopped": True,
+                        "stop_reason": "interaction_required",
+                        "needs_human_decision": True,
+                        "ask_question": ask,
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "status": status,
+                        "executed": executed,
+                        "next": descriptor,
+                        "recommended_command": "pilot_run",
+                        "message_zh": str(
+                            result.get("message_zh")
+                            or (ask or {}).get("question")
+                            or f"返工 `{failed}` 需要人工选择后再继续。"
+                        ),
+                    }
+                )
+            if not result.get("ok"):
+                _progress(f"{failed} FAIL")
+                detail = _action_failure_detail(result)
+                from ascendc_pilot.actions.failure_text import with_failure_hint
+
+                message_zh = with_failure_hint(
+                    str(result.get("message_zh") or "").strip()
+                    or f"返工确定性 Action `{failed}` 失败：{detail}",
+                    result,
+                )
+                return _done(
+                    {
+                        "ok": False,
+                        "stopped": True,
+                        "stop_reason": "deterministic_action_failed",
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "failed_action": failed,
+                        "executed": executed,
+                        "error": str(eng.get("error") or result.get("error") or detail),
+                        "message_zh": message_zh,
+                        "hint_zh": str(result.get("hint_zh") or ""),
+                        "failure": {
+                            "error": eng.get("error") or result.get("error"),
+                            "message_zh": result.get("message_zh") or eng.get("message_zh"),
+                            "issues": eng.get("issues") or result.get("issues"),
+                            "finalize": result.get("finalize"),
+                            "engine": eng,
+                        },
+                    }
+                )
+            _progress(f"{failed} ok")
+            continue
         if status != "running":
             payload: dict[str, Any] = {
                 "ok": status == "passed",

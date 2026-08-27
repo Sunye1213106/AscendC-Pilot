@@ -8,7 +8,7 @@ TEST/.ascendc-pr/gitcode.com--cann--ops-transformer--pr-10546/attention/flash_at
 
 这轮工作的前提是**不兼容旧产物**：遇到冲突直接改 schema、直接删字段，不留 shim。唯一的硬约束是**答案等价** —— 图的形状可以变，但 `uo-query` 对同一个问题给出的答案必须一字不差。所有改动都由 `tools/uo_answer_gate.py` 的 59 例把关。
 
-已完成 Phase 0~3，Phase 4 做了一半并且**留下一个未查清的性能回退**。下面按「怎么复现 → 做了什么 → 还剩什么 → 坑在哪」组织。
+已完成 Phase 0~3。Phase 4 热点仍在，但 2026-08-27 把交接里列出的 12 个失败测试修完了，并补了几处不改语义的热路径。下面按「怎么复现 → 做了什么 → 还剩什么 → 坑在哪」组织。
 
 ---
 
@@ -189,64 +189,48 @@ Windows 上每次 `_getfinalpathname` 约 0.04ms，合计 5.05s。一个 stage �
 
 ## 4. 还没做的（按优先级）
 
-### 4.1 【最高】查清那 ~3s 回退，并把测量纪律补上
+### 4.1 【已关闭】旧的 ~3s 回退不再可比
 
-这是当前最该做的事，因为它决定 Phase 4 到底是净赚还是净亏。
+那张逐 pass 表是对**另一份源码**（golden digest `ddca6b3d` / 48 文件）的单次 before。当前 PR-10546 HEAD 源码指纹是 `3e45163c` / 47 文件，BRANCH 从 ~1.3k 涨到 ~6.7k，analyze 墙钟也从 ~40s 涨到 ~56s（未插 profiler）。旧数字不能当基线。
 
-我一开始看到 analyze 从 43.29s 降到 39.16s，当成了 -9.7% 的胜利。然后跑了两次重复构建：**41.52s 和 40.75s**。那次 37.5s 是运气。逐 pass 跨四次运行：
+全量 analyze 必须删掉
 
-| pass | before | after ×3 | 判断 |
-| --- | ---: | --- | --- |
-| `host_defuse` | 6.47 | 0.95 / 0.92 / 1.06 | 真实 **-85%** |
-| `source_gaps` | 3.75 | 4.79 / 4.83 / 5.15 | **稳定变慢 +1.2s** |
-| `kernel_call_refine` | 3.84 | 4.20 / 4.87 / 5.05 | **稳定变慢 +0.9s** |
-| `kernel_tiling_closure` | 2.77 | 2.78 / 3.32 / 3.52 | 变慢 +0.4s |
-| `tiling_reads` | 0.73 | 0.89 / 0.94 / 1.01 | 变慢 +0.2s |
-| `value_defining_sites` | 0.54 | 0.65 / 0.67 / 0.69 | 变慢 +0.13s |
-| `tiling_host_writes` | 0.58 | 0.62 / 0.69 / 0.72 | 变慢 +0.10s |
-| `host_tiling_key` | 0.35 | 0.44 / 0.42 / 0.51 | 变慢 +0.11s |
+```text
+$UO_OP_DIR/.ascendc-pilot/$UO_ARCH/uo/ir/_codemap_compile_cache.pkl
+```
 
-`host_defuse` 省的 5.5s，被其他 7 个 pass 还回去约 3s。这 7 个 pass 在**三次运行里全部**比 before 慢，不像抖动。
+否则 `analyze` 在指纹未变时 2.7s 就返回，测到的是 compile cache 命中。`tools/uo_perf_bench.py --wipe-compile-cache` 每轮都会删这个文件。
 
-**已排除的假设**：怀疑新加的 lru_cache 撑大 GC 负担 —— 实测三个缓存加起来只有 3,540 条，而 GC 跟踪的 36 万对象是 CodeMap 本身（6.7 万实体 + 关系 + attrs），与缓存无关。
+### 4.2 `kernel_root_trace` —— 当前仍是最大头（~27s / analyze）
 
-**下一步怎么做**（顺序很重要）：
+2026-08-27 两次全量 analyze（`--wipe-compile-cache`，未插 profiler）：`stage:analyze` **51.0 / 45.2s**（均值 48.1，spread 5.8s）。逐 pass 均值：
 
-1. `before` 只有**一次**采样，不足以做基线。先把 Phase 4 的改动挪开（建 HEAD 的 worktree，或只回退 §2 Phase 4 那几个文件），**跑 3 次冷构建**拿到 before 的均值和方差。
-2. 再跑 3 次 after。用 `_timing_table.py` 出对比表。
-3. 如果回退确认存在，重点看这几个 pass 的共同依赖：它们都走 `source_index` / `source_text_cache` / `resolve_operator_file`。可疑点是我在热函数内部加的**函数级 import**（`from uo_init.paths import resolved` 写在函数体里，每次调用都要查 `sys.modules`），以及 `_conditional_field` 的提前返回改成了先 `raw.lower()`（对累积起来的长字符串可能比原来先做空白折叠更贵）。
-4. 提醒：产物大小和答案门槛都**没有变化**，所以工作量是同一份 —— 回退不可能来自「做了更多事」。
-
-顺带一个已知的真实二次方，我看到了但没动：`source_index/builder.py` 的 `_advance_members` 里，`pending_type` 会跨行累积（`combined = f"{pending_type} {line.strip()}"`，不匹配就 `return combined`），然后每轮都对**整个累积串**重跑 `_MEMBER_RE.search` 和 `_conditional_field`。7,650 次调用烧 1.5s 正则。加个累积长度上限能封住，但**会改语义**（跨很多行的声明会被放弃），必须用答案门槛验。
-
-### 4.2 `kernel_root_trace` —— 13~15s，占 analyze 的 35%，完全没动
-
-它自身只花 0.44s，钱都在四个子调用：
-
-| 子调用 | cumtime |
+| pass | s |
 | --- | ---: |
-| `source_index/builder.py: get_or_build` | 5.2s |
-| `passes/kernel_scan.py: kernel_corpus` | 1.9s |
-| `passes/kernel_call_identity.py: build_source_symbol_index` | 1.8s |
-| `diagnostics/source_api.py: count_source_kernel_apis` | 0.85s |
+| `kernel_root_trace` | 18.1 |
+| `source_gaps` | 7.0 |
+| `kernel_tiling_closure` | 3.9 |
+| `kernel_call_refine` | 3.7 |
+| `host_defuse` | 1.1 |
 
-`get_or_build` 已经有 per-file 缓存，所以 5.2s 是真实的首次扫描成本。要降只能从扫描本身或并行度下手 —— 见下条。
+cProfile（会放大）里叶子最大的是 `strip_cpp_comments`（15 次、tottime ~3.7s，已改成按切片拼接，待 `--wipe-compile-cache` 复核）和 `_advance_members`（pending 累积已加 2048 字符上限）。`get_or_build` / `map_files` 仍贵。
 
-### 4.3 `map_files` 的线程池对纯 Python 正则无效
+### 4.3 `map_files` 进程池 —— 已接线，默认仍是线程
 
-`src/uo_init/parallel.py` 用 `ThreadPoolExecutor` 跑 `_scan_file`。Python 的 `re` **不释放 GIL**，所以名义上 8 个 worker、实际等于 1 个。换 `ProcessPoolExecutor` 才是真并行，但要先算清账：
+`UO_MAP_BACKEND=process` 走 `ProcessPoolExecutor`；回调不能 pickle 时自动退回线程。`source_index.builder._scan_missing_item` 已提到模块级，是能真正进进程池的那一处。
 
-- Windows 用 spawn，每个进程启动约 0.5s，8 个就是 4s，可能吃掉全部收益。
-- `_scan_missing` 是闭包，不可 pickle，得提成模块级函数。
-- 先量文件数和单文件耗时再决定。这也是原计划 **Phase 5「原生下沉评估」**的输入 —— Phase 4 实测没算清之前，Phase 5 无法判断。
+一次 process 全量（n=1）：`kernel_root_trace` **11.2s**，线程两次是 19.3 / 17.0（spread 2.2）。差值大于线程噪声带，但 process 还没有第二次采样，**先别改默认**。再跑 3 次 process 若仍在 ~11s，再把默认换成 process。
 
-### 4.4 其余未动的热点
+### 4.4 其余已做 / 仍未动
 
-- `passes/kernel_call_read_refine.py: _aliases` —— 1,868 次调用 1.74s
-- `tpl_dsl.py: strip_cpp_comments` —— 15 次调用 1.0s（大文件正则）
-- `passes/kernel_tiling_closure.py: enrich_kernel_field_branches` —— 1.23s
-- `source_gaps` 4.9s、`kernel_call_refine` 4.7s 两个大头本身没碰
-- **mtime/size 预过滤**：已接到 `extract_cache` + `/uo-update` detect。未改文件不再哈希；指纹未变时 extract/analyze 短路。有文件变化时 analyze 仍全量。
+已做：
+
+- `strip_cpp_comments` 按块拷贝，无 `//`/`/*` 直接返回
+- `_conditional_field` 不再对整段 pending 做 `.lower()`
+- `_advance_members` pending 超 2048 字符放弃（避免二次方正则）
+- SQL `template_match` 对已命中块 **钉住过滤维**（`IsRope=1` 的 `dim_coverage.IsRope` 是 `["1"]` 而不是 `["0","1"]`）。golden 已按此重冻（E1 / E7）
+
+未动的大头：`source_gaps`、`kernel_call_refine`、`enrich_kernel_field_branches`、`kernel_root_trace` 本体。
 
 ### 4.5 已取消
 
@@ -254,31 +238,19 @@ Windows 上每次 `_getfinalpathname` 约 0.04ms，合计 5.05s。一个 stage �
 
 ---
 
-## 5. 既有失败测试（不是这轮引入的）
+## 5. 单元测试（2026-08-27 已清零）
 
-跑 `pytest tests/unit` 会看到 12 个失败。我在 HEAD（`bd056fb5`，本轮工作之前）建 worktree 跑过**同样这 5 个文件，同样 12 个失败**，所以它们全是既有问题：
+`python -m pytest tests/unit -q`：**838 passed, 89 skipped, 0 failed**。原先 12 个失败的处理：
 
-```text
-test_closure_roots.py            6 个
-test_framework_scope.py          3 个
-test_clang_walk_single_pass.py   1 个
-test_tpl_schema_portable_path.py 1 个
-test_uo_query_aggregate_modes.py 1 个（test_template_match_pins_filter_dim_...）
-```
+| 文件 | 处理 |
+| --- | --- |
+| `test_closure_roots.py` | 无写点的 params 叶保持 `partial`（与 `test_source_resolver` 一致）；需要闭合的用例补上两条不同常量写 |
+| `test_framework_scope.py` | 框架头放到 `op_root` 外面。头和算子同目录时 `_in_scope` 会把它当成算子自己的文件 |
+| `test_clang_walk_single_pass.py` | host 也走单次 AST walk，测试跟上代码 |
+| `test_tpl_schema_portable_path.py` | 只有 DECL、没有 SEL 时不再生成 TPL view |
+| `test_uo_query_aggregate_modes.py` | SQL 路径补上过滤维钉住；0 命中时不往 `dim_coverage` 里塞过滤值 |
 
-我在跑回归时把这 5 个文件 `--deselect` 掉，以便让真实回归可见：
-
-```bash
-python -m pytest tests/unit -q \
-  --deselect tests/unit/test_closure_roots.py \
-  --deselect tests/unit/test_framework_scope.py \
-  --deselect tests/unit/test_clang_walk_single_pass.py \
-  --deselect tests/unit/test_tpl_schema_portable_path.py \
-  --deselect tests/unit/test_uo_query_aggregate_modes.py
-# 787 passed, 89 skipped
-```
-
-**这 5 个文件本身也需要有人修**，只是不在这轮范围内。`test_tpl_schema_portable_path.py::test_tpl_schema_source_refs_are_operator_relative` 名字上和 Phase 3.6 的路径口径直接相关，接手时值得先看它 —— 有可能 Phase 3.6 已经把它需要的前提做好了。
+语料库：从 [ops-transformer PR 10546](https://gitcode.com/cann/ops-transformer) 的 `refs/merge-requests/10546/head` 稀疏检出 `attention/flash_attention_score_grad`、`attention/common`、`common`，拷回 `TEST/.ascendc-pr/gitcode.com--cann--ops-transformer--pr-10546/`。golden 已按这份源码重冻。
 
 ---
 
@@ -293,11 +265,16 @@ engines/understand-operator/tests/unit/test_path_canonicalization.py
 engines/understand-operator/tests/unit/test_view_projection.py
 ```
 
-### golden 快照进不了版本库 —— 这是个真缺口
+门槛的 golden 在 `engines/understand-operator/tests/baselines/flash_attention_score_grad.arch35.answers.json`（59 条答案）。CI 不跑完整 FAG 查询；单测只检查 golden 存在，以及 `compare()` 在 tiny fixture 上的 diff。
 
-门槛的 golden 在 `engines/understand-operator/tests/baselines/flash_attention_score_grad.arch35.answers.json`（59 条答案）。`artifacts/` 只放 current/diff/perf 运行产物。CI 不跑完整 FAG 查询；单测只检查 golden 存在，以及 `compare()` 在 tiny fixture 上的 diff。
+有意改变答案时用 `--freeze`，并在提交信息里说清改了哪几例、为什么。
 
-golden 绑定在**当前这份产物**上。如果有意改变某个答案，用 `--freeze` 重冻，并在提交信息里说清改了哪几例、为什么 —— 门槛的意义在于「变化必须是被解释过的」，而不是「不许变」。
+全量 analyze 计时：
+
+```bash
+python tools/uo_perf_bench.py --runs 3 --stages analyze --wipe-compile-cache --label after
+python tools/uo_profile_analyze.py --wipe-compile-cache --top 40
+```
 
 ---
 
@@ -310,6 +287,7 @@ golden 绑定在**当前这份产物**上。如果有意改变某个答案，用
 5. **`lstrip('./')` 是字符集不是前缀。** 它会吃掉 `../` 的父目录，把兄弟目录的路径变成解析到自己目录下。仓里曾有 7 份拷贝都带这个 bug。
 6. **PowerShell 重定向写 UTF-16LE。** 用 utf-8 读日志会静默匹配不到东西。
 7. **加缓存前先看缓存会有多大。** `paths._resolved` 实测只有 189 条却挡住 11 万次系统调用；如果当初盲目按「几万条」去设计容量，反而会引入内存/GC 疑虑（我确实为此白查了一轮）。
+8. **指纹未变时 analyze 会复用 `_codemap_compile_cache.pkl`。** `uo_perf_bench.py` 默认测的是这个快捷路径（~3s），不是 50s+ 的 compile。要比全量必须 `--wipe-compile-cache`。
 
 ---
 

@@ -41,3 +41,316 @@
 {"method": "tools/list", "id": 1, "param_keys": []}
 {"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
 {"boot": "fastmcp"}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "fastmcp"}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"boot": "legacy"}
+{"method": "initialize", "id": 1, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "tools/list", "id": 2, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 1, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "tools/call", "id": 2, "param_keys": ["name", "arguments"]}
+{"method": "notifications/cancelled", "id": null, "param_keys": ["requestId", "reason"]}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/cancelled", "id": null, "param_keys": ["requestId", "reason"]}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "prompts/list", "id": 2, "param_keys": []}
+{"method": "resources/list", "id": 3, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "prompts/list", "id": 2, "param_keys": []}
+{"method": "resources/list", "id": 3, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "prompts/list", "id": 4, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 1, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 2, "param_keys": []}
+{"method": "tools/call", "id": 3, "param_keys": ["name", "arguments"]}
+{"method": "tools/call", "id": 4, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 5, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 6, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 7, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 8, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 9, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 10, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 11, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 12, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 13, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 14, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 15, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 16, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 17, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 18, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 19, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 20, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 21, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 22, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 23, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 24, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 25, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 26, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 27, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 28, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 29, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 30, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 31, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 32, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 33, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 34, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 35, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 36, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 37, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 38, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 39, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 40, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 41, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 42, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 43, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 44, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 45, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 46, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 47, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 48, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 49, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 50, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 51, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 52, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 53, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 54, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 55, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 56, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 57, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 58, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 59, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 60, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 61, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 62, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 63, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 64, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 65, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 66, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 67, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 68, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 69, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 70, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 71, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 72, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 73, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 74, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 75, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 76, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 77, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 78, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 79, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 80, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 81, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 82, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 83, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 84, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 85, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 86, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 87, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 88, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 89, "param_keys": ["name", "arguments", "_meta"]}
+{"method": "tools/call", "id": 90, "param_keys": ["name", "arguments", "_meta"]}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 91, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 92, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 93, "param_keys": []}
+{"method": "ping", "id": 4, "param_keys": []}
+{"method": "ping", "id": 94, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 95, "param_keys": []}
+{"method": "ping", "id": 96, "param_keys": []}
+{"method": "ping", "id": 97, "param_keys": []}
+{"method": "ping", "id": 98, "param_keys": []}
+{"method": "ping", "id": 99, "param_keys": []}
+{"method": "ping", "id": 100, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 101, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 102, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 103, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 104, "param_keys": []}
+{"method": "ping", "id": 105, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 106, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 107, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 108, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 109, "param_keys": []}
+{"method": "ping", "id": 4, "param_keys": []}
+{"method": "ping", "id": 110, "param_keys": []}
+{"method": "ping", "id": 111, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 112, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 113, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 114, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 115, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 116, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "resources/list", "id": 2, "param_keys": []}
+{"method": "prompts/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 117, "param_keys": []}
+{"method": "ping", "id": 118, "param_keys": []}
+{"method": "ping", "id": 119, "param_keys": []}
+{"method": "ping", "id": 120, "param_keys": []}
+{"method": "ping", "id": 121, "param_keys": []}
+{"method": "ping", "id": 122, "param_keys": []}
+{"method": "ping", "id": 123, "param_keys": []}
+{"method": "ping", "id": 124, "param_keys": []}
+{"method": "ping", "id": 125, "param_keys": []}
+{"method": "ping", "id": 126, "param_keys": []}
+{"method": "ping", "id": 127, "param_keys": []}
+{"method": "ping", "id": 128, "param_keys": []}
+{"method": "ping", "id": 129, "param_keys": []}
+{"method": "ping", "id": 130, "param_keys": []}
+{"method": "ping", "id": 131, "param_keys": []}
+{"method": "ping", "id": 132, "param_keys": []}
+{"method": "ping", "id": 133, "param_keys": []}
+{"method": "ping", "id": 134, "param_keys": []}
+{"method": "ping", "id": 135, "param_keys": []}
+{"method": "ping", "id": 136, "param_keys": []}
+{"method": "ping", "id": 137, "param_keys": []}
+{"method": "ping", "id": 138, "param_keys": []}
+{"method": "ping", "id": 139, "param_keys": []}
+{"method": "ping", "id": 140, "param_keys": []}
+{"method": "ping", "id": 141, "param_keys": []}
+{"method": "ping", "id": 142, "param_keys": []}
+{"method": "ping", "id": 143, "param_keys": []}
+{"method": "ping", "id": 144, "param_keys": []}
+{"method": "ping", "id": 145, "param_keys": []}
+{"method": "ping", "id": 146, "param_keys": []}
+{"method": "ping", "id": 147, "param_keys": []}
+{"method": "ping", "id": 148, "param_keys": []}

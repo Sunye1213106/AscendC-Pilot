@@ -115,7 +115,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 "action_id": aid,
                 "reason_codes": reason_codes,
                 "allowed_outputs": [],
-                "retry_command": f"python -m ascendc_pilot run-action {aid}",
+                "retry_command": "pilot_run",
                 "phase_rework_targets": phase_rework,
             }
             for aid in action_ids

@@ -1,5 +1,5 @@
 <task>
-父 Action：两路并行写出 harness.yaml 与 bind.yaml。本 stub 在 fanout 时不会单独派发；各切片只用自己的 AXIS FOCUS。
+父 Action：主控同一条回复里并行原生 Task 拉起 harness 与各 bind 切片（禁止开新对话）。本 stub 在 fanout 时不会单独派发；各切片只用自己的 AXIS FOCUS。
 </task>
 
 <input>

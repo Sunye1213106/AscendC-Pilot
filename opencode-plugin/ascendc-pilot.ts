@@ -3690,13 +3690,23 @@ export const AscendCHarnessPlugin = async (ctx?: {
                   const inflight = inflightSliceIds()
                   const missing = remaining.filter((sid) => !inflight.has(sid))
                   output.output += missing.length
-                    ? `\n\n切片未齐，禁止 finalize。请用 host_step.task_prompt_stub 原样派发剩余切片：${missing.join(", ")}。`
-                    : "\n\n切片未齐，另一轴仍在运行。禁止现在 finalize。"
+                    ? `\n\n切片未齐，禁止 finalize。剩余切片必须在同一条回复里一次性并行派发原生 Task：${missing.join(", ")}。禁止 session.create / 禁止开新对话。禁止等一个完成再派下一个。`
+                    : "\n\n切片未齐，另一轴仍在运行。禁止现在 finalize，禁止再开一轮逐个补派，禁止开新对话。"
                 } else {
                   output.output +=
-                    "\n\n还有下一步子代理。请再调用 pilot_run（同一 project，不要 force_new）领取原生 Task。"
+                    "\n\n还有下一步子代理。请再调用 pilot_run（同一 project，不要 force_new）领取原生 Task。禁止 session.create。"
                 }
               }
+            } else if (
+              (String(next.kind || "") === "primary_review" ||
+                String(next.kind || "") === "done" ||
+                String(next.kind || "") === "failed" ||
+                String(next.kind || "") === "ask_human") &&
+              output &&
+              typeof output.output === "string"
+            ) {
+              const msg = String(next.message_zh || finished.message_zh || "").trim()
+              if (msg) output.output += `\n\n${msg}`
             }
           }
         }

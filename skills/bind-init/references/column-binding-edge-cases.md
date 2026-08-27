@@ -2,7 +2,7 @@
 
 **何时加载**：6 步与现场脚本冲突时。本路只改 FOCUS 里的 `bindN.yaml`。`call_args.sources` 只点名本路 mapping 列；草稿里已有 `call` 与 arg 名。
 
-与主文冲突时以本页为例外，不要另起一套 role / `source_column` 世界观。
+本页是主文的例子，不是第二套规则。分类、对名、禁止追加 `call_args` 只认 `columns.md`。
 
 ## 调用点仍是唯一入口
 
@@ -24,7 +24,7 @@ Enable / 用例名 / 是否跑行 → `metadata` + 空 relation + `unresolved`�
 
 一个张量实参对应多列时，全部进该 arg 的 `sources[]`。不要挑一列当「这个张量的 uo.id」。输出 dtype 若只做 `tensor.to(...)` → `tensor_dtype`，不是 `direct`。
 
-尺寸列绑本列对应的维，不要绑派生 kwargs（scale 一类）。标量 kwargs source 的入边数规则见主文，这里不重复。
+尺寸列绑本列对应的维，不要绑派生 kwargs（scale 一类），也不要把尺寸列写进该 kwargs 的 `sources[]`。标量 kwargs source 的入边数规则见主文。
 
 ## 查图只为闭合链路
 

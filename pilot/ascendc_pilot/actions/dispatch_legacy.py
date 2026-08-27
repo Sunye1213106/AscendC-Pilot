@@ -193,17 +193,18 @@ def _waiting_fanout_host_step(
     if len(remaining_tasks) >= 2:
         prep["dispatch_tasks"] = remaining_tasks
         message = (
-            f"切片未齐，禁止 finalize。请用 OpenCode 原生 Task（agent={actor}）"
-            f"原样派发剩余切片：{ids}。"
+            f"切片未齐，禁止 finalize。剩余切片必须在同一条回复里一次性并行派发原生 Task"
+            f"（agent={actor}）：{ids}。禁止 session.create / 禁止开新对话。禁止等一个完成再派下一个。"
         )
     elif remaining_tasks:
         prep["task_prompt_stub"] = remaining_tasks[0]["task_prompt_stub"]
         message = (
-            f"切片未齐，禁止 finalize。请用 OpenCode 原生 Task（agent={actor}）"
-            f"原样派发剩余切片 `{remaining_tasks[0].get('slice_id') or ids}` 的 task_prompt_stub。"
+            f"切片未齐，禁止 finalize。请立刻用原生 Task 派发剩余切片"
+            f" `{remaining_tasks[0].get('slice_id') or ids}` 的 task_prompt_stub。"
+            "禁止 session.create / 禁止开新对话。禁止再拆成多轮。"
         )
     else:
-        message = "切片未齐，另一轴仍在返回中。禁止现在 finalize。"
+        message = "切片未齐，另一轴仍在返回中。禁止现在 finalize。禁止开新对话。"
     return build_host_step(
         kind="dispatch_subagent",
         project_root=project_root,
@@ -229,7 +230,8 @@ def ack_fanout_slice(
 ) -> dict[str, Any]:
     """Record one fan-out Task return. Ready when the expected *count* is in.
 
-    Arrival order and same-turn parallelism do not matter.
+    ACK 按到达计数。Host 必须一开始就把全部切片拉起。
+    禁止把「计数到齐即可」理解成可以逐个派发。
     """
     with _ticket_exclusive(project_root, ticket_id) as doc:
         if not doc:
@@ -795,10 +797,11 @@ def _fanout_dispatch_message_zh(actor_id: str, tasks: list[dict[str, str]]) -> s
     ids = ", ".join(t["slice_id"] for t in tasks if t.get("slice_id"))
     n = len(tasks)
     return (
-        f"请在同一轮并行派发 {n} 个 OpenCode 原生 Task（agent={actor_id}）。"
+        f"请在同一条回复里并行发出 {n} 个 OpenCode 原生 Task 子代理（agent={actor_id}）。"
         "每个 prompt 必须原样为 host_step.tasks[i].task_prompt_stub。"
-        "不要用父 task_prompt_stub 再开一个。"
-        "Host 等全部切片返回后才 finalize（一张 ticket）；先回来的一轴不得结束本步。"
+        "禁止 session.create / 禁止开顶层新对话。不要用父 task_prompt_stub 再开一个。"
+        "插件等全部切片返回后才 finalize（一张 ticket）；先回来的一轴不得结束本步。"
+        "主控禁止等一个完成再派下一个。"
         "若已分两轮写完对应 parts，下一轮 pilot_run 从磁盘收齐，禁止重派、禁止 force_new。"
         "禁止只转述某一个，禁止发明子代理没引用的事实。"
         + (f" 切片：{ids}。" if ids else "")

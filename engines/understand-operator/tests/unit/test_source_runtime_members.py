@@ -95,3 +95,54 @@ def test_enum_member_contains_declared_type(tmp_path: Path) -> None:
     }
     assert member.id in contained
     assert orphan.id not in contained
+
+
+def test_compile_occupancy_aliases_stay_inside_one_enum() -> None:
+    from uo_init.passes.source_resolution import _link_shared_compile_values
+
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "AttrIndex::SPARSE_MODE",
+        eid="CV_a",
+        attrs={"value": 7, "enum": "AttrIndex", "provenance": "source_enum"},
+        file="op_host/common.h",
+        line=10,
+        status="confirmed",
+    )
+    cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "InputIndex::ATTEN_MASK",
+        eid="CV_b",
+        attrs={"value": 7, "enum": "InputIndex", "provenance": "source_enum"},
+        file="op_host/common.h",
+        line=40,
+        status="confirmed",
+    )
+    cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "SYNC_A",
+        eid="CV_c",
+        attrs={"value_expr": "10", "provenance": "source_constexpr"},
+        file="op_host/common.h",
+        line=80,
+        status="confirmed",
+    )
+    cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "SYNC_B",
+        eid="CV_d",
+        attrs={"value_expr": "{10, 11}", "provenance": "source_constexpr"},
+        file="op_host/common.h",
+        line=81,
+        status="confirmed",
+    )
+    linked = _link_shared_compile_values(cm)
+    pairs = {
+        tuple(sorted((cm.entities[r.src].name, cm.entities[r.dst].name)))
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.ALIASES.value
+    }
+    assert ("AttrIndex::SPARSE_MODE", "InputIndex::ATTEN_MASK") not in pairs
+    assert ("SYNC_A", "SYNC_B") in pairs
+    assert linked >= 1

@@ -81,7 +81,7 @@
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码
 ```
 
-控制面围着 **同一份** `.uo`**（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。引擎锁允许不同族同时占锁，但主控编排上 **全部 init 先于任何消费**（`/uo-init` `/tg-init` 在 `/uo-query` `/ce-review` `/tg-plan` 之前），且需主控派 Task 的 workflow（`/tg-init` / `/uo-query` / `/ce-review` 等）**一律串行**；同一格内部 fanout 仍由主控同一轮派。
+控制面围着 **同一份** `.uo`**（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。引擎锁允许不同族同时占锁，但主控编排上 **全部 init 先于任何消费**（`/uo-init` `/tg-init` 在 `/uo-query` `/ce-review` `/tg-plan` 之前），且需主控派 Task 的 workflow **格与格之间串行**；同一格 `host_step.tasks`≥2 由主控同一条回复里并行原生 Task 子代理，不得逐个补派，不得 `session.create` 开新对话。
 
 `complete` / `host_step.done` 之后 **释放本族锁**：`state/slots/{family}/workflow.yaml`（或 shared 的 `runs/{run_id}/live_state.yaml`）清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。`uo-init` / `uo-update` 还会发布新 `canonical_graph_digest`，把钉在旧 digest 上的 session 标 STALE。正式产物（`.uo` / tg / ce）保留。`control/active_run.yaml` 只是最近一次 exclusive 指针，不是互斥权威。
 

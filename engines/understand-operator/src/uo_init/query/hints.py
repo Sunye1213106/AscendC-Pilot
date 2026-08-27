@@ -128,12 +128,16 @@ def attach_query_hints(
         payload["suggested_retries"] = tokens[:4]
         payload["pattern_tokens"] = tokens
     elif count == 0 and str(mode or "") == "around":
-        payload["ok"] = False
-        payload["empty_reason"] = "no_entity_at_line"
-        payload["hint"] = (
-            "No CodeMap span covers this line (format-only hunks are expected empty). "
-            "This is not proof the file is unindexed. Query Added identifiers instead."
-        )
+        if str(payload.get("snippet") or "").strip():
+            payload["ok"] = True
+            payload.pop("empty_reason", None)
+        else:
+            payload["ok"] = False
+            payload["empty_reason"] = "no_entity_at_line"
+            payload["hint"] = (
+                "No CodeMap span covers this line (format-only hunks are expected empty). "
+                "This is not proof the file is unindexed. Query Added identifiers instead."
+            )
     elif count == 0 and multi:
         payload["empty_reason"] = "no_substring_match"
         payload["hint"] = (
