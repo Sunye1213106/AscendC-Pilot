@@ -1820,7 +1820,7 @@ def finalize_kernel_root_trace(
     if files:
         from uo_init.source_index import get_or_build
 
-        get_or_build(files, root=root, deadline=deadline)
+        get_or_build(files, root=root, deadline=deadline, architecture=arch)
 
     # --- 1. Source facts -------------------------------------------------
     calls, decls, _controls, provenance = kscan.collect_call_sites_from_walks(

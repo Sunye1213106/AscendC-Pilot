@@ -158,7 +158,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 
 | slash | 磁盘执行步 | 窗 / method_ref |
 | --- | --- | --- |
-| `/tg-init` | `bind-init` | harness / columns / review |
+| `/tg-init` | `bind-init` | harness / columns；review 在 SKILL.md |
 | `/tg-plan` | `test-plan` | target-planning / coverage-planning |
 | `/tg-solve` | `solve` | construct / analyze |
 | `/ce-review` | `standalone-review` | spec / standards |

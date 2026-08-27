@@ -219,3 +219,23 @@ def test_skip_reextract_reports_only_changed_file(tmp_path):
     assert plan["skip_reextract"] is False
     assert plan["changed_or_cold"] == ["op_host/b.cpp"]
     assert plan["unchanged_tus"] == ["op_host/a.cpp"]
+
+
+def test_header_change_marks_including_cpp(tmp_path):
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "shared.h").write_text("int k = 1;\n", encoding="utf-8")
+    (host / "a.cpp").write_text('#include "shared.h"\nvoid f() {}\n', encoding="utf-8")
+    (host / "b.cpp").write_text("void g() {}\n", encoding="utf-8")
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    _seed_scope(uo, ["op_host/a.cpp", "op_host/b.cpp", "op_host/shared.h"])
+    meta = compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
+    store_extract_fingerprint(uo, meta)
+    (host / "shared.h").write_text("int k = 2;\n", encoding="utf-8")
+
+    plan = skip_reextract_for_unchanged_tus(tmp_path, uo_root=uo, arch="arch35")
+    assert plan["skip_reextract"] is False
+    changed = set(plan["changed_or_cold"] or [])
+    assert "op_host/shared.h" in changed
+    assert "op_host/a.cpp" in changed
+    assert "op_host/b.cpp" not in changed

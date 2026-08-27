@@ -2,8 +2,8 @@
 """Durable disk cache for libclang walk IR fragments (P2).
 
 Caches serializable :class:`~uo_init.clang_walk.WalkResult` values — never the
-clang ``TranslationUnit`` object. Key = sha256(source bytes) + build-context /
-parse-flag fingerprint.
+clang ``TranslationUnit`` object. Key = sha256(source bytes) + transitive quoted-header digest + build-context /
+parse-flag fingerprint + toolchain.
 
 Storage layout (preferred)::
 
@@ -17,12 +17,14 @@ from uo_init.paths import require_architecture
 import hashlib
 import os
 import pickle
+import re
+import sys
 import threading
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-CACHE_VERSION = 7
+CACHE_VERSION = 8
 _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
@@ -98,6 +100,104 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+_QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
+_TOOLCHAIN_FP = ""
+
+
+def toolchain_fingerprint() -> str:
+    """Clang lib + Python identity; empty when libclang is unavailable."""
+    global _TOOLCHAIN_FP
+    if _TOOLCHAIN_FP:
+        return _TOOLCHAIN_FP
+    parts = [sys.version.split()[0]]
+    try:
+        from clang import cindex
+
+        lib = ""
+        try:
+            lib = str(cindex.conf.get_filename() or "")
+        except Exception:  # noqa: BLE001
+            lib = ""
+        parts.append(lib)
+        parts.append(str(getattr(cindex, "__version__", "") or ""))
+    except Exception:  # noqa: BLE001
+        parts.append("no-clang")
+    _TOOLCHAIN_FP = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    return _TOOLCHAIN_FP
+
+
+def _include_roots(path: Path, ctx: Any | None) -> list[Path]:
+    roots = [path.parent]
+    if ctx is None:
+        return roots
+    op_dir = getattr(ctx, "op_dir", None) or ""
+    if op_dir:
+        roots.append(Path(op_dir))
+    try:
+        args = list(ctx.host_args()) if hasattr(ctx, "host_args") else []
+    except Exception:  # noqa: BLE001
+        args = []
+    for i, raw in enumerate(args):
+        arg = str(raw)
+        if arg == "-I" and i + 1 < len(args):
+            roots.append(Path(str(args[i + 1])))
+        elif arg.startswith("-I") and len(arg) > 2:
+            roots.append(Path(arg[2:]))
+    return roots
+
+
+def transitive_header_digest(
+    path: str | Path,
+    ctx: Any | None = None,
+    *,
+    max_files: int = 80,
+) -> str:
+    """Hash quoted includes reachable from ``path`` (operator tree, not ``<>``)."""
+    start = Path(path).expanduser()
+    try:
+        start = start.resolve()
+    except OSError:
+        return ""
+    if not start.is_file():
+        return ""
+    roots = _include_roots(start, ctx)
+    digest = hashlib.sha256()
+    seen: set[str] = set()
+    queue: list[Path] = [start]
+    while queue and len(seen) < max_files:
+        cur = queue.pop(0)
+        key = str(cur)
+        if key in seen:
+            continue
+        try:
+            data = cur.read_bytes()
+        except OSError:
+            continue
+        seen.add(key)
+        if cur != start:
+            digest.update(cur.name.encode("utf-8", errors="replace"))
+            digest.update(b"\0")
+            digest.update(sha256_bytes(data).encode("ascii"))
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+        for inc in _QUOTED_INCLUDE_RE.findall(text):
+            needle = inc.replace("\\", "/")
+            resolved = None
+            for root in [cur.parent, *roots]:
+                cand = root / needle
+                try:
+                    if cand.is_file():
+                        resolved = cand.resolve()
+                        break
+                except OSError:
+                    continue
+            if resolved is not None and str(resolved) not in seen:
+                queue.append(resolved)
+    return digest.hexdigest()
+
+
 def build_context_fingerprint(
     ctx: Any,
     *,
@@ -169,11 +269,14 @@ def walk_cache_key(
         source_path=path,
         orig_assignment=orig_assignment,
     )
+    headers = transitive_header_digest(path, ctx)
     payload = "\0".join(
         [
             f"v{CACHE_VERSION}",
             src_sha,
             ctx_fp,
+            f"headers={headers}",
+            f"toolchain={toolchain_fingerprint()}",
             f"needle={op_needle}",
             f"writes={int(bool(collect_writes))}",
             f"reject={int(bool(logs_rejections))}",
@@ -210,11 +313,14 @@ def parse_cache_key(
         source_path=path,
         orig_assignment=orig_assignment,
     )
+    headers = transitive_header_digest(path, ctx)
     payload = "\0".join(
         [
             f"ast-v{AST_CACHE_VERSION}",
             src_sha,
             ctx_fp,
+            f"headers={headers}",
+            f"toolchain={toolchain_fingerprint()}",
             f"side={side}",
             "opts=DETAILED_PROCESSING_RECORD",
             Path(path).name,

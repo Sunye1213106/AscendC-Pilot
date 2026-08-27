@@ -35,8 +35,8 @@ SKILL_REFS = REPO_ROOT / "skills" / "bind-init" / "references"
 # Which skill reference backs each axis method file, and which refs get materialized
 # next to it. Mirrors what the Host does when it slices the skill.
 AXIS_METHOD = {
-    "bind": ("columns.md", ["test-script-repo.md", "column-binding-edge-cases.md"]),
-    "harness": ("harness.md", ["test-script-repo.md", "harness-edge-cases.md"]),
+    "bind": ("columns.md", []),
+    "harness": ("harness.md", []),
 }
 
 
@@ -49,6 +49,8 @@ def render_method(axis: str) -> str:
     """Skill reference + the pointer footer the Host appends."""
     name, refs = AXIS_METHOD[axis]
     body = (SKILL_REFS / name).read_text(encoding="utf-8").rstrip("\n")
+    if not refs:
+        return f"{body}\n"
     pointers = "\n".join(f"- `references/{r}`" for r in refs)
     materialized = "\n".join(f"- `refs/{axis}/{r}`" for r in refs)
     return (

@@ -6,22 +6,22 @@
 
 ## 输入 / 输出 / 停
 
-读：`repo_scan.yaml`。`kind=script_repo` 才读测试仓；`kind=default_input` 把缺口写进 findings。点了仓却扫不到目录 → 本切片失败，不是改写成 default_input。
+读：`repo_scan.yaml`。`kind=script_repo` 才读测试仓；`kind=default_input` 把缺口写进 findings。点了仓却扫不到目录 → 本切片失败，不是改写成 default_input。不要把某一个测试框架的设计字段名写进引擎：runner 吃 CSV/XLS 就填表；吃 JSON/设计文件就按它的入口写 `entry` / `case_arg`。
 
-**完成判据：** receipt 的 entry/case_arg/modes.candidates/表清单，加上三处源码窗（compare 函数、golden 产生/加载、`--pta_mode` 默认）。`generate_inputs` 只根据这三处 + receipt 作答。草稿 `call` 已按 `repo_scan.canonical_call` 预填；对照 `--pta_mode` 窗口确认 `kind` / `api` / `site`。
+**完成判据：** receipt 的 entry/case_arg/modes.candidates/表清单，加上三处源码窗（compare 函数、golden 产生/加载、mode 选择器默认值）。`generate_inputs` 只根据这三处 + receipt 作答。草稿 `call` 已按 `repo_scan.canonical_call` 预填；对照 mode 选择器窗口确认 `kind` / `api` / `site`。
 
-完成：口径来自脚本事实。`pilot_cli inspect yaml --rel <草稿相对 .ascendc-pilot 的路径>` 返回 ok 再停。
+完成：口径来自脚本事实。`pilot_cli inspect yaml --rel <草稿相对 .ascendc-pilot 的路径>` 返回 ok 再停。inspect 失败就改到过。
 
 ## 步骤
 
-一次并行打开三处源码窗（compare 函数、golden 产生/加载、`--pta_mode` 默认），加上 receipt。
+一次并行打开三处源码窗（compare 函数、golden 产生/加载、mode 选择器默认），加上 receipt。当前 runner 常见选择器是 `--pta_mode`；没有这个 flag 就按窗口里真实的 mode 选择器写，不要假装有 argparse。
 
-1. **认入口。** `entry` / `case_arg` 抄草稿与 receipt。包相对 import 的模块不是可执行入口。把 `modes.candidates` 分成精度 / 性能。表是否可读看 receipt `tables[].error`，不要凭后缀判失败。
-2. **写 golden。** match / mismatch / 缺口分开。Disable / 预期报错行不上精度 oracle。`--golden-only`（help 写不调 pta / 无需 NPU）是造数，不是精度；记 `golden_only_is_not_precision`。
+1. **认入口。** `entry` / `case_arg` 抄草稿与 receipt。能 `python <entry>` 直接跑的才是入口；包相对 import 的模块不是可执行入口。把 `modes.candidates` 分成精度 / 性能。表是否可读看 receipt `tables[].error`，不要凭后缀判失败。扫描含 xls/xlsx；用户没点名的表不当本次目标。
+2. **写 golden。** match / mismatch / 缺口分开。Disable / 预期报错行不上精度 oracle。help 写「不调 pta / 无需 NPU」的造数入口（常见 `--golden-only`）不是精度；记 `golden_only_is_not_precision`。
 3. **写 compare。** 脚本真实怎么比。`compare.how` 必须出现 compare 函数体里**每一个**写成字面量的数字（比率、地板、失败门槛都算），并记 `threshold_in_function_not_argparse`。argparse 没有的 `atol`/`rtol` 填 `absent`。Host replay 不是本路精度 oracle。
 4. **写 `modes.precision` / `modes.perf`。** 默认值若是性能 mode，记 `findings.code: default_mode_is_perf`。记下 `call.kind`（pta / aclnn / mixed），并记 `call_kind_pta`（或对应 kind）。
 5. **写 `generate_inputs`。** 造得出什么、造不出什么。至少核对这些轴：空 tensor、标量 tensor、inf / -inf / nan、上/下边界、末维对齐 vs +1、合法 vs 非法 range。
-6. **参数依赖。** 生成器做不到 → `test_harness_gap`。记进 findings，不要当成两列独立可填。
+6. **参数依赖。** reduce 轴必须落在 rank 内。生成器做不到 → `test_harness_gap`。记进 findings，不要当成两列独立可填。
 
 窗口里看到的稳定事实用这些 `findings.code`：`default_mode_is_perf`、`golden_only_is_not_precision`、`threshold_in_function_not_argparse`、`call_kind_pta`、`deterministic_mode`（checksum / `.bin` / md5 写进该条 detail）。
 
@@ -56,8 +56,8 @@ call: {kind: pta, api: torch_npu.<fn>, site: path.py:LINE}
 golden: {match: ..., mismatch: ..., gaps: ...}
 compare: {how: ..., atol_rtol: absent}
 modes:
-  precision: {flag: --pta_mode, value: <precision>}
-  perf: {flag: --pta_mode, value: <perf>}
+  precision: {flag: <mode-selector>, value: <precision>}
+  perf: {flag: <mode-selector>, value: <perf>}
 generate_inputs:
   can: [...]
   cannot:

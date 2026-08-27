@@ -97,6 +97,10 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert {a.get("task_prompt_id") for a in axes} == {"tg/bind-harness", "tg/bind-columns"}
     assert {a.get("method_ref") for a in axes} == {"harness.md", "columns.md"}
     assert {a.get("skill") for a in axes} == {"bind-init"}
+    assert not any(a.get("refs") for a in axes)
+    review = action_by_id("tg-init", "bind_review") or {}
+    assert review.get("skill_id") == "bind-init"
+    assert not str(review.get("method_ref") or "").strip()
     bind_axis = next(a for a in axes if a.get("id") == "bind")
     assert bind_axis.get("chunk_size") == 20
     assert bind_axis.get("chunk_by") == "columns"

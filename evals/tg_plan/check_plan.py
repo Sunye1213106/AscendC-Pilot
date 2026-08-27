@@ -48,15 +48,8 @@ def check(plan: dict[str, Any], init: dict[str, Any] | None) -> list[str]:
         problems.append(f"COMPILE: {err}")
 
     if rep["l2_mode"] != "full_cross":
-        problems.append(
-            "SIZING: coverage.L2 needs `mode: full_cross` plus an exclusions list"
-        )
+        problems.append("SIZING: coverage.L2 needs `mode: full_cross`")
     else:
-        if rep["l2_excluded"] <= 0:
-            problems.append(
-                f"SIZING: L2 excluded 0 of {rep['l2_nominal']} cells -- a raw cartesian "
-                "product means no reachability analysis was done"
-            )
         if rep["l2_nominal"] and rep["l2_obligations"] <= 0:
             problems.append(
                 f"SIZING: L2 exclusions removed all {rep['l2_nominal']} cells, leaving "

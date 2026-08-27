@@ -151,6 +151,20 @@ def test_walk_file_second_call_is_cache_hit(tmp_path, monkeypatch):
     assert tu_cache.load_walk(new_key, op_dir=str(tmp_path), arch="arch35") is None
 
 
+def test_header_digest_changes_walk_key(tmp_path):
+    src = tmp_path / "a.cpp"
+    hdr = tmp_path / "a.h"
+    hdr.write_text("int k = 1;\n", encoding="utf-8")
+    src.write_text('#include "a.h"\nint f() { return k; }\n', encoding="utf-8")
+    ctx = _FakeCtx()
+    ctx.op_dir = str(tmp_path)
+    key = tu_cache.walk_cache_key(src, ctx, side="host", op_needle="op")
+    hdr.write_text("int k = 2;\n", encoding="utf-8")
+    new_key = tu_cache.walk_cache_key(src, ctx, side="host", op_needle="op")
+    assert new_key != key
+    assert tu_cache.transitive_header_digest(src, ctx)
+
+
 def test_cache_disabled_bypasses(tmp_path, monkeypatch):
     monkeypatch.setenv("UO_TU_CACHE", "0")
     monkeypatch.setenv("UO_CACHE_ROOT", str(tmp_path / "cache"))

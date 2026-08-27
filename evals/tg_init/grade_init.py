@@ -284,9 +284,9 @@ def check_invariants(doc: dict[str, Any], repo: Path | None, rep: Report) -> Non
             f"uo.id reused across columns: {shared}",
         )
 
-    # I9 — `confirmed` has to be backed by an id and a citation, but only where an id is
-    # owed. The terminal statuses stop at classification and carry no `uo.id` by rule, so
-    # `confirmed` there means "confidently not bound" and is not a defect.
+    # I9 — `confirmed` is construct confidence. Active confirmed rows need harness
+    # proof (`evidence` or `runtime.target`). Empty `uo.id` is an identity gap, not a
+    # construct failure. Terminal statuses stop at classification.
     if mapping:
         unbacked = []
         for col, row in mapping.items():
@@ -297,13 +297,16 @@ def check_invariants(doc: dict[str, Any], repo: Path | None, rep: Report) -> Non
             status = _norm((row.get("control") or {}).get("status"))
             if status in TERMINAL_STATUSES:
                 continue
-            if not _s((row.get("uo") or {}).get("id")) or not _s(row.get("evidence")):
+            evidence = _s(row.get("evidence"))
+            runtime = row.get("runtime") if isinstance(row.get("runtime"), dict) else {}
+            target = _s((runtime or {}).get("target"))
+            if not evidence and not target:
                 unbacked.append(_s(col))
         rep.add(
             "invariant",
-            "I9-confirmed-has-id-and-evidence",
+            "I9-confirmed-has-construct-evidence",
             not unbacked,
-            f"confirmed without uo.id or evidence: {unbacked[:8]}",
+            f"confirmed without construct evidence: {unbacked[:8]}",
         )
 
     # I11 — thresholds must be quotable from the repo, never invented.

@@ -180,6 +180,51 @@ def _dist(values: list[float]) -> dict[str, float]:
     }
 
 
+def _compare_mcp(op: Path, arch: str, rounds: int) -> int:
+    """In-process SQLite vs optional daemon hop; MCP defaults to in-process."""
+    from uo_init.query.sql import UoSqlQuery
+    from uo_init.store.reader import find_uo_product
+
+    product = find_uo_product(op, architecture=arch)
+    if product is None or not Path(product).is_file():
+        print("no .uo product")
+        return 2
+    pattern = "keep_prob"
+    q = UoSqlQuery(product)
+    try:
+        q.agent_query(pattern=pattern)
+        times: list[float] = []
+        for _ in range(max(1, rounds)):
+            t0 = time.perf_counter()
+            q.agent_query(pattern=pattern)
+            times.append((time.perf_counter() - t0) * 1000)
+    finally:
+        q.close()
+    d = _dist(times)
+    print(
+        f"in-process UoSqlQuery (MCP default)  p50={d['p50']:.2f}ms  "
+        f"p95={d['p95']:.2f}ms  n={d['n']}"
+    )
+
+    from uo_init.query_client import try_agent_query
+
+    hop = try_agent_query(Path(product), pattern=pattern, architecture=arch)
+    if hop is None:
+        print("daemon hop: unavailable (CLI daemon not running; MCP still in-process)")
+        return 0
+    hops: list[float] = []
+    for _ in range(max(1, rounds)):
+        t0 = time.perf_counter()
+        try_agent_query(Path(product), pattern=pattern, architecture=arch)
+        hops.append((time.perf_counter() - t0) * 1000)
+    hd = _dist(hops)
+    print(
+        f"daemon hop                           p50={hd['p50']:.2f}ms  "
+        f"p95={hd['p95']:.2f}ms  n={hd['n']}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="uo query latency")
     ap.add_argument("--op", type=Path, default=None)
@@ -187,6 +232,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rounds", type=int, default=6, help="warm rounds over all cases")
     ap.add_argument("--cold-runs", type=int, default=3)
     ap.add_argument("--daemon", action="store_true", help="set UO_QUERY_DAEMON=1")
+    ap.add_argument(
+        "--compare-mcp",
+        action="store_true",
+        help="time in-process UoSqlQuery vs daemon hop (same pattern)",
+    )
     ap.add_argument("--slowest", type=int, default=10)
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--profile", default=None, metavar="PATTERN", help="cProfile one query instead of benching")
@@ -203,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.profile is not None:
         profile_one(op, arch, args.profile, args.repeat, args.top)
         return 0
+
+    if args.compare_mcp:
+        return _compare_mcp(op, arch, args.rounds)
 
     mode = "daemon PRAGMA (cache 32MB, mmap 64MB)" if args.daemon else "one-shot PRAGMA (cache 8MB, mmap 8MB)"
     print(f"op={op.name} arch={arch}  {mode}\n")

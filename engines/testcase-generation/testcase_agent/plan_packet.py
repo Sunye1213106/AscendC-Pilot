@@ -74,6 +74,7 @@ def contract_digest(repo_root: Path | str) -> str:
         "prompts/tasks/tg/plan-owner.md",
         "skills/test-plan/references/coverage-planning.md",
         "skills/test-plan/references/target-planning.md",
+        "skills/test-plan/references/evidence.md",
     ):
         path = root / rel
         try:
@@ -245,10 +246,19 @@ def behavior_candidates(
                 else:
                     row["observable"] = {"probe": name}
                     row["replay_unavailable"] = True
-                try:
-                    impact = query.field_impact(name)
-                except Exception:  # noqa: BLE001
-                    impact = {}
+                candidates.append(row)
+                identifiers.append(name)
+                if len(candidates) >= _BEHAVIOR_CAP:
+                    note = f"截断到前 {_BEHAVIOR_CAP} 个候选"
+                    break
+            impacts: dict[str, Any] = {}
+            try:
+                impacts = query.field_impact_many(identifiers)
+            except Exception:  # noqa: BLE001
+                impacts = {}
+            for row in candidates:
+                name = str(row.get("symbol") or "")
+                impact = impacts.get(name) if isinstance(impacts, dict) else {}
                 if isinstance(impact, dict) and impact.get("ok") is not False:
                     writers = _sites(impact.get("writers"))
                     readers = _sites(impact.get("readers"))
@@ -272,11 +282,6 @@ def behavior_candidates(
                     query=query,
                     directed_proofs=proofs.get(name),
                 )
-                candidates.append(row)
-                identifiers.append(name)
-                if len(candidates) >= _BEHAVIOR_CAP:
-                    note = f"截断到前 {_BEHAVIOR_CAP} 个候选；其余用 uo_query 按符号名查"
-                    break
     except Exception as exc:  # noqa: BLE001
         return {
             "candidates": [],
@@ -390,7 +395,8 @@ def controls_catalog(init_doc: dict[str, Any] | None) -> dict[str, Any]:
         "inactive": inactive,
         "note": (
             "case.* / controls / construct_hint.columns 只能用 case_allowed。"
-            "unresolved_active 里落在本次 Target 路径闭包上的列必须出现在 untestable。"
+            "路径闭包上 construct 未闭合的列写入 untestable.kind=control_gap，并填 needs_binding。"
+            "本质不可控/不可观测用 harness_gap 或 opaque；ownership 未闭合用 unverified。"
             "身份缺口（空 uo.id + candidate）只要 confidence=confirmed 就不进 untestable。"
         ),
     }
@@ -576,6 +582,30 @@ def format_plan_route_card(card: dict[str, Any] | None) -> str:
         bits.append(f"{cluster.get('kind') or 'cluster'}[{files}]{suffix}")
     hint = str(doc.get("route_hint_zh") or "").strip()
     return "改动摘要：" + "；".join(bits) + ("。" + hint if hint else "。")
+
+
+def semantic_delta(
+    project_root: Path,
+    *,
+    op_name: str = "",
+    architecture: str = "",
+    changed_files: list[str] | None = None,
+    changed_hunks: list[dict[str, Any]] | None = None,
+    relevant_hunks: list[dict[str, Any]] | None = None,
+    init_doc: dict[str, Any] | None = None,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Engine-facing batch UO context. Not an agent tool."""
+    return build_semantic_packet(
+        project_root,
+        op_name=op_name,
+        architecture=architecture,
+        changed_files=changed_files,
+        changed_hunks=changed_hunks,
+        relevant_hunks=relevant_hunks,
+        init_doc=init_doc,
+        repo_root=repo_root,
+    )
 
 
 def build_semantic_packet(

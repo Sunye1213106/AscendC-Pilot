@@ -167,20 +167,20 @@ def test_bind_init_fanout_writes_isolated_yaml_stubs(tmp_path: Path) -> None:
     bind_method = (sdir / "method_bind.md").read_text(encoding="utf-8")
     assert "只 Edit" in harness_method
     assert "只 Edit" in bind_method
-    assert "refs/harness/harness-edge-cases.md" in harness_method
-    assert "refs/bind/column-binding-edge-cases.md" in bind_method
-    assert "refs/harness/test-script-repo.md" in harness_method
-    assert "refs/bind/test-script-repo.md" in bind_method
-    assert "column-binding-edge-cases" not in harness_method
-    assert "harness-edge-cases" not in bind_method
+    assert "golden" in harness_method
+    assert "domains" in bind_method
+    assert "harness-edge-cases" not in harness_method
+    assert "column-binding-edge-cases" not in bind_method
+    assert "test-script-repo" not in harness_method
+    assert "test-script-repo" not in bind_method
     assert "construction-gotchas" not in harness_method
     assert "construction-gotchas" not in bind_method
-    assert (sdir / "refs" / "harness" / "harness-edge-cases.md").is_file()
-    assert (sdir / "refs" / "bind" / "column-binding-edge-cases.md").is_file()
-    assert (sdir / "refs" / "harness" / "test-script-repo.md").is_file()
-    assert (sdir / "refs" / "bind" / "test-script-repo.md").is_file()
-    assert not (sdir / "refs" / "harness" / "column-binding-edge-cases.md").exists()
-    assert not (sdir / "refs" / "bind" / "harness-edge-cases.md").exists()
+    assert not (sdir / "refs" / "harness").exists() or not any(
+        (sdir / "refs" / "harness").glob("*.md")
+    )
+    assert not (sdir / "refs" / "bind").exists() or not any(
+        (sdir / "refs" / "bind").glob("*.md")
+    )
 
 
 def test_bind_init_fanout_dispatches_engine_skeleton_llm_edit_false(tmp_path: Path) -> None:

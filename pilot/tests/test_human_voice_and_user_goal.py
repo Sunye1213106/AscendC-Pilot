@@ -102,16 +102,18 @@ def test_bind_init_method_file_exists() -> None:
     assert "mapping" in text.lower() or "列" in text
 
 
-def test_bind_review_loads_review_playbook_not_router() -> None:
+def test_bind_review_loads_skill_md_not_axis_playbooks() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 
     action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_review")
     assert action.get("skill_id") == "bind-init"
-    assert action.get("method_ref") == "review.md"
+    assert not str(action.get("method_ref") or "").strip()
     method, prompt = _load_method_and_prompt(ROOT, action)
     assert "intent=PASS" in method
     assert "intent=REWORK" in method
-    assert "分两路绑定" not in method
+    assert "出处抽查" in method
+    assert "call_args.sources[]" not in method
+    assert "generate_inputs" not in method
     assert prompt.strip()
 
 

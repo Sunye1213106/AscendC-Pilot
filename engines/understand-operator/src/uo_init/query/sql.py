@@ -92,6 +92,13 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "shape",
         "total_matched",
         "edges",
+        "host",
+        "kernel",
+        "flow",
+        "definition",
+        "related",
+        "impact",
+        "enclosing",
         "snippet",
         "seeds",
         "match",
@@ -214,6 +221,13 @@ _TEMPLATE_BLOCKS_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _SOURCE_LINES_MAX = 64
 _SOURCE_LINES_LOCK = threading.Lock()
 _SOURCE_LINES_CACHE: OrderedDict[str, tuple[tuple[int, int], tuple[str, ...]]] = OrderedDict()
+_SQL_IN_CHUNK = 400
+
+
+def _chunks(items: Iterable[Any], size: int = _SQL_IN_CHUNK) -> Iterator[list[Any]]:
+    seq = [item for item in items if item not in (None, "")]
+    for i in range(0, len(seq), max(1, size)):
+        yield seq[i : i + size]
 _IDENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _AROUND_KIND_PRIORITY = {
     EntityKind.TILING_FIELD.value: 0,
@@ -2303,6 +2317,8 @@ class UoSqlQuery:
         self._engine = None
         self._accel: bool | None = None
         self._launch_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self._edges_cache: dict[str, list[dict[str, Any]]] | None = None
+        self._named_fields_cache: dict[str, list[dict[str, Any]]] | None = None
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -2807,9 +2823,59 @@ class UoSqlQuery:
                     out.append(hit)
         return out
 
+    def edges_of_many(
+        self,
+        ids: Iterable[str],
+        *,
+        kind: str = "",
+        limit: int = 100,
+    ) -> dict[str, list[dict[str, Any]]]:
+        unique = []
+        seen: set[str] = set()
+        for raw in ids:
+            eid = str(raw or "")
+            if eid and eid not in seen:
+                seen.add(eid)
+                unique.append(eid)
+        out: dict[str, list[dict[str, Any]]] = {eid: [] for eid in unique}
+        if not unique:
+            return out
+        wanted = str(kind or "").upper()
+        cap = max(1, int(limit or 100))
+        with self._connect() as conn:
+            for chunk in _chunks(unique):
+                placeholders = ",".join("?" for _ in chunk)
+                sql = f"""
+                    SELECT id, kind, src, dst, status FROM relation
+                    WHERE (src IN ({placeholders}) OR dst IN ({placeholders}))
+                """
+                params: list[Any] = [*chunk, *chunk]
+                if wanted:
+                    sql += " AND kind = ?"
+                    params.append(wanted)
+                sql += " ORDER BY kind, src, dst"
+                for row in conn.execute(sql, params):
+                    rec = {
+                        "id": str(row["id"] or ""),
+                        "kind": str(row["kind"] or ""),
+                        "src": str(row["src"] or ""),
+                        "dst": str(row["dst"] or ""),
+                        "status": str(row["status"] or ""),
+                    }
+                    for key in (rec["src"], rec["dst"]):
+                        bucket = out.get(key)
+                        if bucket is None or len(bucket) >= cap:
+                            continue
+                        bucket.append(rec)
+        return out
+
     def edges_of(
         self, entity_id: str, *, kind: str = "", limit: int = 100
     ) -> list[dict[str, Any]]:
+        eid = str(entity_id or "")
+        cached = self._edges_cache
+        if cached is not None and eid in cached and not kind:
+            return list(cached.get(eid) or [])[: max(1, int(limit or 100))]
         with self._connect() as conn:
             start = self._entity_row(conn, entity_id)
             if start is None:
@@ -2976,9 +3042,33 @@ class UoSqlQuery:
         normalized = sorted({_strip_dot_slash(str(p).replace("\\", "/")) for p in files if str(p).strip()})
         if not normalized:
             return []
+        hits: list[dict[str, Any]] = []
+        matched: set[str] = set()
         with self._connect() as conn:
-            hits: list[dict[str, Any]] = []
-            for path in normalized:
+            for chunk in _chunks(normalized):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"""
+                    SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                           IFNULL(s.snippet, '') AS snippet
+                    FROM entity e
+                    LEFT JOIN source_span s ON s.entity_id = e.id
+                    WHERE e.file IN ({placeholders})
+                    ORDER BY e.kind, e.id
+                    LIMIT ?
+                    """,
+                    (*chunk, min(200 * len(chunk), 4000)),
+                ).fetchall()
+                for row in rows:
+                    matched.add(_strip_dot_slash(str(row["file"] or "").replace("\\", "/")))
+                hits.extend(self._hits_from_rows(conn, rows, with_snippet=False))
+            missing = [
+                path
+                for path in normalized
+                if path not in matched
+                and not any(got.endswith("/" + path) or got.endswith(path) for got in matched)
+            ]
+            for path in missing:
                 suffix = "/" + path if not path.startswith("/") else path
                 rows = conn.execute(
                     """
@@ -2986,8 +3076,8 @@ class UoSqlQuery:
                            IFNULL(s.snippet, '') AS snippet
                     FROM entity e
                     LEFT JOIN source_span s ON s.entity_id = e.id
-                    WHERE IFNULL(e.file, '') = ?
-                       OR IFNULL(e.file, '') LIKE '%' || ?
+                    WHERE e.file = ?
+                       OR e.file LIKE '%' || ?
                     ORDER BY e.kind, e.id
                     LIMIT 200
                     """,
@@ -3068,6 +3158,9 @@ class UoSqlQuery:
         key = str(name_or_id or "").strip().lower()
         if not key:
             return []
+        cached = self._named_fields_cache
+        if cached is not None and key in cached:
+            return list(cached.get(key) or [])
         kind_list = [k for k in kinds if k]
         placeholders = ",".join("?" for _ in kind_list)
         with self._connect() as conn:
@@ -3147,6 +3240,93 @@ class UoSqlQuery:
                 matched.append(hit)
         matched.sort(key=lambda hit: _alias_hit_rank(hit, needle))
         return matched
+
+    def _named_fields_many(
+        self, names: Iterable[str], *, kinds: Iterable[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        keys: list[str] = []
+        seen: set[str] = set()
+        for raw in names:
+            key = str(raw or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+        out: dict[str, list[dict[str, Any]]] = {key: [] for key in keys}
+        if not keys:
+            return out
+        kind_list = [k for k in kinds if k]
+        kind_ph = ",".join("?" for _ in kind_list)
+        with self._connect() as conn:
+            for chunk in _chunks(keys):
+                name_ph = ",".join("?" for _ in chunk)
+                likes = []
+                like_params: list[str] = []
+                for key in chunk:
+                    likes.append("e.name COLLATE NOCASE LIKE '%::' || ?")
+                    likes.append("e.name COLLATE NOCASE LIKE '%.' || ?")
+                    like_params.extend([key, key])
+                rows = conn.execute(
+                    f"""
+                    SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                           IFNULL(s.snippet, '') AS snippet
+                    FROM entity e
+                    LEFT JOIN source_span s ON s.entity_id = e.id
+                    WHERE e.kind IN ({kind_ph})
+                      AND (
+                        lower(e.name) IN ({name_ph})
+                        OR lower(e.id) IN ({name_ph})
+                        OR {' OR '.join(likes)}
+                      )
+                    LIMIT 80
+                    """,
+                    (*kind_list, *chunk, *chunk, *like_params),
+                ).fetchall()
+                hits = self._hits_from_rows(conn, rows, why="field", with_snippet=True, with_rels=True)
+                for hit in hits:
+                    name = str(hit.get("name") or "").lower()
+                    leaf = _last_ident(name).lower()
+                    eid = str(hit.get("id") or "").lower()
+                    for key in chunk:
+                        if key in {name, leaf, eid} or name.endswith("::" + key) or name.endswith("." + key):
+                            out[key].append(hit)
+        return out
+
+    def _prefetch_field_graph(self, names: Iterable[str]) -> None:
+        unique = [str(n).strip() for n in names if str(n).strip()]
+        if not unique:
+            return
+        field_kinds = (
+            EntityKind.TILING_FIELD.value,
+            EntityKind.FIELD.value,
+            EntityKind.TILING_KEY.value,
+        )
+        by_key = self._named_fields_many(unique, kinds=field_kinds)
+        self._named_fields_cache = by_key
+        fids: list[str] = []
+        for hits in by_key.values():
+            for hit in hits[:1]:
+                fid = str(hit.get("id") or "")
+                if fid:
+                    fids.append(fid)
+        self._edges_cache = self.edges_of_many(fids, limit=300)
+
+    def field_impact_many(self, names: Iterable[str]) -> dict[str, dict[str, Any]]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for raw in names:
+            name = str(raw or "").strip().strip('"').strip("'")
+            key = name.lower()
+            if name and key not in seen:
+                seen.add(key)
+                unique.append(name)
+        if not unique:
+            return {}
+        self._prefetch_field_graph(unique)
+        try:
+            return {name: self.field_impact(name) for name in unique}
+        finally:
+            self._named_fields_cache = None
+            self._edges_cache = None
 
     def field_impact(self, name_or_id: str) -> dict[str, Any]:
         raw = str(name_or_id or "").strip().strip('"').strip("'")
@@ -4957,6 +5137,18 @@ class UoSqlQuery:
         cards_src = ranked_kinds[:MAX_NAME_CARDS]
         primary_hits = cards_src[:1]
         extra_hits = cards_src[1:]
+        field_kinds = {
+            EntityKind.TILING_FIELD.value,
+            EntityKind.FIELD.value,
+            EntityKind.TILING_KEY.value,
+        }
+        field_names = [
+            str(hit.get("name") or "")
+            for hit in cards_src
+            if str(hit.get("kind") or "") in field_kinds
+        ]
+        if len(field_names) > 1:
+            self._prefetch_field_graph(field_names)
         cards: list[dict[str, Any]] = []
         next_names: list[str] = []
         seen_next: set[str] = set()
@@ -5101,6 +5293,8 @@ class UoSqlQuery:
             card["edges"] = grouped
             if extras:
                 card["extras"] = extras
+            covered = self._fill_semantic_card(card, extras, needle)
+            self_names.update(covered)
             card["canonical"] = extras.get("canonical") or name
             cards.append(card)
             if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
@@ -5127,6 +5321,8 @@ class UoSqlQuery:
                 next_names, seen_next, self_names, extra_grouped, limit=NEXT_HOP_LIMIT
             )
             cards.append(_compact_kind_card(hit))
+        self._named_fields_cache = None
+        self._edges_cache = None
         coverage = _hits_coverage(cards_src, total=len(hits), needle=needle)
         if definition_sites:
             coverage["definition_sites_count"] = max(
@@ -5590,6 +5786,65 @@ class UoSqlQuery:
                 return from_graph
         return from_graph
 
+    def _fill_semantic_card(
+        self, card: dict[str, Any], extras: dict[str, Any], needle: str
+    ) -> set[str]:
+        """Fold writers/readers into a self-contained card. Returns names already covered."""
+        writers = extras.get("writers") if isinstance(extras.get("writers"), list) else []
+        readers = extras.get("readers") if isinstance(extras.get("readers"), list) else []
+        guards = extras.get("guards") if isinstance(extras.get("guards"), list) else []
+
+        def _sites(rows: Any, cap: int = 8) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            for row in rows or []:
+                if not isinstance(row, dict):
+                    continue
+                item = {
+                    "name": str(row.get("name") or ""),
+                    "kind": str(row.get("kind") or ""),
+                    "file": str(row.get("file") or ""),
+                    "line": int(row.get("line") or row.get("line_start") or 0),
+                }
+                out.append({k: v for k, v in item.items() if v not in (None, "")})
+                if len(out) >= cap:
+                    break
+            return out
+
+        card["definition"] = {
+            "file": card.get("file") or "",
+            "line": int(card.get("line") or 0),
+            **(
+                card.get("definition_span")
+                if isinstance(card.get("definition_span"), dict)
+                else {}
+            ),
+        }
+        card["host"] = {"writers": _sites(writers), "guards": _sites(guards, 6)}
+        card["kernel"] = {"readers": _sites(readers)}
+        flow: dict[str, Any] = {}
+        canonical = extras.get("canonical") or card.get("canonical") or card.get("name")
+        if canonical:
+            flow["tiling_field"] = canonical
+        consumers = [str(row.get("name") or "") for row in readers[:8] if row.get("name")]
+        if consumers:
+            flow["kernel_consumers"] = consumers
+        writers_named = [str(row.get("name") or "") for row in writers[:6] if row.get("name")]
+        if writers_named:
+            flow["host_writers"] = writers_named
+        if flow:
+            card["flow"] = flow
+        related: list[str] = []
+        for name in writers_named + consumers:
+            if name and name.lower() != str(needle or "").lower() and name not in related:
+                related.append(name)
+        if related:
+            card["related"] = related[:8]
+        covered = {str(needle or "").lower()}
+        covered.update(n.lower() for n in related)
+        covered.update(n.lower() for n in writers_named)
+        covered.update(n.lower() for n in consumers)
+        return {n for n in covered if n}
+
     def _card_extras(self, hit: dict[str, Any]) -> dict[str, Any]:
         kind = str(hit.get("kind") or "")
         name = str(hit.get("name") or "")
@@ -5888,6 +6143,45 @@ class UoSqlQuery:
         else:
             seeds = seeds[:1]
         compact_seeds = [_compact_around_hit(hit, snippet=False) for hit in seeds]
+        seed_ids = [str(hit.get("id") or "") for hit in seeds if hit.get("id")]
+        neighbors = self._around_one_hop(seed_ids)
+        impact: dict[str, Any] = {}
+        field_kinds = {
+            EntityKind.TILING_FIELD.value,
+            EntityKind.FIELD.value,
+            EntityKind.TILING_KEY.value,
+        }
+        field_names = [
+            str(hit.get("name") or "")
+            for hit in seeds
+            if str(hit.get("kind") or "") in field_kinds
+        ]
+        if field_names:
+            packed = self.field_impact_many(field_names)
+            primary = packed.get(field_names[0]) if packed else {}
+            if isinstance(primary, dict) and primary.get("ok"):
+                impact = {
+                    "name": field_names[0],
+                    "writers": [
+                        {
+                            "name": row.get("name"),
+                            "file": row.get("file"),
+                            "line": row.get("line_start") or row.get("line"),
+                        }
+                        for row in list(primary.get("writers") or [])[:8]
+                        if isinstance(row, dict)
+                    ],
+                    "readers": [
+                        {
+                            "name": row.get("name"),
+                            "file": row.get("file"),
+                            "line": row.get("line_start") or row.get("line"),
+                        }
+                        for row in list(primary.get("readers") or [])[:8]
+                        if isinstance(row, dict)
+                    ],
+                }
+        enclosing = compact_seeds[0] if compact_seeds else {}
         payload = {
             "ok": bool(window or seeds),
             "shape": "around",
@@ -5896,8 +6190,10 @@ class UoSqlQuery:
             "line_end": end or start,
             "snippet": window,
             "seeds": compact_seeds,
-            "neighbors": [],
+            "enclosing": enclosing,
+            "neighbors": neighbors,
             "hits": compact_seeds,
+            "impact": impact,
             "count": len(seeds),
             "truncated": False,
         }

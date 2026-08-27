@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Callable, Iterable, Sequence, TypeVar
 
@@ -30,17 +31,28 @@ def _requested_workers() -> int | None:
         return None
 
 
+def _default_map_backend() -> str:
+    """Linux/WSL uses process pools to escape the GIL; Windows spawn is too costly."""
+    if sys.platform.startswith("linux"):
+        return "process"
+    return "thread"
+
+
 def _map_backend() -> str:
-    """``thread`` (default) or ``process``.
+    """``thread`` or ``process``.
 
     Process pools escape the GIL for pure-Python regex scans, but Windows
     spawn costs ~0.5s per worker and the callback must pickle. Nested
     closures (most current call sites) fall back to threads automatically.
+    Default: process on Linux/WSL, thread on Windows. Override with
+    ``UO_MAP_BACKEND``.
     """
-    raw = str(os.environ.get("UO_MAP_BACKEND") or "thread").strip().lower()
+    raw = str(os.environ.get("UO_MAP_BACKEND") or "").strip().lower()
     if raw in {"process", "proc", "spawn"}:
         return "process"
-    return "thread"
+    if raw in {"thread", "threads"}:
+        return "thread"
+    return _default_map_backend()
 
 
 def map_files(

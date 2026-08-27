@@ -156,14 +156,16 @@ def _directed_from_query(
         if not isinstance(impact, dict):
             continue
         seeds = [s for s in (impact.get("seeds") or []) if isinstance(s, dict)]
+        seed_ids = [str(s.get("id") or "") for s in seeds if s.get("id")]
+        try:
+            edges_by_id = query.edges_of_many(seed_ids) if seed_ids else {}
+        except Exception:  # noqa: BLE001
+            edges_by_id = {}
         for seed in seeds:
             sid = str(seed.get("id") or "")
             if not sid:
                 continue
-            try:
-                edges = query.edges_of(sid)
-            except Exception:  # noqa: BLE001
-                continue
+            edges = edges_by_id.get(sid) or []
             for edge in edges or []:
                 if not isinstance(edge, dict):
                     continue

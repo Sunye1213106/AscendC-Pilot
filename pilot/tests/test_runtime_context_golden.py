@@ -71,10 +71,6 @@ def test_runtime_context_identity_and_pollution() -> None:
             assert names == {
                 "bind-init/harness.md",
                 "bind-init/columns.md",
-                "bind-init/review.md",
-                "bind-init/test-script-repo.md",
-                "bind-init/harness-edge-cases.md",
-                "bind-init/column-binding-edge-cases.md",
             }
             assert "```yaml" not in skill_text
             harness = (SKILLS / "bind-init" / "references" / "harness.md").read_text(
@@ -88,12 +84,9 @@ def test_runtime_context_identity_and_pollution() -> None:
             assert "modes.precision" not in columns
             assert "performance-testing" not in columns
         if action.get("id") == "bind_review":
-            assert str(action.get("method_ref") or "") == "review.md"
-            review = (SKILLS / "bind-init" / "references" / "review.md").read_text(
-                encoding="utf-8"
-            )
-            assert "intent=PASS" in review
-            assert "intent=REWORK" in review
+            assert not str(action.get("method_ref") or "").strip()
+            assert "intent=PASS" in skill_text
+            assert "intent=REWORK" in skill_text
         if sid == "solve":
             assert "`references/search.md`" not in bodies
             assert "`references/closure-safety.md`" not in bodies

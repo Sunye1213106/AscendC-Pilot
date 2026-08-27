@@ -1,0 +1,251 @@
+{
+  "schema": "uo-exam-gate/v1",
+  "arch": "arch35",
+  "op_hint": "TEST/.ascendc-pr/.../flash_attention_score_grad",
+  "questions": [
+    {
+      "id": "Q1",
+      "queries": [
+        {"pattern": "SplitAxis=1,IsTnd=1,InputDType=3"},
+        {"pattern": "SetSplitAxis"}
+      ],
+      "must_names": ["SetSplitAxis", "SplitAxis", "IsTnd", "IsBn2MultiBlk"],
+      "must_files": [
+        "flash_attention_score_grad_template_tiling_key.h",
+        "flash_attention_score_grad_tiling_common_regbase.cpp",
+        "flash_attention_score_grad_entry_regbase.h"
+      ],
+      "must_needles": ["BN2", "IsTnd", "SetSplitAxis"],
+      "related_allow": [
+        "SetSplitAxis", "SplitAxis", "IsTnd", "IsBn2MultiBlk", "InputDType",
+        "DeterType", "BN2", "BN2GS1S2", "BN2S2", "isBn2", "layoutType",
+        "INVOKE_FAG_GENERAL_S1S2_BN2", "tailZeroCount", "GRAPH_FAILED"
+      ],
+      "expect_first_kinds": {
+        "SetSplitAxis": ["FUNCTION", "METHOD"]
+      }
+    },
+    {
+      "id": "Q2",
+      "queries": [
+        {"pattern": "s1Inner"},
+        {"pattern": "GetS1S2TemplateType"},
+        {"pattern": "FuzzyForBestSplit"},
+        {"pattern": "VECTOR_BASEM"},
+        {"pattern": "CUBE_BASEM"}
+      ],
+      "must_names": ["s1Inner", "GetS1S2TemplateType", "VECTOR_BASEM", "CUBE_BASEM"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_tiling_common_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h",
+        "flash_attention_score_grad_common.h"
+      ],
+      "must_needles": ["s1Inner", "VECTOR_BASEM", "CUBE_BASEM", "CV_CORE_RATIO"],
+      "related_allow": [
+        "s1Inner", "s1CvInner", "GetS1S2TemplateType", "FuzzyForBestSplit",
+        "VECTOR_BASEM", "CUBE_BASEM", "CV_CORE_RATIO", "S1TemplateNum",
+        "S1CV_RATIO_DEFAULT", "DoSplit", "s1TemplateType"
+      ],
+      "expect_first_kinds": {
+        "s1Inner": ["TILING_FIELD", "FIELD"]
+      }
+    },
+    {
+      "id": "Q3",
+      "queries": [
+        {"pattern": "SetScheduleMode"},
+        {"pattern": ""},
+        {"pattern": "SyncALLCores"}
+      ],
+      "must_names": ["SetScheduleMode", "SyncALLCores"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h",
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h"
+      ],
+      "must_needles": ["SetScheduleMode", "SyncAll", "SyncALLCores"],
+      "related_allow": [
+        "SetScheduleMode", "SyncALLCores", "SyncAll", "PostTiling",
+        "isBn2MultiBlk", "splitAxis", "KERNEL_TYPE_MIX_AIC_1_2",
+        "FlashAttentionScoreGradPresfmgRegbase", "pipeIn", "pipeBase"
+      ]
+    },
+    {
+      "id": "Q4",
+      "queries": [
+        {"pattern": "enablePreSfmg"},
+        {"pattern": ""}
+      ],
+      "must_names": ["enablePreSfmg"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "must_needles": ["enablePreSfmg", "dTemplateType"],
+      "related_allow": [
+        "enablePreSfmg", "DoPreTiling", "Presfmg", "FlashAttentionScoreGradPresfmgRegbase",
+        "HIFLOAT8", "dTemplateType", "sinkOptional", "isDeterministic",
+        "MAX_BASIC_BLOCK_SIZE", "dropoutIsDivisibleBy8"
+      ],
+      "expect_first_kinds": {
+        "enablePreSfmg": ["TILING_FIELD", "FIELD"]
+      }
+    },
+    {
+      "id": "Q5",
+      "queries": [
+        {"pattern": "InitTilingData"},
+        {"pattern": "NEED_DETER_PREFIX"},
+        {"pattern": "NEED_DETER"}
+      ],
+      "must_names": ["InitTilingData", "NEED_DETER_PREFIX", "NEED_DETER"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_data_regbase.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_common.h"
+      ],
+      "must_needles": ["NEED_DETER", "InitTilingData", "isTnd"],
+      "related_allow": [
+        "InitTilingData", "NEED_DETER", "NEED_DETER_PREFIX", "IS_DETER_NEW",
+        "FFFF", "TFFF", "FFTF", "TFTF", "TTTF", "TTTT", "FFTT",
+        "IsNewDeter", "deterParam", "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase"
+      ]
+    },
+    {
+      "id": "Q6",
+      "queries": [
+        {"pattern": "IS_SMALL_D_PRELOAD"},
+        {"pattern": "QL1BuffSelector"}
+      ],
+      "must_names": ["IS_SMALL_D_PRELOAD", "QL1BuffSelector"],
+      "must_files": [
+        "flash_attention_score_grad_block_cube.h",
+        "flash_attention_score_grad_common.h"
+      ],
+      "must_needles": ["IS_SMALL_D_PRELOAD", "IS_L1_PRELOAD", "IS_DROP"],
+      "related_allow": [
+        "IS_SMALL_D_PRELOAD", "QL1BuffSelector", "MutexBuffersPolicy4buff",
+        "IS_L1_PRELOAD", "IS_L1_REUSE", "IS_DROP", "HEAD_DIM_ALIGN",
+        "IS_PRELOAD_TWO_TIMES", "SPLIT_AXIS", "NO_DETER"
+      ]
+    },
+    {
+      "id": "Q7",
+      "queries": [
+        {"pattern": "GetDeterSparseTilingKey"},
+        {"pattern": "SplitAxis=5,DeterType=3"}
+      ],
+      "must_names": ["GetDeterSparseTilingKey", "DeterType", "SplitAxis"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_template_tiling_key.h"
+      ],
+      "must_needles": ["DETER", "DeterType", "GetDeterSparseTilingKey"],
+      "related_allow": [
+        "GetDeterSparseTilingKey", "DeterType", "DETER_DENSE", "DETER_CAUSAL",
+        "DETER_BAND", "DETER_OLD", "NO_DETER", "SplitAxis", "IsNEqual",
+        "isDeterministic", "LEFT_UP_CAUSAL", "matching_block_count", "dim_coverage"
+      ]
+    },
+    {
+      "id": "Q8",
+      "queries": [
+        {"pattern": "SetSplitAxis"},
+        {"pattern": "IS_DQ_WRITE_UB"}
+      ],
+      "must_names": ["SetSplitAxis", "IS_DQ_WRITE_UB"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_common_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "must_needles": ["BN2", "IS_DQ_WRITE_UB", "SetSplitAxis"],
+      "related_allow": [
+        "SetSplitAxis", "IS_DQ_WRITE_UB", "IS_DK_WRITE_UB", "IS_DV_WRITE_UB",
+        "IS_DQ_RES_EXCEED_UB", "isBn2", "isBn2MultiBlk", "bn2S2RouteLimit",
+        "VECTOR_BASEN", "HEAD_DIM_ALIGN", "DoSparse"
+      ]
+    },
+    {
+      "id": "Q9",
+      "queries": [
+        {"pattern": ""},
+        {"pattern": "ORIG_DTYPE_QUERY"},
+        {"pattern": "INVOKE_FAG_GENERAL_S1S2_BN2"}
+      ],
+      "must_names": ["ORIG_DTYPE_QUERY"],
+      "must_files": [
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_template_tiling_key.h"
+      ],
+      "must_needles": ["ORIG_DTYPE_QUERY", "DT_FLOAT", "InputDType"],
+      "related_allow": [
+        "ORIG_DTYPE_QUERY", "INVOKE_FAG_GENERAL_S1S2_BN2", "DetermineMode",
+        "InputDType", "DT_FLOAT", "DT_FLOAT16", "DT_BF16", "RegbaseFAG",
+        "pipeBase", "NzPost", "enablePreSfmg"
+      ]
+    },
+    {
+      "id": "Q10",
+      "queries": [
+        {"pattern": "IsEmptyOutput"},
+        {"pattern": "RunEmptyTilingRegbase"},
+        {"pattern": "IsEmptyTensor=1"}
+      ],
+      "must_names": ["IsEmptyOutput", "RunEmptyTilingRegbase", "IsEmptyTensor"],
+      "must_files": [
+        "flash_attention_score_grad_tiling.cpp"
+      ],
+      "must_needles": ["IsEmptyOutput", "IsEmptyTensor", "RunEmptyTilingRegbase"],
+      "related_allow": [
+        "IsEmptyOutput", "RunEmptyTilingRegbase", "IsEmptyTensor",
+        "IsTndAllSeqLenZero", "sValueZeroUnderTND", "GET_TPL_TILING_KEY",
+        "FlashAttentionScoreGradEmptyTensorTilingDataRegbase", "InitOutput"
+      ]
+    },
+    {
+      "id": "Q11",
+      "queries": [
+        {"pattern": "isNzOut"},
+        {"pattern": "isTndSwizzle"},
+        {"pattern": "IsNzOut=1"}
+      ],
+      "must_names": ["isNzOut", "isTndSwizzle", "IsNzOut"],
+      "must_files": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_template_tiling_key.h"
+      ],
+      "must_needles": ["isNzOut", "IsNzOut", "swizzle"],
+      "related_allow": [
+        "isNzOut", "IsNzOut", "isTndSwizzle", "enableSwizzle", "NZ_OUT_MIN_S_SIZE",
+        "DTemplateNum", "GetDTemplateType", "templateSupportCond",
+        "TND_SWIZZLE_PREFIX_NUM", "DETER_DENSE", "BN2S2"
+      ]
+    },
+    {
+      "id": "Q12",
+      "queries": [
+        {"pattern": "IsRope=1"},
+        {"pattern": "coreNum"},
+        {"pattern": "aicCoreNum"}
+      ],
+      "must_names": ["IsRope", "coreNum", "aicCoreNum"],
+      "must_files": [
+        "flash_attention_score_grad_template_tiling_key.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "must_needles": ["IsRope", "coreNum", "aicCoreNum"],
+      "related_allow": [
+        "IsRope", "hasRope", "IsDNoEqual", "dNoEqual", "DTemplateNum",
+        "GetDTemplateType", "coreNum", "aicCoreNum", "GetCoreNumAiv",
+        "MAX_CORE_NUM", "CORE_LIST_NUM", "CalcTschBlockDim", "SetBlockDim"
+      ],
+      "expect_first_kinds": {
+        "coreNum": ["TILING_FIELD", "FIELD"]
+      }
+    }
+  ]
+}

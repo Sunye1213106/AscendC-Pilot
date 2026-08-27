@@ -103,6 +103,40 @@ def test_untestable_derived_reason_rejected() -> None:
     assert any("constraints" in e or "environment" in e for e in errors), errors
 
 
+def test_untestable_unverified_kind_accepted() -> None:
+    fence = _load_yaml("plan_fag_deter_band_active.yaml")
+    fence["untestable"] = [
+        {
+            "id": "u-own",
+            "kind": "unverified",
+            "reason": "packet 无法闭合 ownership",
+        }
+    ]
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["is_deter", "N1"],
+        init_mapping={"is_deter": _confirmed("isDeter"), "N1": _confirmed("n1")},
+        observe_fields={"deterBandScheduleMode"},
+    )
+    assert not any("kind" in e and "unverified" in e for e in errors), errors
+
+
+def test_source_proof_is_not_target_evidence() -> None:
+    fence = _load_yaml("plan_fag_deter_band_active.yaml")
+    fence["targets"][0]["evidence"] = {
+        "kind": "source_proof",
+        "field": "replay.deterBandScheduleMode",
+        "expected": 1,
+    }
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["is_deter", "N1"],
+        init_mapping={"is_deter": _confirmed("isDeter"), "N1": _confirmed("n1")},
+        observe_fields={"deterBandScheduleMode"},
+    )
+    assert any("evidence.kind" in e for e in errors), errors
+
+
 def test_classifier_must_not_require_unused_replay() -> None:
     fence = _load_yaml("plan_fag_deter_band_active.yaml")
     fence["dimensions"][0]["classifier"] = {

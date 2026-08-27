@@ -27,6 +27,14 @@ from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 LEGAL_KEY_FLUSH = 3000
 
 
+def vacuum_uo_enabled(dest: Path) -> bool:
+    """Cold init VACUUMs; interactive update does not unless ``UO_VACUUM_UO=1``."""
+    env_raw = str(os.environ.get("UO_VACUUM_UO") or "").strip().lower()
+    if env_raw:
+        return env_raw in {"1", "true", "yes"}
+    return not Path(dest).exists()
+
+
 class _PathBase:
     """Rewrites every spelling of a location into one operator-relative form.
 
@@ -793,13 +801,7 @@ def write_codemap(
             [(f"accel_{k}", str(v)) for k, v in accel_stats.items()],
         )
         conn.commit()
-        # Building the side tables churns pages; without VACUUM the freelist
-        # stays in the shipped file. Opt out only for throwaway products.
-        vacuum = str(os.environ.get("UO_VACUUM_UO") or "1").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        vacuum = vacuum_uo_enabled(dest)
         if vacuum:
             old_isolation = conn.isolation_level
             conn.isolation_level = None

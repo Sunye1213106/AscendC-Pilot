@@ -4,6 +4,10 @@
 
 每个正式白盒状态必须能回答：跑完 Replay（必要时探针）看哪条观测。这是 solve 迭代的尺子。引擎计算 HIT/MISS；LLM 不得宣布 HIT。
 
+```text
+accuracy PASS 但 Target MISS ≠ 已覆盖
+```
+
 ## 种类（优先从上往下）
 
 | kind | 何时用 | 例子 |
@@ -12,9 +16,8 @@
 | `derived` | case + Replay 字段能算死 | 结构化 `mod_eq` / 比较 |
 | `dispatch_map` | Replay 字段 + UO 静态映射 | TilingKey → 模板 specialization |
 | `probe` | 上面都看不到的 Host 内部状态 | `TG_PROBE <赋值名>=<值>` |
-| `source_proof` | 不可达 / 静态 invariant | 某组合不可能出现 |
 
-`source_proof` 不证明某条 case 的 runtime 命中。不可达走 `skills/source-proof/SKILL.md`。
+这四类回答「这条 case 有没有 HIT Target」。不可达 / 静态 invariant 不是 Target evidence：写入 `untestable` 或 L2 exclusion，证明走 `skills/source-proof/SKILL.md`。不要把 `source_proof` 填进 `evidence.kind`。
 
 精度 / 性能收据不是 evidence。它们是命中之后的可选 `oracle`。
 
@@ -29,25 +32,24 @@
 
 反向也成立：精度、`md5` 这类只能进 `oracle`，不能当 `evidence.field`。
 
-字段必须是 `case.*` / `replay.*` / `probe.*` 或可解析的裸 symbol。禁止「看起来应该算 tail」。
-
 ## 字段粒度
 
-`replay.*` 的字段名是 **TilingData 解码后展平的纯字段名**，`case.*` 是**列名**。两者都只有**两段**：
+字段必须是恰好两段、三种前缀之一：
 
 ```text
-replay.{leaf}       ✅  解码器给的就是这个键
-case.{column}               ✅  init.yaml 的列名原文
-probe.{host_name}       ✅  源码里的 `{name} =`
+replay.{leaf}         ✅  解码器给的就是这个键
+case.{column}         ✅  init.yaml 的列名原文
+probe.{host_name}     ✅  packet `probe_candidates` / `branch_locals.probeable`
 ```
 
 ```text
 replay.{struct}.{leaf}   ❌ 多了子结构前缀
+DeterType                ❌ 裸 symbol，必须写成 replay.DeterType / case.DeterType / probe.DeterType
 ```
 
 源码里 TilingData 是嵌套结构，但解码器把所有字段**展平**、且**不带 struct 名**，观察包再把它们提到 `replay` 顶层。多写一层 struct 前缀会被 `plan_validate` 拒绝。
 
-拿不准字段叫什么，就查 UO 的 `kernel_tiling_view` stub 里的**叶子字段名**，别抄它的结构路径。
+`replay.*` 只写 `observation_catalog.replay_allowed` 里的键。`probe.*` 只写 `probe_candidates` / `probeable: true` 的名字。拿不准字段叫什么，就查 UO 的 `kernel_tiling_view` stub 里的**叶子字段名**，别抄它的结构路径。禁止「看起来应该算 tail」。
 
 ## 探针
 
@@ -63,15 +65,11 @@ UNKNOWN   缺收据 / 探针没打出来
 
 Replay 原始 `HIT / REWRITE / REFUSE` 仍是 tiling 裁决，与 Target HIT 分开记账。
 
-```text
-accuracy PASS 但 Target MISS ≠ 已覆盖
-```
-
 ## 必填
 
 ```yaml
 evidence:
-  kind: replay_field   # 或 derived | dispatch_map | probe | source_proof
+  kind: replay_field   # 或 derived | dispatch_map | probe
   field: replay.{leaf}
   expected: 1
 ```

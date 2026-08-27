@@ -374,7 +374,11 @@ def test_agent_query_name_card_groups_edges_and_field_extras(tmp_path: Path) -> 
     assert card["file"]
     assert "WRITES" in (card.get("edges") or {}) or (card.get("extras") or {}).get("writers")
     assert "READS" in (card.get("edges") or {}) or (card.get("extras") or {}).get("readers")
-    assert any(name == "SetS1Inner" for name in (out.get("next") or []))
+    writers = ((card.get("host") or {}).get("writers") or []) + list(
+        (card.get("extras") or {}).get("writers") or []
+    )
+    writer_names = {str(row.get("name") or "") for row in writers if isinstance(row, dict)}
+    assert "SetS1Inner" in writer_names or "SetS1Inner" in (out.get("next") or [])
 
 
 def test_agent_query_cover_empty_omits_sel_blocks(tmp_path: Path) -> None:

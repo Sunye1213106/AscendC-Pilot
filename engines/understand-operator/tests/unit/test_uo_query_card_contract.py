@@ -89,6 +89,13 @@ def test_method_card_has_callers_callees_and_field_readers(tmp_path: Path) -> No
         attrs={"file": "op_kernel/arch35/k.cpp", "line": 20},
         status="confirmed",
     )
+    cm.link(
+        RelationKind.WRITES,
+        process.id,
+        field.id,
+        attrs={"file": "op_host/tiling.cpp", "line": 115},
+        status="confirmed",
+    )
     _product(cm, tmp_path)
     q = open_query(tmp_path, architecture="arch35")
     method_card = q.agent_query(pattern="CalBandDeterIndex")
@@ -109,6 +116,11 @@ def test_method_card_has_callers_callees_and_field_readers(tmp_path: Path) -> No
     fextras = fhit.get("extras") or {}
     assert "readers" in fextras
     assert any(str(row.get("name") or "") == "CalBandDeterIndex" for row in fextras.get("readers") or [])
+    host = fhit.get("host") if isinstance(fhit.get("host"), dict) else {}
+    kernel = fhit.get("kernel") if isinstance(fhit.get("kernel"), dict) else {}
+    assert "writers" in host
+    assert any(str(row.get("name") or "") == "CalBandDeterIndex" for row in (kernel.get("readers") or []))
+    assert isinstance(fhit.get("definition"), dict)
 
 
 def test_name_card_lists_homonym_definition_sites(tmp_path: Path) -> None:
@@ -620,8 +632,10 @@ def test_around_is_statement_window(tmp_path: Path) -> None:
     assert "20:" in snippet
     assert "line 20" in snippet
     assert len((out.get("seeds") or [])) <= 1
-    assert (out.get("neighbors") or []) == []
-    assert len(json.dumps(out, ensure_ascii=False)) < 8000
+    enclosing = out.get("enclosing") or {}
+    assert str(enclosing.get("name") or "") == "FnEnclose"
+    assert "impact" in out
+    assert len(json.dumps(out, ensure_ascii=False)) < 16000
     assert str((out.get("seeds") or [{}])[0].get("name") or "") == "FnEnclose"
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ from typing import Any
 from uo_init.tu_cache import sha256_file, tu_cache_dir, uo_cache_root
 
 _META_NAME = "extract_fingerprint.yaml"
+_QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
+_EXTRACTOR_VERSION = "dep-include-v1"
 
 
 def _stable_hash(payload: Any) -> str:
@@ -161,6 +164,80 @@ def stamp_changed_paths(
     return sorted(changed)
 
 
+def _quoted_includes(path: Path) -> list[str]:
+    out: list[str] = []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        for inc in _QUOTED_INCLUDE_RE.findall(line):
+            out.append(inc.replace("\\", "/"))
+    return out
+
+
+def resolve_quoted_include(inc: str, from_rel: str, all_rels: set[str]) -> str | None:
+    needle = str(inc or "").replace("\\", "/")
+    if not needle:
+        return None
+    parent = str(Path(from_rel).parent / needle).replace("\\", "/")
+    if parent in all_rels:
+        return parent
+    if needle in all_rels:
+        return needle
+    name = Path(needle).name.lower()
+    matches = [
+        rel
+        for rel in all_rels
+        if rel.replace("\\", "/").endswith("/" + needle) or Path(rel).name.lower() == name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        return sorted(matches)[0]
+    return None
+
+
+def collect_include_graph(project_root: Path, rel_paths: list[str]) -> dict[str, list[str]]:
+    root = Path(project_root).expanduser().resolve()
+    rels = sorted({str(p).replace("\\", "/") for p in rel_paths if p})
+    all_rels = set(rels)
+    graph: dict[str, list[str]] = {}
+    for rel in rels:
+        found: list[str] = []
+        seen: set[str] = set()
+        for inc in _quoted_includes(root / rel):
+            resolved = resolve_quoted_include(inc, rel, all_rels)
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                found.append(resolved)
+        graph[rel] = found
+    return graph
+
+
+def include_reverse_closure(
+    changed: list[str], graph: dict[str, list[str]] | None
+) -> list[str]:
+    """Expand changed files to TUs that include them (reverse include closure)."""
+    seeds = {str(p).replace("\\", "/") for p in (changed or []) if p}
+    if not seeds or not graph:
+        return sorted(seeds)
+    reverse: dict[str, set[str]] = {}
+    for src, includes in graph.items():
+        src_n = str(src).replace("\\", "/")
+        for dst in includes or []:
+            reverse.setdefault(str(dst).replace("\\", "/"), set()).add(src_n)
+    out = set(seeds)
+    queue = list(seeds)
+    while queue:
+        cur = queue.pop()
+        for parent in reverse.get(cur) or ():
+            if parent not in out:
+                out.add(parent)
+                queue.append(parent)
+    return sorted(out)
+
+
 def compute_extract_fingerprint(
     project_root: Path,
     *,
@@ -202,6 +279,7 @@ def compute_extract_fingerprint(
             "walk_cache_version": CACHE_VERSION,
         }
     )[:32]
+    include_graph = collect_include_graph(root, rels)
     persisted = persist_source_stamps(stamps)
     return {
         "scope_fingerprint": scope.get("scope_fingerprint") or "",
@@ -212,6 +290,8 @@ def compute_extract_fingerprint(
         "confirmed_sources": rels,
         "uo_root": str(uo),
         "source_stamps": persisted,
+        "include_graph": include_graph,
+        "extractor_version": _EXTRACTOR_VERSION,
         "hashed_files": [row["path"] for row in stamps if row.get("hashed")],
         "reused_stamp_files": [
             row["path"]
@@ -246,6 +326,24 @@ def store_extract_fingerprint(uo_root: Path, meta: dict[str, Any]) -> Path:
     payload = dict(meta)
     payload["stored_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=True), encoding="utf-8")
+    manifest = path.with_name("dependency_manifest.yaml")
+    slim = {
+        "extractor_version": payload.get("extractor_version") or _EXTRACTOR_VERSION,
+        "include_graph": payload.get("include_graph") or {},
+        "source_stamps": [
+            {"path": row.get("path"), "sha": row.get("sha")}
+            for row in (payload.get("source_stamps") or [])
+            if isinstance(row, dict)
+        ],
+        "arch": payload.get("arch") or "",
+        "walk_cache_version": payload.get("walk_cache_version") or "",
+    }
+    try:
+        manifest.write_text(
+            yaml.safe_dump(slim, allow_unicode=True, sort_keys=True), encoding="utf-8"
+        )
+    except OSError:
+        pass
     return path
 
 
@@ -301,6 +399,10 @@ def skip_reextract_for_unchanged_tus(
             meta.get("source_stamps") or [],
             previous.get("source_stamps") or [],
         )
+        graph = meta.get("include_graph") or previous.get("include_graph") or {}
+        if not graph:
+            graph = collect_include_graph(project_root, rels)
+        changed = include_reverse_closure(changed, graph)
         changed_set = set(changed)
         kept = [path for path in rels if path not in changed_set]
     return {

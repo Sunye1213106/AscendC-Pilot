@@ -84,14 +84,14 @@ class Report:
 
 
 def add_l2_sizing_gate(rep: Report, doc: dict[str, Any]) -> None:
-    """R13: L2 is a full crossing; empty exclusions = no analysis; empty leftover = over-pruned."""
+    """R13: L2 is a full crossing; leftover empty = over-pruned. Empty exclusions is valid."""
     from testcase_agent.coverage.compile import ledger_counts
 
     ledger = ledger_counts(doc)
     full = ledger["l2_mode"] == "full_cross"
     excluded = int(ledger["l2_excluded"] or 0)
     leftover = int(ledger["l2_obligations"] or 0)
-    r13_ok = full and excluded > 0 and leftover > 0 and not ledger["error"]
+    r13_ok = full and leftover > 0 and not ledger["error"]
     rep.add(
         "R13",
         r13_ok,

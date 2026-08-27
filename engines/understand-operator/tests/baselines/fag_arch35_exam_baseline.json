@@ -1,0 +1,537 @@
+{
+  "schema": "uo-exam-gate/v1",
+  "arch": "arch35",
+  "op": "d:\\PR-review\\TEST\\.ascendc-pr\\gitcode.com--cann--ops-transformer--pr-10546\\attention\\flash_attention_score_grad",
+  "questions": [
+    {
+      "id": "Q1",
+      "gold_hits": 9,
+      "gold_total": 10,
+      "name_hits": [
+        "SetSplitAxis",
+        "SplitAxis",
+        "IsTnd",
+        "IsBn2MultiBlk"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_template_tiling_key.h",
+        "flash_attention_score_grad_tiling_common_regbase.cpp"
+      ],
+      "needle_hits": [
+        "BN2",
+        "IsTnd",
+        "SetSplitAxis"
+      ],
+      "noise": 14,
+      "noise_names": [
+        "ARGS_SEL_29",
+        "bn2S2NotTndLimit",
+        "bn2S2RouteLimit",
+        "bnLimit",
+        "bnSparseLimit",
+        "GetDeterministic",
+        "d1",
+        "dropMaskOuter",
+        "hasRope",
+        "isAllSame",
+        "isDeterministic",
+        "DoOpTiling"
+      ],
+      "extra_files": [
+        "fbaseparams.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 2656,
+      "ms": 37.8,
+      "ok": true,
+      "n_queries": 2
+    },
+    {
+      "id": "Q2",
+      "gold_hits": 11,
+      "gold_total": 12,
+      "name_hits": [
+        "s1Inner",
+        "GetS1S2TemplateType",
+        "VECTOR_BASEM",
+        "CUBE_BASEM"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_tiling_common_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "needle_hits": [
+        "s1Inner",
+        "VECTOR_BASEM",
+        "CUBE_BASEM",
+        "CV_CORE_RATIO"
+      ],
+      "noise": 20,
+      "noise_names": [
+        "CalcleDeterParam",
+        "AlignTo",
+        "s2TemplateType",
+        "make_pair",
+        "queryType",
+        "s1",
+        "s2",
+        "dInner",
+        "GetDTemplateType",
+        "s1s2TemplateSize",
+        "s2Inner",
+        "tie",
+        "tuple"
+      ],
+      "extra_files": [
+        "deter.h",
+        "flash_attention_score_grad_block_cube.h",
+        "flash_attention_score_grad_block_vec.h",
+        "flash_attention_score_grad_nz_post.h",
+        "flash_attention_score_grad_tiling_common_regbase.h",
+        "flash_attention_score_grad_tiling_data_regbase.h",
+        "flash_attention_score_grad_tiling_varlen_regbase.cpp"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 4129,
+      "ms": 83.4,
+      "ok": true,
+      "n_queries": 5
+    },
+    {
+      "id": "Q3",
+      "gold_hits": 9,
+      "gold_total": 9,
+      "name_hits": [
+        "SetScheduleMode",
+        "SyncALLCores"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h",
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h"
+      ],
+      "needle_hits": [
+        "SetScheduleMode",
+        "SyncAll",
+        "SyncALLCores"
+      ],
+      "noise": 5,
+      "noise_names": [
+        "RegbaseFAG",
+        "pipePost",
+        "INVOKE_FAG_GENERAL_S1S2_BN2GS1S2_REGBASE_IMPL",
+        "INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_presfmg_regbase.h"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 1147,
+      "ms": 106.4,
+      "ok": true,
+      "n_queries": 3
+    },
+    {
+      "id": "Q4",
+      "gold_hits": 5,
+      "gold_total": 6,
+      "name_hits": [
+        "enablePreSfmg"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "needle_hits": [
+        "enablePreSfmg"
+      ],
+      "noise": 15,
+      "noise_names": [
+        "deterSupportPreSfmg",
+        "presfmgLimit",
+        "queryType",
+        "INVOKE_FAG_GENERAL_S1S2_BN2GS1S2_REGBASE_IMPL",
+        "InitGlobalBuffer",
+        "InitUbBuffer",
+        "SetConstInfo",
+        "RegbaseFAG",
+        "pipeIn",
+        "pipeBase",
+        "pipePost"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_block_vec.h",
+        "flash_attention_score_grad_common.h",
+        "flash_attention_score_grad_kernel.h",
+        "flash_attention_score_grad_tiling_data_regbase.h"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 2325,
+      "ms": 34.6,
+      "ok": true,
+      "n_queries": 2
+    },
+    {
+      "id": "Q5",
+      "gold_hits": 8,
+      "gold_total": 9,
+      "name_hits": [
+        "InitTilingData",
+        "NEED_DETER_PREFIX",
+        "NEED_DETER"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_common.h"
+      ],
+      "needle_hits": [
+        "NEED_DETER",
+        "InitTilingData",
+        "isTnd"
+      ],
+      "noise": 31,
+      "noise_names": [
+        "isTnd",
+        "baseDeterParam_",
+        "postTilingData_",
+        "preTilingData_",
+        "s1s2BNGS1S2BaseParams_",
+        "CheckLogLevel",
+        "DlogRecord",
+        "GetOpInfo",
+        "GetSafeStr",
+        "GetTid",
+        "GetTilingData",
+        "ReportInnerErrMsg",
+        "fBaseParams",
+        "isDeterministic",
+        "s1s2BNGS1S2BlockNumList_",
+        "s1s2BNGS1S2SplitCoreParams_",
+        "isTndSwizzle",
+        "GRAPH_FAILED",
+        "GRAPH_SUCCESS",
+        "DoOpTiling",
+        "RegbaseFAG",
+        "flash_attention_score_grad",
+        "FagOldTilingType",
+        "FagTilingType"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_apt.cpp",
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_tiling_common_regbase.cpp"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 3355,
+      "ms": 19.2,
+      "ok": true,
+      "n_queries": 3
+    },
+    {
+      "id": "Q6",
+      "gold_hits": 6,
+      "gold_total": 7,
+      "name_hits": [
+        "IS_SMALL_D_PRELOAD",
+        "QL1BuffSelector"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_block_cube.h"
+      ],
+      "needle_hits": [
+        "IS_SMALL_D_PRELOAD",
+        "IS_L1_PRELOAD",
+        "IS_DROP"
+      ],
+      "noise": 2,
+      "noise_names": [
+        "DTemplateType",
+        "Aligned128"
+      ],
+      "extra_files": [],
+      "first_kind_miss": 0,
+      "tokens": 740,
+      "ms": 5.5,
+      "ok": true,
+      "n_queries": 2
+    },
+    {
+      "id": "Q7",
+      "gold_hits": 7,
+      "gold_total": 8,
+      "name_hits": [
+        "GetDeterSparseTilingKey",
+        "DeterType",
+        "SplitAxis"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp"
+      ],
+      "needle_hits": [
+        "DETER",
+        "DeterType",
+        "GetDeterSparseTilingKey"
+      ],
+      "noise": 7,
+      "noise_names": [
+        "DoSparse",
+        "isS1S2Same",
+        "isSparse",
+        "layoutType",
+        "s1",
+        "s1Token",
+        "s2"
+      ],
+      "extra_files": [],
+      "first_kind_miss": 0,
+      "tokens": 1132,
+      "ms": 17.2,
+      "ok": true,
+      "n_queries": 2
+    },
+    {
+      "id": "Q8",
+      "gold_hits": 7,
+      "gold_total": 7,
+      "name_hits": [
+        "SetSplitAxis",
+        "IS_DQ_WRITE_UB"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_common_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "needle_hits": [
+        "BN2",
+        "IS_DQ_WRITE_UB",
+        "SetSplitAxis"
+      ],
+      "noise": 17,
+      "noise_names": [
+        "bn2S2NotTndLimit",
+        "bnLimit",
+        "bnSparseLimit",
+        "GetDeterministic",
+        "d1",
+        "dropMaskOuter",
+        "hasRope",
+        "isAllSame",
+        "isDeterministic",
+        "layoutType",
+        "DoOpTiling",
+        "SPLIT_AXIS",
+        "BN2",
+        "IS_BN2_MULTIBLK"
+      ],
+      "extra_files": [
+        "fbaseparams.h",
+        "flash_attention_score_grad_kernel.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 2348,
+      "ms": 8.3,
+      "ok": true,
+      "n_queries": 2
+    },
+    {
+      "id": "Q9",
+      "gold_hits": 5,
+      "gold_total": 6,
+      "name_hits": [
+        "ORIG_DTYPE_QUERY"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_entry_regbase.h",
+        "flash_attention_score_grad_template_tiling_key.h"
+      ],
+      "needle_hits": [
+        "ORIG_DTYPE_QUERY",
+        "InputDType"
+      ],
+      "noise": 12,
+      "noise_names": [
+        "pipeIn",
+        "pipePost",
+        "sinkOptional",
+        "Init",
+        "Process",
+        "SyncALLCores",
+        "INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_kernel.h",
+        "flash_attention_score_grad_kernel_base.h",
+        "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+        "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+        "flash_attention_score_grad_tiling_data_regbase.h"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 3241,
+      "ms": 16.6,
+      "ok": true,
+      "n_queries": 3
+    },
+    {
+      "id": "Q10",
+      "gold_hits": 7,
+      "gold_total": 7,
+      "name_hits": [
+        "IsEmptyOutput",
+        "RunEmptyTilingRegbase",
+        "IsEmptyTensor"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling.cpp"
+      ],
+      "needle_hits": [
+        "IsEmptyOutput",
+        "IsEmptyTensor",
+        "RunEmptyTilingRegbase"
+      ],
+      "noise": 32,
+      "noise_names": [
+        "dkRopeShape",
+        "dkShape",
+        "dqRopeShape",
+        "dqShape",
+        "dvShape",
+        "GetOutputShape",
+        "GetShapeSize",
+        "GetStorageShape",
+        "GRAPH_FAILED",
+        "TilingFlashAttentionGradScore",
+        "aicNum",
+        "CalculateTschBlockDim",
+        "aivNum",
+        "ascendcPlatform",
+        "compilePtr",
+        "dkNum",
+        "CheckLogLevel",
+        "DlogRecord",
+        "FastEncodeTilingKeyDirect",
+        "GetCompileInfo",
+        "GetCoreNumAic",
+        "GetCoreNumAiv",
+        "GetOpInfo",
+        "GRAPH_FAILED"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_template_tiling_key.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 3319,
+      "ms": 12.6,
+      "ok": true,
+      "n_queries": 3
+    },
+    {
+      "id": "Q11",
+      "gold_hits": 8,
+      "gold_total": 8,
+      "name_hits": [
+        "isNzOut",
+        "isTndSwizzle",
+        "IsNzOut"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_template_tiling_key.h"
+      ],
+      "needle_hits": [
+        "isNzOut",
+        "IsNzOut",
+        "swizzle"
+      ],
+      "noise": 19,
+      "noise_names": [
+        "splitAxis",
+        "SplitAxisEnum",
+        "ConstAxisTemplateNum",
+        "actual_seq_kvlen",
+        "layoutType",
+        "actual_seq_kvlen",
+        "ARGS_SEL_1",
+        "ARGS_SEL_3",
+        "ARGS_SEL_8",
+        "ARGS_SEL_9",
+        "ARGS_SEL_12",
+        "ARGS_SEL_13",
+        "ARGS_SEL_37",
+        "ARGS_SEL_39"
+      ],
+      "extra_files": [
+        "fbaseparams.h",
+        "flash_attention_score_grad_apt.cpp",
+        "flash_attention_score_grad_proto.h",
+        "flash_attention_score_grad_tiling.cpp",
+        "flash_attention_score_grad_tiling_common_regbase.h"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 4660,
+      "ms": 62.8,
+      "ok": true,
+      "n_queries": 3
+    },
+    {
+      "id": "Q12",
+      "gold_hits": 9,
+      "gold_total": 9,
+      "name_hits": [
+        "IsRope",
+        "coreNum",
+        "aicCoreNum"
+      ],
+      "file_hits": [
+        "flash_attention_score_grad_template_tiling_key.h",
+        "flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "flash_attention_score_grad_kernel_base.h"
+      ],
+      "needle_hits": [
+        "IsRope",
+        "coreNum",
+        "aicCoreNum"
+      ],
+      "noise": 18,
+      "noise_names": [
+        "ARGS_SEL_18",
+        "ARGS_SEL_19",
+        "ARGS_SEL_20",
+        "ARGS_SEL_21",
+        "ARGS_SEL_22",
+        "ARGS_SEL_23",
+        "ARGS_SEL_24",
+        "ARGS_SEL_25",
+        "compileInfoPtr",
+        "aivNum",
+        "CalBandDeterIndex",
+        "CalCausalDeterIndex",
+        "CalDenseDeterIndex",
+        "CalDeterMaxLoopNum",
+        "SetConstInfo"
+      ],
+      "extra_files": [
+        "flash_attention_score_grad_common.h",
+        "flash_attention_score_grad_kernel_deter.h",
+        "flash_attention_score_grad_tiling_data_regbase.h"
+      ],
+      "first_kind_miss": 0,
+      "tokens": 2746,
+      "ms": 32.2,
+      "ok": true,
+      "n_queries": 3
+    }
+  ],
+  "totals": {
+    "gold_hits": 91,
+    "gold_total": 98,
+    "noise": 192,
+    "tokens": 31798,
+    "ms": 436.6
+  }
+}

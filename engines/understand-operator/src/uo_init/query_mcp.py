@@ -2,7 +2,8 @@
 """Stdio MCP server for uo-query.
 
 One tool, four agent shapes: index / identifier / Dim=V|Name=Value / file+line.
-Prefers the existing query daemon; otherwise holds one in-process connection.
+Long-lived MCP holds an in-process ``UoSqlQuery``. One-shot CLI still uses the
+query daemon. Set ``UO_QUERY_MCP_DAEMON=1`` to force a daemon hop for benches.
 """
 from __future__ import annotations
 
@@ -103,34 +104,72 @@ def run_query(
             "(or set UO_QUERY_ARCHITECTURE)"
         )
     product = _product(project, architecture)
-    from uo_init.query_client import try_agent_query
-
     t0 = time.perf_counter()
-    payload = try_agent_query(
-        product,
-        pattern=str(pattern or ""),
-        file=str(file or ""),
-        line=int(line or 0),
-        line_end=int(line_end or 0),
-        architecture=architecture,
-    )
-    daemon = bool(payload and payload.get("daemon"))
-    if payload is None:
-        key = str(product)
-        q = _CACHE.get(key)
-        if q is None:
-            from uo_init.query.sql import UoSqlQuery
+    if str(os.environ.get("UO_QUERY_MCP_DAEMON") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        from uo_init.query_client import try_agent_query
 
-            q = UoSqlQuery(product)
-            _CACHE[key] = q
-        payload = q.agent_query(
+        hopped = try_agent_query(
+            product,
             pattern=str(pattern or ""),
             file=str(file or ""),
             line=int(line or 0),
             line_end=int(line_end or 0),
+            architecture=architecture,
         )
-        payload["engine"] = "uo_init.uo_query"
-        payload["daemon"] = False
+        if isinstance(hopped, dict):
+            hopped = dict(hopped)
+            hopped["engine"] = hopped.get("engine") or "uo_init.uo_query"
+            hopped["daemon"] = True
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            raw = json.dumps(hopped, ensure_ascii=False, default=str)
+            utf8 = raw.encode("utf-8", errors="replace")
+            _append_eval(
+                {
+                    "qid": _qid(),
+                    "pid": os.getpid(),
+                    "elapsed_ms": elapsed_ms,
+                    "exit_code": 0 if hopped.get("ok") else 1,
+                    "pattern": str(pattern or ""),
+                    "file": str(file or ""),
+                    "line": int(line or 0),
+                    "ok": bool(hopped.get("ok")),
+                    "shape": hopped.get("shape"),
+                    "matching_block_count": hopped.get("matching_block_count"),
+                    "count": hopped.get("count"),
+                    "payload_chars": len(raw),
+                    "est_tokens": max(1, len(utf8) // 4),
+                    "daemon": True,
+                    "next_head": list(hopped.get("next") or [])[:6],
+                    "via": "mcp-daemon",
+                }
+            )
+            return hopped
+    key = str(product)
+    try:
+        mtime = int(product.stat().st_mtime_ns)
+    except OSError:
+        mtime = 0
+    cached = _CACHE.get(key)
+    q = None
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[1] == mtime:
+        q = cached[0]
+    if q is None:
+        from uo_init.query.sql import UoSqlQuery
+
+        q = UoSqlQuery(product)
+        _CACHE[key] = (q, mtime)
+    payload = q.agent_query(
+        pattern=str(pattern or ""),
+        file=str(file or ""),
+        line=int(line or 0),
+        line_end=int(line_end or 0),
+    )
+    payload["engine"] = "uo_init.uo_query"
+    payload["daemon"] = False
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     raw = json.dumps(payload, ensure_ascii=False, default=str)
     utf8 = raw.encode("utf-8", errors="replace")
@@ -149,7 +188,7 @@ def run_query(
             "count": payload.get("count"),
             "payload_chars": len(raw),
             "est_tokens": max(1, len(utf8) // 4),
-            "daemon": daemon,
+            "daemon": False,
             "next_head": list(payload.get("next") or [])[:6],
             "via": "mcp",
         }

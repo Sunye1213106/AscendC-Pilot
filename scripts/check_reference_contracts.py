@@ -29,7 +29,7 @@ EN_LOAD_RE = re.compile(
 FENCE_RE = re.compile(r"```.*?```", re.S)
 
 # Axis playbooks inside bind-init must not mix the other axis's field vocabulary.
-# Router SKILL.md and review.md name both axes on purpose.
+# Router SKILL.md names both axes on purpose.
 SIBLING_BAN_FILES = {
     "bind-init/references/harness.md": (
         r"api_arg",
@@ -37,22 +37,7 @@ SIBLING_BAN_FILES = {
         r"domains\.operator",
         r"column-binding",
     ),
-    "bind-init/references/harness-edge-cases.md": (
-        r"api_arg",
-        r"script_meta",
-        r"domains\.operator",
-        r"column-binding",
-    ),
     "bind-init/references/columns.md": (
-        r"modes\.precision",
-        r"modes\.perf",
-        r"--golden-only",
-        r"generate_inputs",
-        r"worklog\.md",
-        r"closure-safety",
-        r"performance-testing",
-    ),
-    "bind-init/references/column-binding-edge-cases.md": (
         r"modes\.precision",
         r"modes\.perf",
         r"--golden-only",
@@ -189,11 +174,7 @@ def check() -> list[str]:
                 )
             if sid == "bind-init":
                 columns = skill_dir / "references" / "columns.md"
-                edge = skill_dir / "references" / "column-binding-edge-cases.md"
-                blob = ""
-                for path in (columns, edge):
-                    if path.is_file():
-                        blob += "\n" + path.read_text(encoding="utf-8")
+                blob = columns.read_text(encoding="utf-8") if columns.is_file() else ""
                 if "performance-testing" in blob:
                     errors.append("GOLDEN_POLLUTE bind-init columns playbook contains performance-testing")
 

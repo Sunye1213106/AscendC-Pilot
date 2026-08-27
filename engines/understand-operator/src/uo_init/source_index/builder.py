@@ -2,6 +2,8 @@
 """Build a SourceIndex with one read + one lexical pass per file."""
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import time
 from pathlib import Path
@@ -9,7 +11,15 @@ from typing import Any, Iterable
 
 from uo_init.ids import rel_posix
 from uo_init.passes.source_text_cache import read_text
-from uo_init.source_index.cache import cache_clear, cache_get, cache_put
+from uo_init.source_index.cache import (
+    SCANNER_VERSION,
+    cache_clear,
+    cache_get,
+    cache_put,
+    disk_get,
+    disk_put,
+    facts_cache_key,
+)
 from uo_init.source_index.model import SourceFacts, SourceIndex
 from uo_init.semantics.ascendc_storage import is_valid_storage_name
 
@@ -297,7 +307,19 @@ def _registry_names() -> set[str] | None:
         return None
 
 
+def _registry_version(names: set[str] | None) -> str:
+    if not names:
+        return ""
+    blob = "\n".join(sorted(names))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFacts:
+    from uo_init.source_index.native import scan_file_or_none
+
+    native = scan_file_or_none(path, root=root, registry=registry)
+    if native is not None:
+        return native
     nfile = _norm_file(str(path), root)
     facts = SourceFacts(file=nfile)
     try:
@@ -603,25 +625,20 @@ class SourceIndexBuilder:
         *,
         root: str = "",
         deadline: float | None = None,
+        architecture: str = "",
     ) -> SourceIndex:
-        index = SourceIndex(root=root)
-        registry = _registry_names()
-        for raw in files:
-            if deadline is not None and time.perf_counter() >= deadline:
-                break
-            path = Path(raw)
-            if not path.is_file():
-                continue
-            facts = _scan_file(path, root=root, registry=registry)
-            index.by_file[_norm_file(str(path), root)] = facts
-            index.by_file[str(path).replace("\\", "/")] = facts
-        return index
+        return get_or_build(
+            files, root=root, deadline=deadline, architecture=architecture
+        )
 
 
-def _scan_missing_item(item: tuple[Path, str, str]) -> tuple[Path, str, SourceFacts]:
+def _scan_missing_item(item: tuple[Path, str, str, str, str]) -> tuple[Path, str, SourceFacts]:
     """Module-level so ``map_files`` can pickle it into a process pool."""
-    path, resolved, root = item
-    return path, resolved, _scan_file(path, root=root, registry=_registry_names())
+    path, resolved, root, dkey, arch = item
+    facts = _scan_file(path, root=root, registry=_registry_names())
+    if dkey:
+        disk_put(dkey, facts, root or str(path.parent), arch)
+    return path, resolved, facts
 
 
 def get_or_build(
@@ -629,11 +646,16 @@ def get_or_build(
     *,
     root: str = "",
     deadline: float | None = None,
+    architecture: str = "",
 ) -> SourceIndex:
     from uo_init.paths import resolved as _resolve
+    from uo_init.tu_cache import sha256_file
 
     index = SourceIndex(root=root)
-    missing: list[tuple[Path, str, str]] = []
+    arch = str(architecture or os.environ.get("UO_ARCHITECTURE") or "").strip()
+    registry = _registry_names()
+    reg_ver = _registry_version(registry)
+    missing: list[tuple[Path, str, str, str, str]] = []
     for raw in files:
         if deadline is not None and time.perf_counter() >= deadline:
             break
@@ -646,7 +668,23 @@ def get_or_build(
             continue
         if not path.is_file():
             continue
-        missing.append((path, resolved, root))
+        try:
+            content_sha = sha256_file(path)
+        except OSError:
+            content_sha = ""
+        dkey = facts_cache_key(
+            content_sha,
+            scanner_version=SCANNER_VERSION,
+            registry_version=reg_ver,
+            architecture=arch,
+        )
+        disk = disk_get(dkey, root or str(path.parent), arch)
+        if isinstance(disk, SourceFacts):
+            cache_put(resolved, disk)
+            index.by_file[_norm_file(str(path), root)] = disk
+            index.by_file[str(path).replace("\\", "/")] = disk
+            continue
+        missing.append((path, resolved, root, dkey, arch))
 
     scanned: list[tuple[Path, str, SourceFacts]]
     if len(missing) <= 1:

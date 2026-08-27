@@ -354,3 +354,54 @@
 {"method": "ping", "id": 146, "param_keys": []}
 {"method": "ping", "id": 147, "param_keys": []}
 {"method": "ping", "id": 148, "param_keys": []}
+{"method": "ping", "id": 149, "param_keys": []}
+{"method": "ping", "id": 150, "param_keys": []}
+{"method": "ping", "id": 151, "param_keys": []}
+{"method": "ping", "id": 152, "param_keys": []}
+{"method": "ping", "id": 153, "param_keys": []}
+{"method": "ping", "id": 154, "param_keys": []}
+{"method": "ping", "id": 155, "param_keys": []}
+{"method": "ping", "id": 156, "param_keys": []}
+{"method": "ping", "id": 157, "param_keys": []}
+{"method": "ping", "id": 158, "param_keys": []}
+{"method": "ping", "id": 159, "param_keys": []}
+{"method": "ping", "id": 160, "param_keys": []}
+{"method": "ping", "id": 161, "param_keys": []}
+{"method": "ping", "id": 162, "param_keys": []}
+{"method": "ping", "id": 163, "param_keys": []}
+{"method": "ping", "id": 164, "param_keys": []}
+{"method": "ping", "id": 165, "param_keys": []}
+{"method": "ping", "id": 166, "param_keys": []}
+{"method": "ping", "id": 167, "param_keys": []}
+{"method": "ping", "id": 168, "param_keys": []}
+{"method": "ping", "id": 169, "param_keys": []}
+{"method": "ping", "id": 170, "param_keys": []}
+{"method": "ping", "id": 171, "param_keys": []}
+{"method": "ping", "id": 172, "param_keys": []}
+{"method": "ping", "id": 173, "param_keys": []}
+{"method": "ping", "id": 174, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "prompts/list", "id": 2, "param_keys": []}
+{"method": "resources/list", "id": 3, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"boot": "legacy"}
+{"method": "initialize", "id": 0, "param_keys": ["protocolVersion", "capabilities", "clientInfo"]}
+{"method": "notifications/initialized", "id": null, "param_keys": []}
+{"method": "tools/list", "id": 1, "param_keys": []}
+{"method": "prompts/list", "id": 2, "param_keys": []}
+{"method": "resources/list", "id": 3, "param_keys": []}
+{"method": "ping", "id": 4, "param_keys": []}
+{"method": "ping", "id": 5, "param_keys": []}
+{"method": "ping", "id": 6, "param_keys": []}
+{"method": "ping", "id": 7, "param_keys": []}
+{"method": "ping", "id": 8, "param_keys": []}
+{"method": "ping", "id": 9, "param_keys": []}
+{"method": "ping", "id": 10, "param_keys": []}
+{"method": "ping", "id": 11, "param_keys": []}
+{"method": "ping", "id": 12, "param_keys": []}
+{"method": "ping", "id": 13, "param_keys": []}

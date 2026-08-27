@@ -18,7 +18,7 @@ PRIMARY_BEHAVIOR_UNCOVERED = "PRIMARY_BEHAVIOR_UNCOVERED"
 REPLAY_NAMESPACE_MISUSE = "REPLAY_NAMESPACE_MISUSE"
 TARGET_NOT_CHANGED = "TARGET_NOT_CHANGED"
 
-_UNTESTABLE_KINDS = frozenset({"opaque", "control_gap", "harness_gap"})
+_UNTESTABLE_KINDS = frozenset({"opaque", "control_gap", "harness_gap", "unverified"})
 _DERIVED_OR_ENV_KINDS = frozenset({"derived", "constraint", "environment", "env", "fact"})
 _DERIVED_REASON_MARKERS = (
     "非列",
@@ -438,7 +438,7 @@ def _validate_untestable_kinds(fence: dict[str, Any]) -> list[str]:
             continue
         if kind and kind not in _UNTESTABLE_KINDS:
             errors.append(
-                f"{PLAN_INVALID}: {owner} kind {kind!r} must be opaque|control_gap|harness_gap"
+                f"{PLAN_INVALID}: {owner} kind {kind!r} must be opaque|control_gap|harness_gap|unverified"
             )
             continue
         if not kind:

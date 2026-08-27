@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""L2 is a full crossing of a Target's Dimensions, minus the plan's exclusions.
+"""L2 is a full crossing of a Target's Dimensions, minus proven exclusions.
 
-A raw cartesian product means the plan did no reachability analysis, so an empty
-exclusion set is rejected. What survives is the ledger Solve must prove.
+Empty exclusions is valid: nothing is proven impossible yet, so Solve must
+classify the cartesian product. What survives after exclusions is the ledger
+Solve has to prove.
 """
 from __future__ import annotations
 
@@ -150,9 +151,11 @@ def test_cap_applies_after_exclusions(monkeypatch) -> None:
     assert levels["L2"] == 10
 
 
-def test_validator_rejects_full_cross_without_exclusions() -> None:
-    errors = products.validate_plan_fence(_plan(), init_columns=COLUMNS)
-    assert any("non-empty exclusions" in e for e in errors)
+def test_validator_allows_full_cross_with_empty_exclusions() -> None:
+    errors = products.validate_plan_fence(_plan(exclusions=[]), init_columns=COLUMNS)
+    assert not any("exclusions" in e and "non-empty" in e for e in errors)
+    errors_omitted = products.validate_plan_fence(_plan(), init_columns=COLUMNS)
+    assert not any("exclusions must be a list" in e for e in errors_omitted)
 
 
 def test_validator_rejects_full_cross_that_also_lists_tuples() -> None:

@@ -963,14 +963,15 @@ def build_host_ir(
         )
         return res
 
-    if len(path_list) <= 1:
+    max_workers = _host_ir_workers(len(path_list)) if len(path_list) > 1 else 1
+    if len(path_list) <= 1 or max_workers <= 1:
+        if len(path_list) > 1:
+            _tlog(f"host_ir.parallel_tus  n={len(path_list)} workers=1 pool=inline")
         results = [_walk_one(p) for p in path_list]
     else:
-        import os
         from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-        max_workers = _host_ir_workers(len(path_list))
-        use_proc = max_workers > 1 and _host_ir_pool_kind() == "process"
+        use_proc = _host_ir_pool_kind() == "process"
         results = [None] * len(path_list)
         pool_kind = "process" if use_proc else "thread"
         _tlog(

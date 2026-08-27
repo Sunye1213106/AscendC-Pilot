@@ -16,6 +16,10 @@ from uo_init.uo_query import open_query
 
 def _resolve_fag() -> tuple[Path | None, Path | None]:
     for root in (
+        Path(
+            r"d:\PR-review\TEST\.ascendc-pr\gitcode.com--cann--ops-transformer--pr-10546"
+            r"\attention\flash_attention_score_grad"
+        ),
         Path(r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad"),
         Path(r"d:\TEST\ops-transformer\attention\flash_attention_score_grad"),
     ):

@@ -994,6 +994,10 @@ class _Walker:
         self._frame_candidates: set[str] = set()
         self._scope_memo: dict[str, bool] = {}
         self._foreign_memo: dict[str, bool] = {}
+        #: Second TU pass after ``resolve_frame_files``: only walk newly
+        #: discovered framework files. Operator-scope bodies were already
+        #: collected on the first pass (``reachable is None``).
+        self._fill_frames_only: bool = False
 
     # -- helpers -----------------------------------------------------------
     def _in_scope(self, file: str | None) -> bool:
@@ -1030,6 +1034,8 @@ class _Walker:
     def _should_prune(self, cursor, kind_name: str, file: str | None, func: str) -> bool:
         """Phase A/B: skip subtrees that cannot contribute HostIR facts."""
         if self._is_foreign(file):
+            return True
+        if self._fill_frames_only and not func and file is not None and self._in_scope(file):
             return True
         # Phase A: out-of-frame top-level declarations (not inside a function).
         if (
@@ -1419,24 +1425,28 @@ class _Walker:
         # is about whether the call happens, not about what is passed. The
         # receiver matters for the same reason — `v.clear()` passes nothing and
         # changes everything.
-        caller_usr = ""
-        caller_qualified = ""
+        rec = self.functions[func]
+        caller_usr = rec.usr
+        caller_qualified = rec.qualified_name
         callee_usr = ""
         callee_qualified = ""
         callee_decl_file = ""
         receiver_type = ""
         receiver_canonical_type = ""
-        try:
-            # Prefer the semantic definition of the enclosing function when
-            # available; spelling-only identity is not enough for root proof.
-            parent = cursor.semantic_parent
-            if parent is not None and parent.kind.name in _FUNCTION_DEF_KINDS:
-                caller_usr = str(getattr(parent, "get_usr", lambda: "")() or "")
-                caller_qualified = str(
-                    getattr(parent, "displayname", None) or parent.spelling or ""
-                )
-        except Exception:  # noqa: BLE001
-            pass
+        if not caller_usr and not caller_qualified:
+            try:
+                # Prefer the semantic definition of the enclosing function when
+                # available; spelling-only identity is not enough for root proof.
+                parent = cursor.semantic_parent
+                if parent is not None and parent.kind.name in _FUNCTION_DEF_KINDS:
+                    caller_usr = str(getattr(parent, "get_usr", lambda: "")() or "")
+                    caller_qualified = str(
+                        getattr(parent, "displayname", None) or parent.spelling or ""
+                    )
+                    rec.usr = caller_usr
+                    rec.qualified_name = caller_qualified
+            except Exception:  # noqa: BLE001
+                pass
         try:
             ref = cursor.referenced
             if ref is not None:
@@ -1513,14 +1523,21 @@ class _Walker:
         if not self._in_scope(file):
             return
         assert file is not None
+        member_paths: list[str] = []
+        operand_reads: tuple[str, ...] = ()
+        # KernelIR / from_kernel_ir consume condition text + file:line, not
+        # CtrlNode.reads. The extra condition-subtree walk (and libclang
+        # get_definition) was FAG's ~40s kernel ast_walk tax.
+        if cond_cursor is not None and self.side != "kernel":
+            member_paths, operand_reads_list = collect_condition_reads(cond_cursor)
+            operand_reads = tuple(operand_reads_list)
         if func and func in self.functions:
             fr = self.functions[func]
             if cond_text and cond_text not in fr.guards:
                 fr.guards.append(cond_text)
-            if cond_cursor is not None:
-                for p in collect_member_paths(cond_cursor):
-                    if p not in fr.reads:
-                        fr.reads.append(p)
+            for p in member_paths:
+                if p not in fr.reads:
+                    fr.reads.append(p)
         loc = cursor.location
         node = CtrlNode(
             id=self._stable_id(file, loc.line, loc.column, kind),
@@ -1536,7 +1553,7 @@ class _Walker:
             induction_vars=tuple(dict.fromkeys(induction_vars + self._loop_vars)),
             init_value=init_value,
             step=step,
-            reads=tuple(collect_condition_operands(cond_cursor)),
+            reads=operand_reads,
         )
         node.universe = classify_universe(node, op_root=self.op_root)
         self.controls.append(node)
@@ -2432,19 +2449,35 @@ _OPERAND_DECL_KINDS = frozenset(
 )
 
 
-def collect_condition_operands(cursor, limit: int = 256) -> list[str]:
-    """Names clang resolved in a control-condition subtree.
+def _operand_ref(cur):
+    """Prefer ``referenced`` (the decl). ``get_definition`` is a fallback only.
 
-    Member paths come from ``MEMBER_REF_EXPR``. Bare names come from
-    ``DECL_REF_EXPR`` whose referenced decl is a variable, parameter, field
-    or enumerator. Callees in the same subtree are not operands.
+    ``get_definition`` walks to another TU and dominated FAG condition walks.
+    Kind of the declaration vs definition is the same for the operand filter.
     """
-    out: list[str] = []
+    try:
+        ref = cur.referenced
+    except Exception:  # noqa: BLE001
+        ref = None
+    if ref is not None:
+        return ref
+    try:
+        return cur.get_definition()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def collect_condition_reads(cursor, limit: int = 256) -> tuple[list[str], list[str]]:
+    """One subtree walk: ``(member_paths, operand_names)``.
+
+    Operand names are member paths first, then DECL_REF spellings whose
+    referenced decl is a variable / parameter / field / enumerator — same
+    set ``collect_condition_operands`` used to return from two walks.
+    """
+    paths: list[str] = []
+    names: list[str] = []
     if cursor is None:
-        return out
-    for path in collect_member_paths(cursor, limit):
-        if path and path not in out:
-            out.append(path)
+        return paths, names
     stack = [cursor]
     seen = 0
     while stack and seen < limit:
@@ -2455,31 +2488,40 @@ def collect_condition_operands(cursor, limit: int = 256) -> list[str]:
         except Exception:  # noqa: BLE001
             continue
         if kind == "MEMBER_REF_EXPR":
+            p = member_path(cur)
+            if p.count(".") >= 1 and p not in paths:
+                paths.append(p)
             continue
         if kind == "DECL_REF_EXPR":
             spelling = str(cur.spelling or "")
-            ref = None
-            try:
-                ref = cur.get_definition()
-            except Exception:  # noqa: BLE001
-                ref = None
-            if ref is None:
-                try:
-                    ref = cur.referenced
-                except Exception:  # noqa: BLE001
-                    ref = None
+            ref = _operand_ref(cur)
             try:
                 ref_kind = ref.kind.name if ref is not None else ""
             except Exception:  # noqa: BLE001
                 ref_kind = ""
-            if spelling and ref_kind in _OPERAND_DECL_KINDS and spelling not in out:
-                out.append(spelling)
+            if spelling and ref_kind in _OPERAND_DECL_KINDS and spelling not in names:
+                names.append(spelling)
             continue
         try:
             stack.extend(cur.get_children())
         except Exception:  # noqa: BLE001
             pass
-    return out
+    operands = list(paths)
+    for n in names:
+        if n not in operands:
+            operands.append(n)
+    return paths, operands
+
+
+def collect_condition_operands(cursor, limit: int = 256) -> list[str]:
+    """Names clang resolved in a control-condition subtree.
+
+    Member paths come from ``MEMBER_REF_EXPR``. Bare names come from
+    ``DECL_REF_EXPR`` whose referenced decl is a variable, parameter, field
+    or enumerator. Callees in the same subtree are not operands.
+    """
+    _paths, operands = collect_condition_reads(cursor, limit)
+    return operands
 
 
 def collect_member_paths(cursor, limit: int = 256) -> list[str]:
@@ -2899,17 +2941,17 @@ def _walk_parsed_tu(
             scope=scope,
         )
         if frame_files:
-            w2 = _mk_walker(
-                collect_writes_flag=collect_writes,
-                frame_files=frame_files,
-                reachable=reachable,
-            )
-            w2.functions = w.functions
+            # Same walker: operator-scope bodies are already on ``w``. A new
+            # walker used to recopy only ``functions`` and then re-walk the
+            # whole TU, dropping first-pass controls unless it scanned
+            # operator files again (~2× host ast_walk on FAG tiling TUs).
+            w.frame_files = frame_files
+            w.reachable = reachable
+            w._fill_frames_only = True
             t0 = _time.perf_counter()
             for child in tu.cursor.get_children():
-                w2.walk(child, [], "")
+                w.walk(child, [], "")
             t_walk = _time.perf_counter() - t0
-            w = w2
             frame_merged = False
         else:
             frame_merged = True

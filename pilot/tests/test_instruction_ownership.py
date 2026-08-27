@@ -381,11 +381,10 @@ def test_bind_columns_ssot_deletes_append_and_override() -> None:
     columns = (REPO / "skills" / "bind-init" / "references" / "columns.md").read_text(
         encoding="utf-8"
     )
-    edge = (
-        REPO / "skills" / "bind-init" / "references" / "column-binding-edge-cases.md"
-    ).read_text(encoding="utf-8")
     assert "禁止追加" in columns
     assert "先追加再接线" not in columns
-    assert "只 Edit 一次" in columns
-    assert "以本页为例外" not in edge
+    assert "只 Edit 一次" not in columns
+    assert not (
+        REPO / "skills" / "bind-init" / "references" / "column-binding-edge-cases.md"
+    ).exists()
 

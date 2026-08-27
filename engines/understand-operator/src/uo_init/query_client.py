@@ -138,6 +138,28 @@ def try_agent_query(
     """Return a query payload from the daemon, or None to fall back in-process."""
     if str(os.environ.get(_IDLE_ENV) or "").strip() in {"1", "true", "yes"}:
         return None
+    ep = _read_endpoint(product)
+    if ep is not None:
+        try:
+            reply = _send(
+                int(ep["port"]),
+                {
+                    "op": "query",
+                    "pattern": pattern,
+                    "file": file,
+                    "line": int(line or 0),
+                    "line_end": int(line_end or 0),
+                    "limit": int(limit or 8),
+                },
+                timeout=60.0,
+            )
+        except (OSError, json.JSONDecodeError, ConnectionError):
+            reply = None
+        else:
+            if reply.get("error") and not reply.get("shape"):
+                reply = None
+            if reply is not None:
+                return reply
     ep = ensure_daemon(product, architecture=architecture)
     if ep is None:
         return None
