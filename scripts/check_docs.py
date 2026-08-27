@@ -51,7 +51,7 @@ MULTI_ARCH_ONLY_RE = re.compile(
 )
 # Backtick paths that should resolve in-repo (or under UO package for frontend/passes).
 INLINE_REPO_PATH_RE = re.compile(
-    r"`((?:engines|pilot|scripts|agents|docs|adapters|opencode-plugin)/[^`\s]+)`"
+    r"`((?:engines|pilot|scripts|agents|docs|adapters|opencode-plugin|schemas)/[^`\s]+)`"
 )
 INLINE_UO_REL_PATH_RE = re.compile(
     r"`((?:frontend|passes|ir|update|query)/[^`\s]+\.py)`"

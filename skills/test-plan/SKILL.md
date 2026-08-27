@@ -5,7 +5,7 @@ description: 把测试要求编译为 Target、Dimension、Guard 与 Exclusion�
 
 # 白盒测试规划
 
-本 Action 负责写出 Coverage IR：测什么、怎么切、哪些组合已证明不可能。产出一份 `schema: tg-plan/v3` YAML。禁止 Write `tg/plan.md`。散文由 Engine `render_plan_prose` 生成。义务条数由引擎展开，plan 里不写数字。
+本 Action 负责写出 Coverage IR：测什么、怎么切、哪些组合已证明不可能。产出一份 `schema: tg-plan/v3` YAML（机器合同 `schemas/tg/plan-v3.yaml`）。禁止 Write `tg/plan.md`。散文由 Engine `render_plan_prose` 生成。义务条数由引擎展开，plan 里不写数字。
 
 Plan 交 IR。Solve 逐格判定 SAT / UNSAT / UNCONSTRUCTIBLE。Packet 字段合同随 `packet.usage` 注入，不要到本 Skill 找第二份。
 
@@ -24,3 +24,4 @@ Plan 交 IR。Solve 逐格判定 SAT / UNSAT / UNCONSTRUCTIBLE。Packet 字段�
 - 规划步骤（Plan Owner 每次必读）：`references/coverage-planning.md`
 - Target 门与切分语义（立 Target 时必读）：`references/target-planning.md`
 - 命中观测（写 `evidence` / `classifier.requires` 时读）：`references/evidence.md`
+- 机器合同：`schemas/tg/plan-v3.yaml`

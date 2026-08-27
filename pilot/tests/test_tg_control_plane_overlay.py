@@ -89,7 +89,7 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert construct.get("method_ref") == "construct.md"
     analyze = action_by_id("tg-solve", "analyze_round") or {}
     assert analyze.get("skill_id") == "solve"
-    assert analyze.get("method_ref") == "analyze.md"
+    assert analyze.get("method_ref") == "replay-classification.md"
     assert list(construct.get("allowed_write_paths") or []) == []
     assert list(analyze.get("allowed_write_paths") or []) == []
     axes = bind.get("fanout_axes") or []

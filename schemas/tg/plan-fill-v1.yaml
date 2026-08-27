@@ -1,8 +1,9 @@
 schema: tg-plan-fill/v1
 description: >
-  Plan Owner fill-in. LLM writes semantic content only. Engine expands this
-  into schema tg-plan/v3 (predicates, coverage.L0/L2.mode/L3, classifier,
-  controls, untestable from init unresolved+active).
+  Eval/engine shorthand. assemble_plan expands this into tg-plan/v3
+  (predicates, coverage.L0/L2.mode/L3, classifier, controls, untestable
+  from init unresolved+active). Not the Plan Owner skill write surface;
+  that is schemas/tg/plan-v3.yaml (schema: tg-plan/v3).
 engine_owned:
   - schema  # on the expanded v3 document
   - targets[].id

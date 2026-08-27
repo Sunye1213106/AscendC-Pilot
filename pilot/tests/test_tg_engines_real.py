@@ -442,13 +442,23 @@ def test_analyze_promote_merges_capture_into_ledger(tmp_path: Path) -> None:
         dump_worklog(seed_ledger([{"id": "O1", "status": "MISS"}])),
         encoding="utf-8",
     )
-    _write_capture(root, run_id, "analyze_round", text="refinement:\n  miss:\n    - obligation: O1\n")
+    _write_capture(
+        root,
+        run_id,
+        "analyze_round",
+        text="actions:\n  refine:\n    - obligation: O1\n      seed_changes: {S2: 1}\n",
+    )
     out = run_analyze_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is False, out
     assert out.get("reason_code") == "OPEN_REMAINING"
     text = (tg / "worklog.md").read_text(encoding="utf-8")
     assert "O1" in text
     assert "schema: tg-worklog/v2" in text or "tg-worklog/v2" in text
+    from ascendc_pilot.runs import receipts_dir
+
+    receipt = receipts_dir(root, run_id) / "analyze_round.yaml"
+    assert receipt.is_file()
+    assert "seed_changes" in receipt.read_text(encoding="utf-8")
 
 
 def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:

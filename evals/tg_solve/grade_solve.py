@@ -48,9 +48,10 @@ def grade(fill: dict[str, Any], plan: dict[str, Any], init: dict[str, Any]) -> l
     ]
     rows_out.append(("R2", not missing, f"missing_hits={missing}"))
     need_g = [g["id"] for g in idx["guards"] if not g.get("auto")]
-    have_g = {_s(r.get("id")) for r in (fill.get("guard_hits") or []) if isinstance(r, dict)}
+    guard_rows = fill.get("guard_witnesses") or fill.get("guard_hits") or []
+    have_g = {_s(r.get("id")) for r in guard_rows if isinstance(r, dict)}
     miss_g = [g for g in need_g if g not in have_g]
-    rows_out.append(("R3", not miss_g, f"missing_guard_hits={miss_g}"))
+    rows_out.append(("R3", not miss_g, f"missing_guard_witnesses={miss_g}"))
     baseline = fill.get("baseline") if isinstance(fill.get("baseline"), dict) else {}
     rows_out.append(("R4", bool(baseline), f"baseline_keys={list(baseline)}"))
     try:

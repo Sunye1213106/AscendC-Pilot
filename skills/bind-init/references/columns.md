@@ -1,6 +1,6 @@
 # 绑定列
 
-只 Edit 引擎已写出的本路 `parts/bindN.yaml` 语义格。不要新建空白 YAML，不要改列名、`schema`、`run_id`、`artifact_identity`。不要 Write 合并后的 `bind.yaml`、`harness.yaml` 或其它 `bindN.yaml`。
+只 Edit 引擎已写出的本路 `parts/bindN.yaml` 语义格。机器合同：`schemas/tg/bind-part-v1.yaml`（`schema: tg-bind-part/v1`）。不要新建空白 YAML，不要改列名、`schema`、`run_id`、`artifact_identity`。不要 Write 合并后的 `bind.yaml`、`harness.yaml` 或其它 `bindN.yaml`。
 
 草稿里 `call` 与 `call_args[].name` 已按 `repo_scan.canonical_call` 填好。本路只给 `chunk.columns` 写格子，并只给这些列补 `call_args.sources[]`。合并后的 union 才覆盖完整 API。`call.kind` ∈ {`pta`, `aclnn`, `mixed`}。不要写 `attr` 或 `pta_direct`。
 

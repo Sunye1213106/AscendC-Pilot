@@ -5,7 +5,7 @@ TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再
 | 阶段 | 产物 | 谁写 |
 | --- | --- | --- |
 | `/tg-init` | `tg/init.yaml` | 两路草稿在 `runs/`，主控裁判放行后 `bind_promote` 落盘并确认 |
-| `/tg-plan` | `tg/plan.md` | 散文（测什么 / 覆盖什么 / 怎么判定）+ YAML：Target / Dimension / Guard / L0–L3；人批准打 `approved` |
+| `/tg-plan` | `tg/plan.md` | 散文（测什么 / 覆盖什么 / 怎么判定）+ fence `schema: tg-plan/v3`（`schemas/tg/plan-v3.yaml`）；人批准打 `approved` |
 | `/tg-solve` | `tg/worklog.md` + `cases.csv`/`xls`/`xlsx` | 引擎展开义务；Replay 后 `coverage_eval` 更新 worklog 围栏；**certify 才写出正式 cases** |
 
 子代理 `return_value`，禁止 Write。过程中不落 `targets.yaml` / staging / `coverage_ledger.yaml`。

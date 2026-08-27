@@ -10,7 +10,7 @@ Host + kernel excerpts from `TEST/.../add_example/`.
 
 ## Correct verdict
 
-`PROVED` with host SetTilingKey window + kernel `if constexpr` window.
+`PROVED` with a `source-proof/v1` certificate: host SetTilingKey window + kernel `if constexpr` window. `claim.layer: host`. Writers completeness stays `partial` (no closure receipt).
 
 ## Why
 

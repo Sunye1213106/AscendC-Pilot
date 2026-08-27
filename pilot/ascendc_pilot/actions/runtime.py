@@ -286,6 +286,7 @@ def _capture_return_value(
         "rows",
         "recipe",
         "refinement",
+        "actions",
         "coverage",
         "dimensions",
     )

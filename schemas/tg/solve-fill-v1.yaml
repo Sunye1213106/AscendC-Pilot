@@ -1,10 +1,11 @@
 schema: tg-solve-fill/v1
 description: >
   Solve Owner fill-in. LLM writes HIT-path baseline, probe/replay arm seeds,
-  and optional extra unreachable leftover cells. Engine merges Plan partition
-  predicates with those seeds, fills remaining columns from init.defaults,
-  and emits one row (or unreachable) per OPEN obligation. LLM must not list
-  L0/L1/L2/L3 counts or enumerate leftover cartesian cells.
+  and Guard miss witnesses. Engine merges Plan partition predicates with those
+  seeds, fills remaining columns from init.defaults, and emits one row (or
+  unreachable) per OPEN obligation. Column-value conflicts are engine-owned.
+  LLM must not list L0/L1/L2/L3 counts, enumerate leftover cartesian cells,
+  or declare program-semantic unreachability.
 engine_owned:
   - columns
   - rows
@@ -15,6 +16,5 @@ engine_owned:
 llm_owned:
   - baseline
   - hits
-  - guard_hits
-  - unreachable
+  - guard_witnesses
   - defaults

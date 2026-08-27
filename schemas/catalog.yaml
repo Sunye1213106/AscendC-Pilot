@@ -1,0 +1,78 @@
+# Unique map: schemas/ files ↔ Skill write surfaces.
+# Schema ids version per family. Do not bump bind/init/solve-fill to v3 to "match" plan.
+entries:
+  - id: tg-bind-part/v1
+    file: tg/bind-part-v1.yaml
+    role: llm_edit
+    skill: bind-init
+    playbook: references/columns.md
+    stored_as: tg-init/v1
+
+  - id: tg-harness-part/v1
+    file: tg/harness-part-v1.yaml
+    role: llm_edit
+    skill: bind-init
+    playbook: references/harness.md
+    stored_as: tg-init/v1
+
+  - id: tg-init/v1
+    file: tg/init-v1.yaml
+    role: stored
+    skill: bind-init
+    writer: engine
+
+  - id: tg-plan/v3
+    file: tg/plan-v3.yaml
+    role: llm_write
+    skill: test-plan
+    playbook: references/coverage-planning.md
+    stored_as: tg-plan/v3
+
+  - id: tg-plan-fill/v1
+    file: tg/plan-fill-v1.yaml
+    role: fill_expand
+    skill: null
+    writer: eval
+    expands_to: tg-plan/v3
+
+  - id: tg-solve-fill/v1
+    file: tg/solve-fill-v1.yaml
+    role: llm_write
+    skill: solve
+    playbook: references/construct.md
+
+  - id: source-proof/v1
+    file: source-proof/certificate-v1.yaml
+    role: llm_write
+    skill: source-proof
+    playbook: references/proof-certificate.md
+
+  - id: ascendc-pilot-local-extension/v1
+    file: local-extension/case-builder-v1.yaml
+    interface: case_builder
+    role: plugin
+    skill: null
+
+  - id: ascendc-pilot-local-extension/v1
+    file: local-extension/golden-provider-v1.yaml
+    interface: golden_provider
+    role: plugin
+    skill: null
+
+  - id: ascendc-pilot-local-extension/v1
+    file: local-extension/replay-parser-v1.yaml
+    interface: replay_parser
+    role: plugin
+    skill: null
+
+  - id: ascendc-pilot-local-extension/v1
+    file: local-extension/runtime-launcher-v1.yaml
+    interface: runtime_launcher
+    role: plugin
+    skill: null
+
+  - id: ascendc-pilot-local-extension/v1
+    file: local-extension/tilingdata-decoder-v1.yaml
+    interface: tilingdata_decoder
+    role: plugin
+    skill: null

@@ -1,6 +1,6 @@
 # 绑定 harness
 
-只 Edit 引擎已写出的 `parts/harness.yaml` 语义格。不要新建空白 YAML，不要改 `schema`、`run_id`、`artifact_identity`、mode candidates。
+只 Edit 引擎已写出的 `parts/harness.yaml` 语义格。机器合同：`schemas/tg/harness-part-v1.yaml`（`schema: tg-harness-part/v1`）。不要新建空白 YAML，不要改 `schema`、`run_id`、`artifact_identity`、mode candidates。
 
 本路回答：现有 runner 怎么跑、怎么比、精度/性能入口在哪、现在造得出什么。
 

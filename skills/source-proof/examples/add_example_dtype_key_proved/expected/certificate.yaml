@@ -1,8 +1,43 @@
-proposition: "dataType==DT_FLOAT ⇒ schMode float arm"
-verdict: PROVED
-source_citations:
-  - file: add_example_tiling.cpp
-    quote: "tilingKey = GET_TPL_TILING_KEY(ELEMENTWISE_TPL_SCH_MODE_0); context->SetTilingKey(tilingKey);"
-  - file: add_example.cpp
-    quote: "if constexpr (schMode == ... TILING_KEY_EXAMPLE_FLOAT)"
-obligations_closed: [entry, assignment, consumption]
+schema: source-proof/v1
+claim:
+  layer: host
+  premise: host sees dataType == ge::DT_FLOAT
+  conclusion: kernel float arm (TILING_KEY_EXAMPLE_FLOAT / schMode 0) is the selected template path
+coverage:
+  declared: []
+  product: []
+  completeness: first_hit
+obligations:
+  entry: CLOSED
+  control: CLOSED
+  writes: CLOSED
+  calls: OPEN
+  overwrite: CLOSED
+  alternatives: CLOSED
+  completeness: CLOSED
+result: PROVED
+reasoning:
+  - step: Host SetTilingKey writes ELEMENTWISE_TPL_SCH_MODE_0 for DT_FLOAT
+    cites: [EV_host]
+  - step: Kernel if constexpr consumes the same float arm
+    cites: [EV_kernel]
+evidence:
+  - id: EV_host
+    source: add_example_tiling.cpp
+    role: host write
+  - id: EV_kernel
+    source: add_example.cpp
+    role: kernel consume
+counterexample:
+  checked: true
+  result: none
+completeness:
+  writers:
+    status: partial
+    source: ""
+  calls:
+    status: partial
+    source: ""
+  macros:
+    status: unknown
+    source: ""

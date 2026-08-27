@@ -12,7 +12,7 @@
 | `opencode-plugin/` | OpenCode integration：authorize hooks + Session Driver（`ascendc-pilot.ts`、`pilot-driver.ts`）。 |
 | `pilot/` | Runtime control plane（含 dispatch、authorize daemon、host_doctor）。 |
 | `prompts/` | Task prompt assets。 |
-| `schemas/` | Local extension 与 artifact schemas。 |
+| `schemas/` | 产物与本地插件的机器合同。`catalog.yaml` 映射到 Skill。版本按产物家族独立涨号，不是全仓统一代数。 |
 | `scripts/` | 生成、校验、replay 与 developer tools。 |
 | `skills/` | Runtime skill bundles、references、examples、templates。 |
 | `tests/` | 仓库级 tests 与 fixtures。 |
@@ -27,6 +27,7 @@
 | 修改权限 | `pilot/ascendc_pilot/ownership.py`, `agents/*.yaml` |
 | 新增 agent | `agents/<id>.yaml`，然后重新生成 agent matrix |
 | 新增领域方法文本 | `skills/<domain>/SKILL.md` 或 `skills/<domain>/references/` |
+| 新增产物 schema | `schemas/` 合同文件，并在 `schemas/catalog.yaml` 登记 Skill 映射 |
 | 共享语言（agent 常驻） | `agents/CONTEXT.md` |
 | 改 agent 常驻词表 | `agents/CONTEXT.md` |
 | 新增 task prompt | `prompts/tasks/<domain>/` |

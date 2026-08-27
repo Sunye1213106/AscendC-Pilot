@@ -1,0 +1,34 @@
+schema: source-proof/v1
+description: >
+  Source-proof certificate. Producer emits PROVED | REFUTED | INSUFFICIENT.
+  claim.layer is atomic (domain|template|host|kernel). Cross-layer full
+  facts are composed by the engine from accepted certificates.
+  completeness.*.status full requires a machine receipt in source.
+  Exclusion is engine-owned after proof-review accept.
+required:
+  - schema
+  - claim
+  - result
+enums:
+  claim.layer:
+    - domain
+    - template
+    - host
+    - kernel
+  result:
+    - PROVED
+    - REFUTED
+    - INSUFFICIENT
+  obligation:
+    - CLOSED
+    - OPEN
+    - BLOCKED
+  completeness.status:
+    - full
+    - partial
+    - unknown
+  completeness.source:
+    - UO_WRITER_CLOSURE_RECEIPT
+    - SOURCE_CLOSURE_RECEIPT
+    - PRODUCT_COVERAGE_RECEIPT
+    - ""

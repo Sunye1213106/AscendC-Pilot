@@ -215,6 +215,19 @@ def test_constraints_present_in_every_row():
         assert row["N2"] == 4
 
 
+def test_llm_unreachable_is_ignored():
+    plan = _activation_plan()
+    fill = {
+        "schema": "tg-solve-fill/v1",
+        "baseline": {"is_deter": 1},
+        "unreachable": [{"partitions": {"D-sparse": "p0"}, "reason": "owner guess"}],
+    }
+    out = assemble_solve(fill, plan, _init())
+    assert "ignored_llm_unreachable" in (out.get("notes") or [])
+    reasons = [str(u.get("reason") or "") for u in out["unreachable"]]
+    assert not any("owner guess" in r or "owner marked" in r for r in reasons)
+
+
 def test_constraint_arm_conflict_is_explicit_unreachable():
     plan = _activation_plan()
     plan["constraints"] = [

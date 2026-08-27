@@ -22,6 +22,9 @@ ROUTER_SKILLS = frozenset(
         "test-plan",
         "solve",
         "standalone-review",
+        "certify",
+        "proof-review",
+        "source-proof",
     }
 )
 

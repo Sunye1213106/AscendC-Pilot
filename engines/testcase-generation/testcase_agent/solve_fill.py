@@ -207,7 +207,10 @@ def _hit_map(fill: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
 
 def _guard_hit_map(fill: dict[str, Any]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
-    for row in fill.get("guard_hits") or []:
+    rows = fill.get("guard_witnesses")
+    if not isinstance(rows, list) or not rows:
+        rows = fill.get("guard_hits") or []
+    for row in rows:
         if not isinstance(row, dict):
             continue
         gid = _s(row.get("id"))
@@ -385,26 +388,6 @@ def _pad_row(seed: dict[str, Any], columns: list[str], defaults: dict[str, Any],
     return row
 
 
-def _extra_unreachable(fill: dict[str, Any]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for row in fill.get("unreachable") or []:
-        if isinstance(row, dict):
-            out.append(row)
-    return out
-
-
-def _matches_unreach(cell: dict[str, str], spec: dict[str, Any]) -> bool:
-    parts = spec.get("partitions") if isinstance(spec.get("partitions"), dict) else {}
-    if not parts:
-        parts = {k: v for k, v in spec.items() if _s(k).startswith("D-")}
-    if not parts:
-        return False
-    for did, arm in parts.items():
-        if _s(cell.get(_s(did))) != _s(arm):
-            return False
-    return True
-
-
 def assemble_solve(
     fill: dict[str, Any],
     plan: dict[str, Any],
@@ -443,8 +426,9 @@ def assemble_solve(
     notes: list[str] = []
     if unseedable:
         notes.append(f"constraint_unseedable: {', '.join(unseedable)}")
+    if fill.get("unreachable"):
+        notes.append("ignored_llm_unreachable")
     guard_hits = _guard_hit_map(fill)
-    extra_unreach = _extra_unreachable(fill)
     obligations = compile_obligations(plan_v3)
     rows: list[dict[str, Any]] = []
     unreachable: list[dict[str, Any]] = []
@@ -471,13 +455,6 @@ def assemble_solve(
             continue
 
         cell = obl.get("dimensions") if isinstance(obl.get("dimensions"), dict) else {}
-        if any(_matches_unreach({_s(k): _s(v) for k, v in cell.items()}, spec) for spec in extra_unreach):
-            reason = next(
-                (_s(spec.get("reason")) for spec in extra_unreach if _matches_unreach(cell, spec)),
-                "owner marked unreachable",
-            )
-            unreachable.append({"obligation": oid, "dimensions": dict(cell), "reason": reason})
-            continue
         merged = dict(global_base)
         conflict_col = None
         conflict_did = ""

@@ -185,10 +185,10 @@ def check() -> list[str]:
         "knowledge/ascendc/cross-layer-contracts.md",
         "knowledge/ascendc/synchronization.md",
         "skills/test-plan/references/evidence.md",
-        "skills/solve/references/precision-construction.md",
-        "skills/solve/references/performance-construction.md",
-        "skills/source-proof/references/review.md",
-        "skills/source-proof/references/referee-replay.md",
+        "skills/certify/references/precision-neighborhood.md",
+        "skills/certify/references/performance-neighborhood.md",
+        "skills/source-proof/references/proof-certificate.md",
+        "skills/proof-review/SKILL.md",
     ):
         if not (REPO / rel).is_file():
             errors.append(f"AUTHORITY_FILE_MISSING {rel}")

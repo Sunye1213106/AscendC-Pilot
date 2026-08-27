@@ -19,6 +19,7 @@
 python scripts/generate_reference_docs.py
 python scripts/check_docs.py
 python scripts/check_instruction_ownership.py
+python scripts/check_schema_catalog.py
 python scripts/check_host_driver_contract.py
 pytest
 ```

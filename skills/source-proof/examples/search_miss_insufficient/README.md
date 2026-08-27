@@ -10,7 +10,7 @@ A lead claims “no other SetTilingKey writers” after one Grep with a narrow p
 
 ## Correct verdict
 
-`INSUFFICIENT` (or keep obligations OPEN). Must not emit PROVED_UNREACHABLE / exclusion.
+`INSUFFICIENT` `source-proof/v1` certificate. Must not emit PROVED or exclusion. Search failure cannot close absence obligations.
 
 ## Why
 

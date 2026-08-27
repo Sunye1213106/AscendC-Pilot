@@ -371,6 +371,8 @@ def test_action_skill_ids_are_discovered_not_closed_five():
     assert "test-modes" not in ids
     assert "lemma" not in ids
     assert "source-proof" in ids
+    assert "proof-review" in ids
+    assert "certify" in ids
     assert "plan-fuse" not in ids
     assert "precision-testing" not in ids
     assert "operator-analysis" not in ids

@@ -32,7 +32,8 @@
 | Host 运行时（人 / CI） | `pilot/policies/invariants/host-runtime-contract.md`（不 compose） |
 | Workflow / Spec | `pilot/ascendc_pilot/workflows/*.py`：机器图 + 装载指针（`skill_id` / `method_ref` / `refs` / `knowledge_refs`） |
 | Domain Knowledge | `knowledge/ascendc/*.md`：跨任务仍成立的 AscendC 事实。Action 显式声明才装，无自动选择 |
-| Engine / Gate | 文件在不在、schema、到齐 ACK、scan/promote |
+| Engine / Gate | 文件在不在、到齐 ACK、scan/promote |
+| Artifact schema | `schemas/`（`catalog.yaml` 映射 Skill；id 按家族独立版本） |
 | Skill | `skills/<id>/SKILL.md`（当前窗口怎么判断）+ `references/`（指针后） |
 | Prompt | `prompts/tasks/**`（本题 I/O） |
 | Agent | `agents/*.yaml` 的职责与写面 |
@@ -68,7 +69,7 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
 ## 3. Engine / Gate
 
-文件在不在、schema、到齐 ACK、scan/promote。能代码化的审查项离开 `review.md`。
+文件在不在、到齐 ACK、scan/promote。字段归属与 `schema:` id 以 `schemas/` 为准。能代码化的审查项离开 `review.md`。
 
 模型只做语义裁判。
 
@@ -84,7 +85,7 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 | --- | --- | --- |
 | 执行步 | Action `skill_id` 强装 | `bind-init`、`test-plan`、`solve`、`ce-plan-draft`、`uo-query` |
 | 轴 playbook | `method_ref`，无独立 skill 目录 | `harness.md`、`target-planning.md`、`spec.md` |
-| 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `source-proof` |
+| 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `source-proof`、`proof-review` |
 
 切目录的唯一合法理由：同一 slash 的多窗，或同一叠加原语的多支。禁止「都跟 plan / 测试有关」焊成一份 always-loaded 正文。后序步骤进前窗会 rush。
 
@@ -129,7 +130,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 整理任何一段文字时依次判断：
 
 1. 所有任务都不能违反？→ Policy
-2. 能代码化（在不在 / schema / ACK）？→ Engine / Gate
+2. 能代码化（在不在 / ACK）？→ Engine / Gate。字段归属与 `schema:` id → `schemas/`
 3. 谁跑、隔离、下一态、装载哪份 playbook？→ Workflow 指针
 4. 当前窗口怎么判断？→ Skill
 5. 角色写面与天花板？→ Agent
@@ -150,7 +151,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 - 多个 Skill 都写「不得伪造 evidence」→ 留在 evidence Policy，Skill 只引用。
 - Spec.focus 写 `Dim=` / `--golden-only` → 留 playbook，focus 删到交付物名。
 - 路由 SKILL 复述阶段表 → 删；图在 Spec。
-- 精度邻域写进 `test-plan` SKILL → 错位；留 solve 窗 overlay 指针。
+- 精度邻域写进 `solve` → 错位；命中后邻域留 `skills/certify/`。
 
 ---
 
@@ -160,7 +161,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 | --- | --- | --- |
 | `/tg-init` | `bind-init` | harness / columns；review 在 SKILL.md |
 | `/tg-plan` | `test-plan` | target-planning / coverage-planning |
-| `/tg-solve` | `solve` | construct / analyze |
+| `/tg-solve` | `solve` | construct / replay-classification |
 | `/ce-review` | `standalone-review` | spec / standards |
 | `/ce-plan` | `ce-plan-draft` | 单窗 |
 | `/ce-apply` | `ce-apply` | 单窗 |
@@ -169,7 +170,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 | `/uo-investigate` | `uo-investigate` | 单窗 |
 | `/handoff` | `session-handoff` | 单窗 |
 
-叠加原语：`source-proof`。lemma 是 worklog / 证书里的产物名词，不是 Skill。精度/性能领域事实在 `knowledge/ascendc/`。
+叠加原语：`source-proof`、`proof-review`。lemma 是 worklog / 证书里的产物名词，不是 Skill。精度/性能命中后邻域在 `skills/certify/`。领域事实在 `knowledge/ascendc/`。
 
 ---
 

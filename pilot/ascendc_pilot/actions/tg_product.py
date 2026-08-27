@@ -261,6 +261,24 @@ def _captured_text(project_root: Path, ctx: dict[str, Any], action_id: str) -> s
     return ""
 
 
+def _parse_analyze_actions(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:yaml)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if any(key in data for key in ("actions", "proof_requests", "refinement")):
+        return data
+    return None
+
+
 _PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
 
 
@@ -1737,13 +1755,19 @@ def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     text = _captured_text(project_root, ctx, "analyze_round")
     if not text.strip():
         text = _collect_staging_text(_action_dir(project_root, ctx, "analyze_round"), names=("worklog.md", "staging.md"))
+    parsed = _parse_analyze_actions(text)
+    extra_prose = ""
+    if parsed:
+        _receipt(project_root, ctx, "analyze_round.yaml", parsed)
+    else:
+        extra_prose = text
     path = products.worklog_path(tg)
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
     ledger = parse_worklog_fence(existing)
     if not ledger:
         return {"ok": False, "engine": "analyze_promote", "error": "missing worklog ledger"}
     isolation.assert_tg_write_path(path)
-    path.write_text(merge_prose(existing, ledger, extra_prose=text), encoding="utf-8")
+    path.write_text(merge_prose(existing, ledger, extra_prose=extra_prose), encoding="utf-8")
     remaining = open_ids(ledger)
     reason = _open_failure_reason(ledger)
     if remaining:

@@ -1,6 +1,6 @@
 # 覆盖规划
 
-本文件是 Plan Owner 的方法：把 init + packet 编译成 `tg-plan/v3`。主控只转发本文件路径，禁止自己写 IR。本步规划交互，不证明格子可满足。同窗 refs 里有 Target 判据和命中观测；立 Target / 写 evidence 时打开，不要在本文件找第二份。
+本文件是 Plan Owner 的方法：把 init + packet 编译成 `tg-plan/v3`（机器合同 `schemas/tg/plan-v3.yaml`）。主控只转发本文件路径，禁止自己写 IR。本步规划交互，不证明格子可满足。同窗 refs 里有 Target 判据和命中观测；立 Target / 写 evidence 时打开，不要在本文件找第二份。
 
 ## 输入 / 输出 / 停
 

@@ -1,6 +1,6 @@
 # 构造用例
 
-为 OPEN 义务交回 `schema: tg-solve-fill/v1`。引擎按 Plan 谓词 + 你的 probe seed 展开行。禁止 Write，禁止手写 `rows`。
+为 OPEN 义务交回 `schema: tg-solve-fill/v1`（机器合同 `schemas/tg/solve-fill-v1.yaml`）。引擎按 Plan 谓词 + probe seed 展开行。禁止手写 `rows`。只改当前义务需要的 control；未指定列由引擎用 `init.defaults` / recipe 补齐。
 
 尺子是 `plan.md` 的 Target / Dimension / Guard。引擎用 Replay 观察包分类；LLM 不得宣布 HIT。
 
@@ -8,17 +8,16 @@
 
 读：已批准 `plan.md`、`init.yaml`、引擎写出的 `tg/solve_index.yaml`。计划未批准 → 停。
 
-交回：fill YAML（`baseline` / `hits` / 可选 `guard_hits` / 可选 `unreachable`）。禁止 Write `parts/`、`staging`、`tg/cases.*`。
+交回：fill YAML（`baseline` / `hits` / 可选 `guard_witnesses`）。禁止写 `unreachable`。列值冲突由引擎在合并时标 unreachable。程序语义不可达不要在本步结案；Replay 分类后再发 `proof_request`。
 
-完成：每个 `needs_hit` 臂有 seed；`auto: false` 的 Guard 有 miss 见证。不要枚举 leftover 格子。
+完成：每个 `needs_hit` 臂有非空 seed；`auto: false` 的 Guard 有 miss 见证。不要枚举 leftover 格子。
 
 ## 步骤
 
 1. **读 index。** `auto` 已有 case seed。只反解 `needs_hit`（probe/replay）。
 2. **baseline。** HIT 路径恒成立的入口列。不要写 Guard 杀整值。
 3. **hits。** 每个 needs_hit 臂改哪些 case 列能让 `cuts` 上的 probe/replay 成立。两臂取值必须能分开。禁止 `seed: {}`。
-4. **guard_hits。** 仅 `auto: false`。
-5. **unreachable。** 只有能证明列值冲突的臂组合。其余留给引擎合并。
+4. **guard_witnesses。** 仅 `auto: false`。一行能让该 Guard 谓词为假的 miss 见证。
 
 ## 列值类型
 
@@ -30,6 +29,7 @@ int 列交数字不加引号；enum-string 交字符串。
 HIT / REWRITE / REFUSE 是 Host tiling 裁决
 Target HIT 由引擎 coverage_eval 判定
 不要手写义务条数，不要交 columns+rows
+没有 seed ≠ 不可达
 ```
 
 ## 输出形状
@@ -40,8 +40,7 @@ baseline: {is_deter: 1}
 hits:
   - {dim: D-align, arm: p-even, seed: {B: 4}}
   - {dim: D-align, arm: p-odd, seed: {B: 3}}
-guard_hits: []
-unreachable: []
+guard_witnesses: []
 ```
 
 ## 反模式
@@ -49,4 +48,5 @@ unreachable: []
 - 交 `columns` + `rows` 或枚举 leftover 笛卡尔
 - 为凑数盲铺
 - 用 Host `HIT` 当作 Target 已覆盖
+- 填写 `unreachable` 当权威结案
 - Write `construct_cases/parts` 或覆盖 `tg/cases.*`

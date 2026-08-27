@@ -2,7 +2,7 @@
 
 **何时加载**：建立或关闭证明义务清单时。
 
-对 `P ⇒ Q`，逐项关闭义务。每项状态：`OPEN | CLOSED | BLOCKED`。
+对 `P ⇒ Q`，逐项关闭义务。每项状态：`OPEN | CLOSED | BLOCKED`。一次只证一层：`domain` / `template` / `host` / `kernel`。
 
 ## 入口
 
@@ -20,7 +20,7 @@
 
 - 对结论涉及的每个状态，列出全部 write sites（含间接写）
 - 对每个可能推翻 Q 的写入：在 P 下不可达，或写入值仍满足 Q
-- 写入集合声明为 partial → 该项最多 `BLOCKED`，禁止 `PROVED`
+- 写入集合没有 writer-closure receipt → 该项最多 `BLOCKED`，禁止 `PROVED`
 
 ## 调用
 
@@ -47,15 +47,14 @@
 先用 cover 决定层，再关义务：
 
 - domain：DECL / `declared_coverage` 是否包含被禁值
-- template：`Dim=<维>` 的 `product_coverage`；组合看 `matching_block_count`。须 `coverage_checked`
+- template：`product_coverage` / `matching_block_count`。须 `coverage_checked`
 - host：赋值函数（不是 packing 那一行）+ early return / `GRAPH_FAILED` + 无后续覆盖 + 替代路径。packing 只证明「Key 槽位读哪个字段」
 - kernel：模板实参 / `if constexpr`
-- full：host 写出且 template 接纳
 
 组合 cover>0 时，template 义务不得写成「不存在」。漏空 tensor、PREFIX、layout 回写 → 替代路径未关。
 
 ## 完整性
 
-下列用语依赖完整性：全部、唯一、从不、没有其他、必然、不可能、不可达。
+下列用语依赖机器 receipt：全部、唯一、从不、没有其他、必然、不可能、不可达。
 
-维值列表看 `dim_coverage` / `completeness=coverage_checked`。完整性不足时：继续关闭缺口，或整体 `INSUFFICIENT`。
+维值列表看 `dim_coverage` 且 `completeness=coverage_checked`。写点全集看 writer-closure receipt。没有 receipt 时：继续关闭缺口，或整体 `INSUFFICIENT`。

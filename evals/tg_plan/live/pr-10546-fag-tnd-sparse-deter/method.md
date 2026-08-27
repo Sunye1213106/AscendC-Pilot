@@ -1,135 +1,131 @@
-# 覆盖模型形式规范（查阅用）
+# 覆盖规划
 
-`tg-plan-fill/v1` 的填空语法。方法与步骤在 Plan Owner 任务提示里。引擎把填空展开成 `tg-plan/v3`（谓词、coverage 脚手架、classifier/controls、untestable）。
+本文件是 Plan Owner 的方法：把 init + packet 编译成 `tg-plan/v3`（机器合同 `schemas/tg/plan-v3.yaml`）。主控只转发本文件路径，禁止自己写 IR。本步规划交互，不证明格子可满足。同窗 refs 里有 Target 判据和命中观测；立 Target / 写 evidence 时打开，不要在本文件找第二份。
 
-## 填空
+## 输入 / 输出 / 停
 
-`cuts` 取值：`case.{column}` / `replay.{field}` / `probe.{name}`，或不带前缀的列名（默认 `case.`）。
+读：`init.yaml`、`plan_scope_packet.yaml`、packet / FOCUS 给出的 `file:line`。写：无。最终消息正文就是 YAML 全文。
 
-```yaml
-# 单列
-- {id: p-on, eq: 1}
-# 两列合取
-- {id: p-mha, eq: {N1: 4, N2: 4}}
-# 奇偶
-- {id: p-even, mod: 0}
-# 其它比较
-- {id: p-big, op: ge, value: 129}
-# Guard 补集
-- {id: G-not-tnd, field: Input_Layout, op: ne, value: TND, hit: BNSD}
+CodeMap 已编进 packet。只读 packet，不要再查图。激活列不在 `controls.case_allowed` → 只写 `untestable`（`kind: control_gap`）并停，禁止用 replay / probe 绕过 construct。
+
+## 步骤
+
+1. **解析 PR-owned 行为。** 每个独立可观测行为一个 Target。共享 observation 且语义等价才合并。不要默认 1 个，也不要用 `packet.identifiers` 卡成「只点名新赋值」。
+2. **过 Target 门。** 必答：Ownership、Construct、Reachability、Observation。缺一门就写 `untestable`，不要猜 partition。Seed 与 Oracle 可选，见 Target 判据。
+3. **分开 Dimension / Guard / Constraint。** 实现分岔 → Dimension（每维 ≥2 格，两格都能 HIT）。启用条件 → Guard（翻 `negate_hint` 则 Target 必须 MISS）。命中行恒成立的派生等式 → `constraints`。平台常量 → `environment`。三者切的列互不相交。
+4. **选 observation。** 每个正式 Target 必须能回答跑完 Replay 看什么。写法只认命中观测文。精度 / md5 进 `oracle`，不是 evidence。
+5. **规划 L0 / L1 / L2 / L3。**
+   - L0：本 Target 的维清单。
+   - L1：语义上值得 pairwise 的两维。入口开关维 × 只在该入口才生效的维，不要配成 L1。格子 SAT 交给 Solve，不要预先证明笛卡尔每格都能 HIT。
+   - L2：只交叉**同一 Target** 的维。`exclusions` 只收已经证明不可能的组合；判不准留给 Solve。空列表合法，表示没有已证排除。禁止把互斥行为簇拼成一张全交叉表。
+   - L3：Guard 证伪。
+6. **表面化缺口。** 路径闭包上 construct 未闭合 → `kind: control_gap` + `needs_binding`。本质不可控 / 不可观测 → `harness_gap` / `opaque`。ownership 未闭合 → `unverified`。身份缺口（空 `uo.id` + `candidate`）只要 `confirmed` 就不进 `untestable`。
+7. **写出 IR。** 按下骨架填。不要写 `obligations`、不要写义务条数、不要写散文。
+8. **交给引擎校验。** 形式错误由 `plan_validate` 拒绝。不要为了过校验去发明 exclusion 或脑补 constructibility。
+
+## 常驻判断
+
+```text
+Plan = 哪些维值得交叉
+Solve = 逐格 SAT / UNSAT / UNCONSTRUCTIBLE
 ```
 
-字面量类型对齐 init 的 `inferred_type`：整数列写 int，不加引号。
+UNSAT → exclusion / 源码证明。SAT 但无构造行 → constructibility gap。SAT 且可构造 → 具体 case。
 
-精度/md5 一类写 `oracle: md5` 或 `oracle: precision`，不做 Target。
+`constraints`、Guard 的 `controls`、以及任何 Dimension 正在切的列，三者互不相交。
 
-## 各段职责
+## 看到这样
 
-| 段 | 谁写 | 放什么 |
-| --- | --- | --- |
-| `requirement` | LLM | 路径条件与源码符号 |
-| `target` | LLM | 观测字段 + expected / op / in |
-| `dimensions[].cuts` + `arms` | LLM | 实现分岔，每维 ≥2 个可达 arm |
-| `guards` | LLM | 杀整门；`hit` 翻回可达 |
-| `l1` | LLM | 字段不相交且四格都能 HIT 的维对 |
-| `exclusions` | LLM | 全交叉里不可能同时成立的格子 |
-| `environment` | LLM | 正整数 `aicNum` / `coreNum` |
-| `oracle` | LLM | `md5` / `precision` / `[]` |
-| `classifier` / `controls` / 谓词 | 引擎 | 从 cuts + arms 生成 |
-| `coverage.L0` / `L2.mode` / `L3` | 引擎 | 从维/Guard id 抄出 |
-| `untestable` | 引擎 | init 里 unresolved+active 的列 |
-
-## 形式规则
-
-引擎展开后的 v3 仍遵守 F1–F13。LLM 交卷时只要：
-
-| # | 规则 |
+| 现象 | 做法 |
 | --- | --- |
-| F1 | `cuts` / `eq` 的列名只用 confirmed + active |
-| F5 | 同一条 L1 里两个维的 `cuts` 中 `case.*` 不相交；一列只由一个维来切 |
-| F8 | L1 每对四个格子都能与 Target 同时成立 |
-| F9 | exclusions 非空，每条 ≥2 个**不同** Dimension + reason |
-| F12 | `environment` 含正整数 `aicNum` 与 `coreNum` |
-| F13 | 默认 1 个 `target`；L1 / exclusions 不得跨 Target |
+| 同一层 `\|\|` 拆成两个 on/off 维 | 合成同一维两格互斥 ON |
+| 多层 `\|\|` 折进一个维的 `and` | 拆成各自的维 |
+| 仍能命中的枚举被写成 Guard | 改 Dimension，两格都是 ON |
+| 可切的 host 局部量只出现在 `constraints` | 改 Dimension，classifier 用 `probe.{name}` |
+| 杀整 Target 的量只出现在 `constraints` | 升到驱动它的列写 Guard |
+| `constraints` 钉住了 Guard 或 Dimension 正在切的列 | 删这条 constraint |
+| 为让 L1 四格都 HIT 而删交互 | 把 SAT 留给 Solve；嵌套维不要配 L1 |
+| 为过校验编一条 exclusion | 删掉。未知可达性留给 Solve |
+| L2 把不同 Target 的维拼进同一条 exclusion / 全交叉 | 按 Target 拆开 |
+| Target 指向未改动的兄弟 helper | 只点名 PR-owned 行为 |
+| `replay` 字段有兄弟写点仍用它当 Target | 改观测本次 helper 的 `probe.{name}` |
+| 两格只改幅度、没有实现分岔 | 去切尚未覆盖的 `if` / min-max / helper |
+| corpus 0 行写成 untestable | 0 只表示没有现成 seed，不表示不可达 |
 
-L0–L3 的义务条数由引擎从展开后的 IR 机械展开。
+## 完成勾选
+
+- [ ] 每个 Target 过了四道必答门，或已写入对应 `untestable`
+- [ ] Dimension / Guard / Constraint 列互不相交
+- [ ] L1 只表达交互，没有声称每格 SAT
+- [ ] L2 exclusions 只有已证不可能的组合（允许 `[]`）
+- [ ] 正文是 `tg-plan/v3` YAML，没有散文、没有义务数字
+
+## 谓词与字段
+
+`op` 取值：`eq ne in not_in lt le gt ge mod_eq is_null is_present and or not`
+
+```yaml
+{op: eq, field: case.{column}, value: {scalar}}
+{op: in, field: replay.{field}, values: [1, 2, 3]}
+{op: mod_eq, left: case.{column}, divisor: 2, value: 0}
+{op: and, args: [{predicate}, {predicate}]}
+{op: not, arg: {predicate}}
+```
+
+字段恰好两段，三种前缀：`case.{column}`（init 列名原文）、`replay.{field}`（解码器叶子）、`probe.{name}`（packet 探针名）。字面量类型对齐 `inferred_type`：整数列写 int，不加引号。
+
+多值字段：Target 用 `derived` + `in`；Dimension 每值 `eq` 一格。`replay_field` 的 `expected` 是标量。
 
 ## 骨架
 
 ```yaml
-schema: tg-plan-fill/v1
-requirement: |
-  {requirement_text}
+schema: tg-plan/v3
+requirement:
+  id: R-{slug}
+  text: >
+    {requirement_text}
 
-target:
-  field: replay.{tiling_field}
-  expected: 1
-  # 多值：in: [1, 2, 3]
-  # helper 局部量：field: probe.{name}  op: gt  value: 0
+targets:
+  - id: T-{slug}
+    evidence: {kind: replay_field, field: replay.{tiling_field}, expected: 1}
 
 dimensions:
   - id: D-{two_arms}
-    cuts: {column}
-    arms:
-      - {id: p-{arm_a}, eq: {value_a}}
-      - {id: p-{arm_b}, eq: {value_b}}
-  - id: D-{ratio}
-    cuts: [A, B]
-    arms:
-      - {id: p-equal, eq: {A: 4, B: 4}}
-      - {id: p-unequal, eq: {A: 4, B: 2}}
-  - id: D-{host_local}
-    cuts: probe.{name}
-    extra_controls: [{column}]
-    arms:
-      - {id: p-on, eq: 1}
-      - {id: p-off, eq: 0}
+    target: T-{slug}
+    controls: [{column}]
+    classifier: {requires: [case.{column}]}
+    partitions:
+      - {id: p-{arm_a}, predicate: {op: eq, field: case.{column}, value: {value_a}}}
+      - {id: p-{arm_b}, predicate: {op: eq, field: case.{column}, value: {value_b}}}
 
 guards:
-  - {id: G-{slug}, field: {column}, eq: {miss_value}, hit: {reachable_value}}
+  - id: G-{slug}
+    target: T-{slug}
+    controls: [{column}]
+    predicate: {op: eq, field: case.{column}, value: {activation_value}}
+    negate_hint: {{column}: {violating_value}}
 
-l1:
-  - {dims: [D-{a}, D-{b}], reason: "{why_they_interact}"}
+coverage:
+  L0:
+    dimensions: [D-{a}, D-{b}, D-{c}]
+  L1:
+    combinations:
+      - {dims: [D-{a}, D-{b}], reason: "{why_they_interact}"}
+  L2:
+    mode: full_cross
+    exclusions: []
+  L3:
+    guards: [G-{slug}]
 
-exclusions:
-  - {D-{a}: p-{x}, D-{b}: p-{y}, reason: "{why_impossible}"}
-
-oracle: md5
+oracle: []
+constraints: []
 environment:
-  aicNum: {int_from_file_line}
-  coreNum: {int_from_file_line}
+  {platform_const}: {int_from_file_line}
+
+untestable:
+  - id: u-{column}
+    kind: control_gap
+    reason: "{what_this_column_blocks}"
+    needs_binding:
+      - {column: {column}, want: "confirmed+active"}
 ```
-
-## 常见返工
-
-| 现象 | 改法 |
-| --- | --- |
-| 同一层 `\|\|` 拆成两个 on/off 维 | 合成同一维两格互斥 ON |
-| 多层 `\|\|` 折进一个维的 `and` | 拆成各自的维 |
-| 仍能命中的枚举被写成 Guard | 改 Dimension，两格都是 ON；合取早退的一支尤其不能整取值升 Guard |
-| 合取早退只把其中一列的某个枚举写成 Guard | 删这条 Guard；给该枚举补 Dimension 格，或 Guard 用 `all:` 写全合取项 |
-| 只杀一条 `\|\|` 支的条件和切支维做 L1 | 删这条 L1，改 exclusion |
-| HIT 入口取值没出现在任何 arm | 给该列补 Dimension 见证 |
-| Target 用了兄弟写点字段或自造 MaxRound 别名 | 改观测本次 helper 的 `{name} =` |
-| Target 写成落盘 `gt 0`，兄弟也会写成正数 | 下沉到本次 helper 独有的返回字段 |
-| L1 某格与 Target 不可同时成立 | 删这条 combination |
-| exclusions 为空 | 做互斥分析；判不准的留给 Solve |
-| `reason` 没加引号且以 `!` 开头 | 改成 `"..."` |
-| exclusion 同一维写两次 | 改成两个不同维 |
-| L2 排空全部格子 | 只排除确定不可能的，判不准的留给 Solve |
-| `environment` 缺 aicNum/coreNum 或写成 0 | 从环境事实或源码读出正整数 |
-| Target 指向未改动的兄弟 helper | 只点名 packet 里的新增/改动赋值 |
-| `replay` 字段有兄弟写点仍用它当 Target | 改观测本次 helper 的 `probe.{name}` |
-| 两格只改幅度、没有实现分岔 | 删这个维；对面走不到写点的臂升 Guard |
-| 同维两格比较值相同 | 改到至少一处不同 |
-| probe 维 arms 夹带了 case 构造种子 | arms 只留 probe/replay 互补取值；相关列写 `extra_controls` |
-| L1 两维 cuts 都出现同一 case 列 | 删这条 L1 |
-| 仍能命中的入口枚举写成 Guard | 改 Dimension 见证；只有全取值都 MISS 才 Guard |
-| Target 写成 helper 的 Safe/Ok/`eq 1` | 改观测这次新写入的 replay 落盘字段 |
-| 入口开关维和比率维做 L1 | 删这条 L1，改 exclusion |
-| 入口开关维和该入口内部 Safe/Ok probe 做 L1 | 删这条 L1，改 exclusion |
-| L1 四个格子里有一格打不到 Target | 删这条 combination |
-| 只在某一臂赋值的 Ok/Better bool 开成覆盖全部 HIT 的维 | 删维，改写进 `requirement` |
-| Guard 把「除 X 以外」写成 `eq` 某个其它枚举 | 改 `op: ne` + `hit: X` |
-| 比率杀整只钉了一个绝对列值、正文没有源码表达式 | 正文抄源码失败侧比较（`==` / `<=`）；参与列进 Guard |
-| 对「仅部分入口有定义」的内维，把该维每个 arm 都排除 | 只排除一对不可能的格；必须留下至少一个全维可达元组 |

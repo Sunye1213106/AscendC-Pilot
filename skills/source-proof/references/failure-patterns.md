@@ -5,7 +5,7 @@
 ## 没钉层 / 用错层的 cover
 
 「没有某几个取值」可能是 template 不编，也可能是 Host 拒掉。组合 cover>0 只说明 SEL 接纳。
-**对策**：先 `Dim=` / 组合查询。product 无值 → template。product 有、仍称不可达 → 必须证 host。
+**对策**：先查 template 覆盖。product 无值 → template。product 有、仍称不可达 → 必须证 host。
 
 ## 赋值当成发出的 Key
 
@@ -20,12 +20,12 @@
 ## packing writers 当字段写点全集
 
 标识符的 writers 只有 packing 出口的打包点。字段本身在哪赋值，图上可能没有。
-**对策**：另查宿主字段块。写点不全 → 覆盖义务最多 `BLOCKED`。
+**对策**：另查宿主字段块。没有 writer-closure receipt → 覆盖义务最多 `BLOCKED`。
 
 ## 第一张卡是错 kind
 
 标识符先落到 TilingData 字段（空 tensor），kernel 侧标志先落到 kernel 分支。
-**对策**：看卡片全部 kind，跟 `next`。禁止只信第一页。
+**对策**：看卡片全部 kind。禁止只信第一页。
 
 ## cover=0 当 Host 不可达
 
@@ -37,7 +37,7 @@
 第一行分流、PREFIX / 改写 layout / 空 tensor 可能另开可达路径。漏掉会误杀可达 Key。
 **对策**：这些例外必须进替代路径。
 
-## 搜索耗尽 / 无观测写运行时不可达
+## 搜索耗尽当成不可达
 
-有限构造未命中，或没有 REWRITE/REFUSE 就写运行时不可达。
-**对策**：`INSUFFICIENT`。运行时值不能回填成宏条件。
+有限构造未命中，或「我没观测到」就写运行时不可达。
+**对策**：`INSUFFICIENT`。缺少观测不是证明。完整静态证明（义务关闭且 completeness 有 receipt）可以没有 runtime witness。

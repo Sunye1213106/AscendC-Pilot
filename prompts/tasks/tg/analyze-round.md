@@ -1,5 +1,5 @@
 <task>
-只处理 coverage_eval 标成 MISS / UNKNOWN 的义务，交回 refinement。禁止宣布 HIT。
+只处理 coverage_eval 标成 MISS / UNKNOWN 的义务。交回 `actions` YAML（refine / proof_requests / stop）。禁止宣布 HIT，禁止写 exclusion。
 </task>
 
 <input>
@@ -9,5 +9,5 @@
 </input>
 
 <output>
-最终消息交回 refinement YAML。不要 Write staging / 正式 `tg/worklog.md`。
+最终消息交回 `actions` YAML。不要 Write staging / 正式 `tg/worklog.md`。
 </output>

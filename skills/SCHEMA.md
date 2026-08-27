@@ -7,7 +7,7 @@ Skill 是**执行步文档**：当前 Action 装载的那一份 `SKILL.md`。不
 | 种类 | 路径 | 说明 |
 |------|------|------|
 | 执行 Skill | `skills/<id>/SKILL.md` | 这一步怎么做。中文。 |
-| 叠加原语 | 同目录结构 | 如 `source-proof`。由执行步指针触发，不进天花板名单。 |
+| 叠加原语 | 同目录结构 | 如 `source-proof`、`proof-review`。由执行步指针触发，不进天花板名单。 |
 | Reference | `skills/<id>/references/` | 仅当该步点名才装。目录、长表、域专文。 |
 | Workflow spec | `pilot/ascendc_pilot/workflows/*.py` | 阶段、lease、gate。Skill 不复述。 |
 | 主控路由 | `pilot/policies/pilot-control/POLICY.md` | 拆路、fanout、冲突核对。不在 Skill 树。 |
@@ -20,7 +20,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 对照对象：可复用的执行 Skill（Matt Pocock 仓里 `diagnosing-bugs` / `code-review` / `wayfinder` / `writing-beats` 这一档），不是 15 行的入口壳。
 
-量过：那一档正文大约 **80–140 行**，中位数约 75。这是写作对照，不是 Anthropic / OpenAI 官方行数标准。**AscendC-Pilot 仓内 lint / engineering budget**：执行步目标 **80–150 行**，硬顶 **200 行**（compose / architecture lint）。路由父本（`bind-init` / `test-plan` / `solve` / `standalone-review`）允许更短，禁止为过 80 行补背景课。
+量过：那一档正文大约 **80–140 行**，中位数约 75。这是写作对照，不是 Anthropic / OpenAI 官方行数标准。**AscendC-Pilot 仓内 lint / engineering budget**：执行步目标 **80–150 行**，硬顶 **200 行**（compose / architecture lint）。路由父本与叠加原语（`bind-init` / `test-plan` / `solve` / `standalone-review` / `source-proof` / `proof-review` / `certify`）允许更短，禁止为过 80 行补背景课。
 
 ### 渐进式披露
 
@@ -31,9 +31,11 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 | 这一步是什么、输入输出、与邻步边界 | 观测种类、字段清单、邻域取值 |
 | 带判断的步骤（怎么判、何时停） | 长示例、worked example |
 | 每轮都要用的启发式 / 反模式 | 某一域的专文（Key / Kernel / Buffer） |
-| 短输出形状（必填字段、完成条件） | 证书 schema、完整对照表 |
+| 短输出形状（必填字段、完成条件） | 证书写作骨架、完整对照表 |
 
-指针只深一层：`references/foo.md`。Reference 正文不得再写 `references/*.md`。要复用方法 → `skills/<id>/SKILL.md`。不要链到别人的 `references/`。
+产物机器合同在 `schemas/`（`catalog.yaml` 映射到本步）。版本按家族独立涨号。Skill 只点名 `schema:` id 与文件路径，不复制 `engine_owned` / `llm_owned`。
+
+指针只深一层：`references/foo.md`。Reference 正文不得再写 `references/*.md`。要复用方法 → `skills/<id>/SKILL.md`。不要链到别人的 `references/`。机器合同允许点名 `schemas/**`。
 
 不要把 20 份 gotchas 默装进 session。也不要把 SKILL.md 写成「步骤三条 + 详见 references」。
 
@@ -105,7 +107,7 @@ description: <做什么>。<什么时候用>。第三人称。
 
 仓内 lint：执行步少于 80 行视为空壳，超过 200 行失败。这是本仓 engineering budget，不是官方 Skill 标准。路由父本不设 80 行地板。150 以上先考虑把目录/长表示例下沉到 `references/`，不要删判断。
 
-父步（fanout / 序列路由，如 `bind-init`、`test-plan`、`solve`、`standalone-review`）写清各窗交什么、禁止混轴、本步不代替切片。不要为凑行数写背景课。按 slash 窗口收目录，禁止按主题焊成一份 always-loaded 正文。
+父步（fanout / 序列路由，如 `bind-init`、`test-plan`、`solve`、`standalone-review`）写清各窗交什么、禁止混轴、本步不代替切片。叠加原语（`source-proof`、`proof-review`）与命中后邻域（`certify`）同样允许短文。不要为凑行数写背景课。按 slash 窗口收目录，禁止按主题焊成一份 always-loaded 正文。
 
 切片 HOW 若只属于某一轴，放 `references/<axis>.md`，由 Spec `fanout_axes[].method_ref` 装进该窗的 `method.md`；`refs` 是该窗才拷的一层指针（轴文件禁止 hop）。父窗口 `SKILL.md` 写清各窗交什么、禁止混轴，并承载 Primary 后序裁判；prepare 不把轴 HOW 拷进父 session。禁止把多窗正文拼进一份始终装载的 `SKILL.md`。
 

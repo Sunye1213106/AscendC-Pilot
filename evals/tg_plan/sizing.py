@@ -6,10 +6,10 @@ Mechanical and operator-agnostic. Counts come from the engine's own expansion
 numbers cannot drift from what Solve will actually consume.
 
 The L2 level is a full crossing of the Dimensions of each Target. The plan's
-analysis shows up as ``coverage.L2.exclusions``: cells already known to
-conflict. ``l2_nominal`` is what a raw cartesian product would cost,
-``l2_excluded`` is what the plan's analysis removed, and ``l2_obligations`` is
-what Solve still has to prove reachable or unreachable.
+analysis shows up as ``coverage.L2.exclusions``: cells already proven
+impossible. Empty exclusions is valid. ``l2_nominal`` is what a raw cartesian
+product would cost, ``l2_excluded`` is what the plan removed, and
+``l2_obligations`` is what Solve still has to prove reachable or unreachable.
 
 Usage:
     python evals/tg_plan/sizing.py --product <plan.md or plan.yaml> [--json out.json]

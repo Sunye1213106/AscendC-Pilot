@@ -1,4 +1,35 @@
-lead: "no other tiling-key writers exist"
-search_attempt: "Grep SetTilingKey only"
-missed_real_pattern: "GET_TPL_TILING_KEY + SetTilingKey (add_example host)"
-verdict: INSUFFICIENT
+schema: source-proof/v1
+claim:
+  layer: host
+  premise: tiling key is written somewhere in Host
+  conclusion: no other writers exist besides a single SetTilingKey
+coverage:
+  declared: []
+  product: []
+  completeness: unknown
+obligations:
+  entry: OPEN
+  control: OPEN
+  writes: BLOCKED
+  calls: OPEN
+  overwrite: OPEN
+  alternatives: OPEN
+  completeness: BLOCKED
+result: INSUFFICIENT
+reasoning:
+  - step: One Grep for SetTilingKey missed GET_TPL_TILING_KEY indirection
+    cites: []
+evidence: []
+counterexample:
+  checked: false
+  result: none
+completeness:
+  writers:
+    status: partial
+    source: ""
+  calls:
+    status: unknown
+    source: ""
+  macros:
+    status: unknown
+    source: ""

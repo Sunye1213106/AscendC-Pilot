@@ -1,0 +1,55 @@
+schema: tg-plan/v3
+description: >
+  Canonical Coverage IR in the plan.md yaml fence. Plan Owner writes this
+  document as return_value. Engine stamps approval metadata, compiles
+  obligations, and renders prose. Do not put obligations in the fence.
+  Eval/grade may also submit tg-plan-fill/v1; the engine expands that into
+  this schema. The Owner skill write surface is this id, not the fill-in.
+engine_owned:
+  - schema
+  - obligations
+  - approved
+  - approved_at
+  - decision
+  - plan_hash
+  - run_id
+  - workflow_id
+  - phase
+  - action_id
+  - actor_id
+  - role_id
+  - action_session_id
+  - lease_id
+  - prepare_nonce_hash
+llm_owned:
+  - requirement
+  - targets
+  - dimensions
+  - guards
+  - coverage
+  - oracle
+  - constraints
+  - environment
+  - untestable
+  - opaque
+  - added_columns
+forbidden:
+  - obligations
+  - variables
+  - direction
+  - ladder
+enums:
+  evidence.kind:
+    - replay_field
+    - derived
+    - dispatch_map
+    - probe
+  untestable.kind:
+    - control_gap
+    - harness_gap
+    - opaque
+    - unverified
+  coverage.L2.mode:
+    - full_cross
+  coverage.enumerate:
+    - legal_keys
